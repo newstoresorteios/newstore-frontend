@@ -32,7 +32,7 @@ import {
 } from '@mui/material';
 import AccountCircleRoundedIcon from '@mui/icons-material/AccountCircleRounded';
 
-// Imagens locais (substituem links externos)
+// Imagens locais
 import imgCardExemplo from './cartaoilustrativoTexto-do-seu-paragrafo-6-1024x1024.png';
 import imgTabelaUtilizacao from './Tabela-para-utilizacao-do-3-1024x1024.png';
 import imgAcumulo1 from './1-2-1-1024x512.png';
@@ -57,7 +57,7 @@ const theme = createTheme({
 // Helpers
 const pad2 = (n) => n.toString().padStart(2, '0');
 
-// Link externo (ok manter externo)
+// Link externo
 const RESULTADOS_LOTERIAS =
   'https://asloterias.com.br/todos-resultados-loteria-federal';
 
@@ -65,14 +65,13 @@ const RESULTADOS_LOTERIAS =
 const MOCK_RESERVADOS = [];
 const MOCK_INDISPONIVEIS = [];
 
-// PREÇO por número (ENV ou 55) — usado no total e no PIX
+// PREÇO por número (ENV ou 55)
 const PRICE = Number(process.env.REACT_APP_PIX_PRICE) || 55;
 
 export default function NewStorePage({
   reservados = MOCK_RESERVADOS,
   indisponiveis = MOCK_INDISPONIVEIS,
   onIrParaPagamento,
-  // URL do grupo (WhatsApp/Telegram). Substitua abaixo pela sua URL real.
   groupUrl = 'https://wa.me/5599999999999?text=Quero%20participar%20do%20sorteio%20New%20Store',
 }) {
   const navigate = useNavigate();
@@ -88,7 +87,7 @@ export default function NewStorePage({
   const goLogin = () => { handleCloseMenu(); navigate('/login'); };
   const doLogout = () => { handleCloseMenu(); logout(); navigate('/'); };
 
-  // modal (abre só ao clicar em CONTINUAR)
+  // modal de confirmação
   const [open, setOpen] = React.useState(false);
   const handleAbrirConfirmacao = () => setOpen(true);
   const handleFechar = () => setOpen(false);
@@ -101,8 +100,11 @@ export default function NewStorePage({
 
   const handleIrPagamento = async () => {
     setOpen(false);
-    if (!isAuthenticated) { navigate('/login', { replace: false, state: { from: '/', wantPay: true } }); return; }
-    const amount = selecionados.length * PRICE; // ← usa env/55
+    if (!isAuthenticated) {
+      navigate('/login', { replace: false, state: { from: '/', wantPay: true } });
+      return;
+    }
+    const amount = selecionados.length * PRICE;
     setPixAmount(amount);
     setPixOpen(true);
     setPixLoading(true);
@@ -117,16 +119,19 @@ export default function NewStorePage({
     }
   };
 
-  // cartela
-  const isReservado = (n) => reservados.includes(n);
-  const isIndisponivel = (n) => indisponiveis.includes(n);
+  // ===== Cartela: normalização e helpers =====
+  const reservadosSet = React.useMemo(() => new Set((reservados || []).map(Number)), [reservados]);
+  const indisponiveisSet = React.useMemo(() => new Set((indisponiveis || []).map(Number)), [indisponiveis]);
+
+  const isReservado = (n) => reservadosSet.has(n);
+  const isIndisponivel = (n) => indisponiveisSet.has(n);
   const isSelecionado = (n) => selecionados.includes(n);
+
   const handleClickNumero = (n) => {
-    if (isIndisponivel(n)) return;
-    setSelecionados((prev) =>
-      prev.includes(n) ? prev.filter((x) => x !== n) : [...prev, n]
-    );
+    if (isIndisponivel(n) || isReservado(n)) return; // bloqueia clique
+    setSelecionados((prev) => (prev.includes(n) ? prev.filter((x) => x !== n) : [...prev, n]));
   };
+
   const getCellSx = (n) => {
     if (isIndisponivel(n)) {
       return {
@@ -138,11 +143,24 @@ export default function NewStorePage({
         opacity: 0.85,
       };
     }
-    if (isSelecionado(n) || isReservado(n)) {
+    if (isReservado(n)) {
+      // reservado: aparência distinta do selecionado
+      return {
+        border: '2px dashed',
+        borderColor: 'secondary.main',
+        bgcolor: 'rgba(255,193,7,0.08)',
+        color: 'secondary.main',
+        cursor: 'not-allowed',
+        boxShadow: 'inset 0 0 0 2px rgba(255,193,7,0.15)',
+      };
+    }
+    if (isSelecionado(n)) {
+      // selecionado
       return {
         border: '2px solid',
         borderColor: 'secondary.main',
-        bgcolor: 'rgba(255,193,7,0.12)',
+        bgcolor: 'rgba(255,193,7,0.18)',
+        boxShadow: '0 0 0 2px rgba(255,193,7,0.15)',
       };
     }
     return {
@@ -161,16 +179,8 @@ export default function NewStorePage({
       {/* Topo */}
       <AppBar position="sticky" elevation={0} sx={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
         <Toolbar sx={{ position: 'relative', minHeight: 64 }}>
-          <IconButton edge="start" color="inherit">
-            {/* (vazio pra manter espaçamento do layout) */}
-          </IconButton>
-
-          <Button
-            component={RouterLink}
-            to="/cadastro"
-            variant="text"
-            sx={{ fontWeight: 700, mt: 1 }}
-          >
+          <IconButton edge="start" color="inherit" />
+          <Button component={RouterLink} to="/cadastro" variant="text" sx={{ fontWeight: 700, mt: 1 }}>
             Criar conta
           </Button>
 
@@ -229,7 +239,7 @@ export default function NewStorePage({
             </Stack>
           </Paper>
 
-          {/* === CARTELA LOGO ABAIXO DO TEXTO === */}
+          {/* Cartela */}
           <Paper variant="outlined" sx={{ p: { xs: 1.5, md: 3 }, bgcolor: 'background.paper' }}>
             {/* Ações e legenda */}
             <Stack
@@ -241,8 +251,16 @@ export default function NewStorePage({
             >
               <Stack direction="row" spacing={1.5} alignItems="center" flexWrap="wrap">
                 <Chip size="small" label="DISPONÍVEL" sx={{ bgcolor: 'primary.main', color: '#0E0E0E', fontWeight: 700 }} />
-                <Chip size="small" label="RESERVADO" sx={{ bgcolor: 'rgba(255,193,7,0.18)', border: '1px solid', borderColor: 'secondary.main', color: 'secondary.main', fontWeight: 700 }} />
-                <Chip size="small" label="INDISPONÍVEL" sx={{ bgcolor: 'rgba(211,47,47,0.18)', border: '1px solid', borderColor: 'error.main', color: 'error.main', fontWeight: 700 }} />
+                <Chip
+                  size="small"
+                  label={`RESERVADO${reservadosSet.size ? ` • ${reservadosSet.size}` : ''}`}
+                  sx={{ bgcolor: 'rgba(255,193,7,0.08)', border: '1px dashed', borderColor: 'secondary.main', color: 'secondary.main', fontWeight: 700 }}
+                />
+                <Chip
+                  size="small"
+                  label={`INDISPONÍVEL${indisponiveisSet.size ? ` • ${indisponiveisSet.size}` : ''}`}
+                  sx={{ bgcolor: 'rgba(211,47,47,0.18)', border: '1px solid', borderColor: 'error.main', color: 'error.main', fontWeight: 700 }}
+                />
                 {!!selecionados.length && (
                   <Typography variant="body2" sx={{ ml: 0.5, opacity: 0.8 }}>
                     • {selecionados.length} selecionado(s)
@@ -260,7 +278,7 @@ export default function NewStorePage({
               </Stack>
             </Stack>
 
-            {/* Grid 10x10 — dimensões preservadas */}
+            {/* Grid 10x10 */}
             <Box
               sx={{
                 width: { xs: 'calc(100vw - 32px)', sm: 'calc(100vw - 64px)', md: '100%' },
@@ -288,7 +306,7 @@ export default function NewStorePage({
                       ...getCellSx(idx),
                       borderRadius: 1.2,
                       userSelect: 'none',
-                      cursor: isIndisponivel(idx) ? 'not-allowed' : 'pointer',
+                      cursor: (isIndisponivel(idx) || isReservado(idx)) ? 'not-allowed' : 'pointer',
                       aspectRatio: '1 / 1',
                       display: 'flex',
                       alignItems: 'center',
@@ -303,9 +321,9 @@ export default function NewStorePage({
               </Box>
             </Box>
           </Paper>
-          {/* === FIM CARTELA === */}
+          {/* Fim Cartela */}
 
-          {/* Demais seções (abaixo da cartela) */}
+          {/* Demais seções */}
           <Paper variant="outlined" sx={{ p: { xs: 2, md: 3 } }}>
             <Stack spacing={1.5}>
               <Typography sx={{ color: '#ff6b6b', fontWeight: 800, letterSpacing: 0.5 }}>
@@ -380,7 +398,7 @@ export default function NewStorePage({
             </Stack>
           </Paper>
 
-          {/* === NOVA SEÇÃO: CONVITE PARA O GRUPO === */}
+          {/* Convite para o grupo */}
           <Paper
             variant="outlined"
             sx={{
@@ -428,7 +446,7 @@ export default function NewStorePage({
                 {selecionados.slice().sort((a, b) => a - b).map(pad2).join(', ')}
               </Typography>
 
-              {/* >>> NOVO: Total da seleção (preserva o layout) */}
+              {/* Total da seleção */}
               <Typography variant="body1" sx={{ mt: 0.5, mb: 1 }}>
                 Total: <strong>R$ {(selecionados.length * PRICE).toFixed(2)}</strong>
               </Typography>
@@ -497,7 +515,6 @@ export default function NewStorePage({
           }
         }}
       />
-
     </ThemeProvider>
   );
 }
