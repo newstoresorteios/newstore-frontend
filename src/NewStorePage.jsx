@@ -67,33 +67,71 @@ const PRICE = Number(process.env.REACT_APP_PIX_PRICE) || 55;
 // Base do backend
 const API_BASE = (process.env.REACT_APP_API_BASE || '').replace(/\/+$/, '');
 
+// ==== Helpers de API (token + reserva) ====
+function getAuthToken() {
+  return (
+    localStorage.getItem('token') ||
+    localStorage.getItem('access_token') ||
+    localStorage.getItem('jwt') ||
+    ''
+  );
+}
+
+async function reserveNumbers(numbers) {
+  if (!API_BASE) throw new Error('API base não configurada');
+  const token = getAuthToken();
+  const r = await fetch(`${API_BASE}/api/reservations`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    credentials: 'include',
+    body: JSON.stringify({ numbers }),
+  });
+
+  if (r.status === 409) {
+    const j = await r.json().catch(() => ({}));
+    const conflitantes = j?.conflicts || j?.n || [];
+    throw new Error(
+      `Alguns números ficaram indisponíveis: ${
+        Array.isArray(conflitantes) ? conflitantes.join(', ') : conflitantes
+      }`
+    );
+  }
+  if (!r.ok) {
+    const j = await r.json().catch(() => ({}));
+    const msg =
+      j?.error === 'no_open_draw'
+        ? 'Não há um sorteio aberto no momento.'
+        : j?.error || 'reserve_failed';
+    throw new Error(`Falha ao reservar: ${msg}`);
+  }
+  return r.json(); // { reservationId, drawId, expiresAt, numbers }
+}
+
 // Normaliza qualquer resposta do backend para { confirmed: number[], pending: number[] }
 function normalizeNumbersPayload(json) {
   if (!json || typeof json !== 'object') return { confirmed: [], pending: [] };
 
-  // formatos aceitos:
-  // 1) { confirmed: [...], pending: [...] }
   if (Array.isArray(json.confirmed) || Array.isArray(json.pending)) {
     return {
       confirmed: (json.confirmed || []).map(Number),
       pending: (json.pending || []).map(Number),
     };
   }
-  // 2) { paid: [...], reserved: [...] }
   if (Array.isArray(json.paid) || Array.isArray(json.reserved)) {
     return {
       confirmed: (json.paid || []).map(Number),
       pending: (json.reserved || []).map(Number),
     };
   }
-  // 3) { reserved: { confirmed: [...], pending: [...] } }
   if (json.reserved && (Array.isArray(json.reserved.confirmed) || Array.isArray(json.reserved.pending))) {
     return {
       confirmed: (json.reserved.confirmed || []).map(Number),
       pending: (json.reserved.pending || []).map(Number),
     };
   }
-  // 4) { numbers: { paid: [...], pending: [...] } } ou variações
   if (json.numbers) {
     const n = json.numbers;
     return {
@@ -101,7 +139,6 @@ function normalizeNumbersPayload(json) {
       pending: (n.pending || n.reserved || []).map(Number),
     };
   }
-  // fallback vazio
   return { confirmed: [], pending: [] };
 }
 
@@ -110,19 +147,14 @@ async function fetchReservedFromBackend(authToken) {
   if (!API_BASE) return { confirmed: [], pending: [] };
 
   const headers = { 'Content-Type': 'application/json' };
-  const token =
-    authToken ||
-    localStorage.getItem('token') ||
-    localStorage.getItem('access_token') ||
-    localStorage.getItem('jwt');
-
+  const token = authToken || getAuthToken();
   if (token) headers['Authorization'] = `Bearer ${token}`;
 
   const endpoints = [
     `${API_BASE}/api/numbers/status`,
     `${API_BASE}/numbers/status`,
     `${API_BASE}/draws/current/numbers`,
-    `${API_BASE}/numbers`, // deve retornar algum shape com paid/reserved
+    `${API_BASE}/numbers`,
   ];
 
   for (const url of endpoints) {
@@ -131,7 +163,7 @@ async function fetchReservedFromBackend(authToken) {
       if (!r.ok) continue;
       const j = await r.json();
       return normalizeNumbersPayload(j);
-    } catch (_) {
+    } catch {
       // tenta o próximo
     }
   }
@@ -139,7 +171,6 @@ async function fetchReservedFromBackend(authToken) {
 }
 
 export default function NewStorePage({
-  // Se vierem via props, eles são usados como fallback inicial até buscar no backend
   reservados: reservadosProp = [],
   indisponiveis: indisponiveisProp = [],
   onIrParaPagamento,
@@ -150,20 +181,16 @@ export default function NewStorePage({
   const { isAuthenticated, logout } = useAuth();
 
   // ================== Estados de backend ==================
-  // confirmed/pagos → INDISPONÍVEIS (vermelho)
   const [confirmedPaid, setConfirmedPaid] = React.useState(
     Array.isArray(indisponiveisProp) ? indisponiveisProp.map(Number) : []
   );
-  // pendentes (reservados aguardando pagamento/confirmação) → RESERVADO (amarelo)
   const [pendingReserved, setPendingReserved] = React.useState(
     Array.isArray(reservadosProp) ? reservadosProp.map(Number) : []
   );
 
-  // Sets derivados para performance/includes seguros (normaliza para number)
   const reservadosSet    = React.useMemo(() => new Set(pendingReserved.map(Number)), [pendingReserved]);
   const indisponiveisSet = React.useMemo(() => new Set(confirmedPaid.map(Number)), [confirmedPaid]);
 
-  // Polling: carrega ao montar e atualiza a cada 15s
   React.useEffect(() => {
     let active = true;
     async function load() {
@@ -197,21 +224,34 @@ export default function NewStorePage({
   const [pixData, setPixData] = React.useState(null);
   const [pixAmount, setPixAmount] = React.useState(0);
 
+  // >>> Alterado: cria reserva antes de gerar o PIX
   const handleIrPagamento = async () => {
     setOpen(false);
     if (!isAuthenticated) {
       navigate('/login', { replace: false, state: { from: '/', wantPay: true } });
       return;
     }
-    const amount = selecionados.length * PRICE;
-    setPixAmount(amount);
-    setPixOpen(true);
-    setPixLoading(true);
+
     try {
-      const data = await createPixPayment({ orderId: String(Date.now()), amount, numbers: selecionados });
+      // 1) Cria/valida a reserva
+      const { reservationId } = await reserveNumbers(selecionados);
+      const amount = selecionados.length * PRICE;
+
+      // 2) Abre modal e chama o backend do PIX
+      setPixAmount(amount);
+      setPixOpen(true);
+      setPixLoading(true);
+
+      const data = await createPixPayment({
+        orderId: String(Date.now()),
+        amount,
+        numbers: selecionados,
+        reservationId, // importante
+      });
+
       setPixData(data);
     } catch (e) {
-      alert(e.message || 'Falha ao gerar PIX');
+      alert(e.message || 'Falha ao iniciar pagamento.');
       setPixOpen(false);
     } finally {
       setPixLoading(false);
