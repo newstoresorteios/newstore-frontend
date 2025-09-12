@@ -14,7 +14,7 @@ const API_BASE = (
 const AuthContext = createContext({
   isAuthenticated: false,
   user: null,
-  login: async (_){},
+  login: async (_)=>{},
   logout: () => {},
   loading: true,
 });
