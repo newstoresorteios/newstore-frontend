@@ -8,16 +8,16 @@ const API_BASE =
   ).replace(/\/+$/, '');
 
 const USE_BACKEND =
-  String(process.env.REACT_APP_USE_BACKEND || process.env.REACT_APP_AUTH_PROVIDER === 'backend')
-    .toLowerCase() === 'true';
+  String(
+    process.env.REACT_APP_USE_BACKEND ||
+    (process.env.REACT_APP_AUTH_PROVIDER === 'backend')
+  ).toLowerCase() === 'true';
 
 /* -------------------- Auth helpers -------------------- */
 function sanitizeToken(t) {
   if (!t) return '';
   let s = String(t).trim();
-  if ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'"))) {
-    s = s.slice(1, -1);
-  }
+  if ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'"))) s = s.slice(1, -1);
   if (/^Bearer\s+/i.test(s)) s = s.replace(/^Bearer\s+/i, '').trim();
   return s.replace(/\s+/g, '');
 }
@@ -91,7 +91,7 @@ async function createPixMock({ amount }) {
   const paymentId = String(Math.floor(1e9 + Math.random() * 9e9));
   const cents = String(Number(amount || 0).toFixed(2)).replace('.', '');
   const copy = `00020126580014br.gov.bcb.pix0136EXEMPLO-PIX-NAO-PAGAVEL520400005303986540${cents}`;
-  const pngBase64 = ''; // poderia colocar um base64 de QR fake se quiser
+  const pngBase64 = '';
   return {
     id: paymentId,
     paymentId,
@@ -106,7 +106,7 @@ async function createPixMock({ amount }) {
 
 /* -------------------- API principal para a UI -------------------- */
 /**
- * createPixPayment
+ * createPixPayment:
  * - Se USE_BACKEND=true:
  *    - usa reservationId já criado OU cria a reserva
  *    - chama o backend para gerar o PIX
@@ -117,7 +117,7 @@ export async function createPixPayment({
   amount,
   numbers = [],
   customer,
-  reservationId,        // <<< aceita id já criado
+  reservationId,        // aceita id já criado
 } = {}) {
   if (!USE_BACKEND) return createPixMock({ amount });
 
@@ -128,7 +128,6 @@ export async function createPixPayment({
       const r = await createReservationBackend(numbers);
       rid = r?.reservationId || r?.id || r;
     } catch (e) {
-      // Mostra mensagem mais amigável para 409
       if (e.status === 409) {
         const conflicts = Array.isArray(e.body?.conflicts) ? e.body.conflicts.join(', ') : e.body?.n || '';
         throw new Error(`Alguns números ficaram indisponíveis: ${conflicts}`);
