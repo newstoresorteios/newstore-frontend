@@ -1,4 +1,6 @@
 // src/services/me.js
+import supabase from '../utils/supabaseClient';
+
 const API_BASE_URL = (process.env.REACT_APP_API_BASE_URL || 'http://localhost:4000').replace(/\/+$/,'');
 
 function getAuthToken() {
@@ -25,4 +27,10 @@ async function doFetch(url, opts = {}) {
 export async function getMyReservations() {
   const json = await doFetch(`${API_BASE_URL}/api/me/reservations`);
   return json.reservations || [];
+}
+
+export async function pingSupabase() {
+  const { data, error } = await supabase.from('teste').select('*').limit(1); // troque 'teste' por uma tabela existente
+  if (error) throw error;
+  return data;
 }
