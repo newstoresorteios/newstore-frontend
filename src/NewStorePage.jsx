@@ -61,24 +61,123 @@ const pad2 = (n) => n.toString().padStart(2, '0');
 const RESULTADOS_LOTERIAS =
   'https://asloterias.com.br/todos-resultados-loteria-federal';
 
-// Mocks
-const MOCK_RESERVADOS = [];
-const MOCK_INDISPONIVEIS = [];
-
 // PREÇO por número (ENV ou 55)
 const PRICE = Number(process.env.REACT_APP_PIX_PRICE) || 55;
 
+// Base do backend
+const API_BASE = (process.env.REACT_APP_API_BASE || '').replace(/\/+$/, '');
+
+// Normaliza qualquer resposta do backend para { confirmed: number[], pending: number[] }
+function normalizeNumbersPayload(json) {
+  if (!json || typeof json !== 'object') return { confirmed: [], pending: [] };
+
+  // formatos aceitos:
+  // 1) { confirmed: [...], pending: [...] }
+  if (Array.isArray(json.confirmed) || Array.isArray(json.pending)) {
+    return {
+      confirmed: (json.confirmed || []).map(Number),
+      pending: (json.pending || []).map(Number),
+    };
+  }
+  // 2) { paid: [...], reserved: [...] }
+  if (Array.isArray(json.paid) || Array.isArray(json.reserved)) {
+    return {
+      confirmed: (json.paid || []).map(Number),
+      pending: (json.reserved || []).map(Number),
+    };
+  }
+  // 3) { reserved: { confirmed: [...], pending: [...] } }
+  if (json.reserved && (Array.isArray(json.reserved.confirmed) || Array.isArray(json.reserved.pending))) {
+    return {
+      confirmed: (json.reserved.confirmed || []).map(Number),
+      pending: (json.reserved.pending || []).map(Number),
+    };
+  }
+  // 4) { numbers: { paid: [...], pending: [...] } } ou variações
+  if (json.numbers) {
+    const n = json.numbers;
+    return {
+      confirmed: (n.confirmed || n.paid || []).map(Number),
+      pending: (n.pending || n.reserved || []).map(Number),
+    };
+  }
+  // fallback vazio
+  return { confirmed: [], pending: [] };
+}
+
+// Busca os números no backend com alguns endpoints comuns
+async function fetchReservedFromBackend(authToken) {
+  if (!API_BASE) return { confirmed: [], pending: [] };
+
+  const headers = { 'Content-Type': 'application/json' };
+  const token =
+    authToken ||
+    localStorage.getItem('token') ||
+    localStorage.getItem('access_token') ||
+    localStorage.getItem('jwt');
+
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+
+  const endpoints = [
+    `${API_BASE}/api/numbers/status`,
+    `${API_BASE}/numbers/status`,
+    `${API_BASE}/draws/current/numbers`,
+    `${API_BASE}/numbers`, // deve retornar algum shape com paid/reserved
+  ];
+
+  for (const url of endpoints) {
+    try {
+      const r = await fetch(url, { headers, credentials: 'include' });
+      if (!r.ok) continue;
+      const j = await r.json();
+      return normalizeNumbersPayload(j);
+    } catch (_) {
+      // tenta o próximo
+    }
+  }
+  return { confirmed: [], pending: [] };
+}
+
 export default function NewStorePage({
-  reservados = MOCK_RESERVADOS,
-  indisponiveis = MOCK_INDISPONIVEIS,
+  // Se vierem via props, eles são usados como fallback inicial até buscar no backend
+  reservados: reservadosProp = [],
+  indisponiveis: indisponiveisProp = [],
   onIrParaPagamento,
-  groupUrl = 'https://wa.me/5599999999999?text=Quero%20participar%20do%20sorteio%20New%20Store',
+  groupUrl = 'https://chat.whatsapp.com/LoHdJ8887Ku4RTsHgFQ102',
 }) {
   const navigate = useNavigate();
   const { selecionados, setSelecionados, limparSelecao } = React.useContext(SelectionContext);
   const { isAuthenticated, logout } = useAuth();
 
-  // menu avatar
+  // ================== Estados de backend ==================
+  // confirmed/pagos → INDISPONÍVEIS (vermelho)
+  const [confirmedPaid, setConfirmedPaid] = React.useState(
+    Array.isArray(indisponiveisProp) ? indisponiveisProp.map(Number) : []
+  );
+  // pendentes (reservados aguardando pagamento/confirmação) → RESERVADO (amarelo)
+  const [pendingReserved, setPendingReserved] = React.useState(
+    Array.isArray(reservadosProp) ? reservadosProp.map(Number) : []
+  );
+
+  // Sets derivados para performance/includes seguros (normaliza para number)
+  const reservadosSet    = React.useMemo(() => new Set(pendingReserved.map(Number)), [pendingReserved]);
+  const indisponiveisSet = React.useMemo(() => new Set(confirmedPaid.map(Number)), [confirmedPaid]);
+
+  // Polling: carrega ao montar e atualiza a cada 15s
+  React.useEffect(() => {
+    let active = true;
+    async function load() {
+      const { confirmed, pending } = await fetchReservedFromBackend();
+      if (!active) return;
+      setConfirmedPaid(Array.from(new Set((confirmed || []).map(Number))));
+      setPendingReserved(Array.from(new Set((pending || []).map(Number))));
+    }
+    load();
+    const id = setInterval(load, 15000);
+    return () => { active = false; clearInterval(id); };
+  }, []);
+
+  // ================== Menu/UX ==================
   const [menuEl, setMenuEl] = React.useState(null);
   const menuOpen = Boolean(menuEl);
   const handleOpenMenu = (e) => setMenuEl(e.currentTarget);
@@ -119,16 +218,13 @@ export default function NewStorePage({
     }
   };
 
-  // ===== Cartela: normalização e helpers =====
-  const reservadosSet = React.useMemo(() => new Set((reservados || []).map(Number)), [reservados]);
-  const indisponiveisSet = React.useMemo(() => new Set((indisponiveis || []).map(Number)), [indisponiveis]);
-
-  const isReservado = (n) => reservadosSet.has(n);
-  const isIndisponivel = (n) => indisponiveisSet.has(n);
+  // ===== Cartela: regras de clique/estilo =====
+  const isReservado = (n) => reservadosSet.has(n);       // pendente
+  const isIndisponivel = (n) => indisponiveisSet.has(n); // confirmado/pago
   const isSelecionado = (n) => selecionados.includes(n);
 
   const handleClickNumero = (n) => {
-    if (isIndisponivel(n) || isReservado(n)) return; // bloqueia clique
+    if (isIndisponivel(n) || isReservado(n)) return; // bloqueia
     setSelecionados((prev) => (prev.includes(n) ? prev.filter((x) => x !== n) : [...prev, n]));
   };
 
@@ -144,7 +240,6 @@ export default function NewStorePage({
       };
     }
     if (isReservado(n)) {
-      // reservado: aparência distinta do selecionado
       return {
         border: '2px dashed',
         borderColor: 'secondary.main',
@@ -155,7 +250,6 @@ export default function NewStorePage({
       };
     }
     if (isSelecionado(n)) {
-      // selecionado
       return {
         border: '2px solid',
         borderColor: 'secondary.main',
@@ -253,12 +347,12 @@ export default function NewStorePage({
                 <Chip size="small" label="DISPONÍVEL" sx={{ bgcolor: 'primary.main', color: '#0E0E0E', fontWeight: 700 }} />
                 <Chip
                   size="small"
-                  label={`RESERVADO${reservadosSet.size ? ` • ${reservadosSet.size}` : ''}`}
+                  label={`RESERVADO • ${reservadosSet.size}`}
                   sx={{ bgcolor: 'rgba(255,193,7,0.08)', border: '1px dashed', borderColor: 'secondary.main', color: 'secondary.main', fontWeight: 700 }}
                 />
                 <Chip
                   size="small"
-                  label={`INDISPONÍVEL${indisponiveisSet.size ? ` • ${indisponiveisSet.size}` : ''}`}
+                  label={`INDISPONÍVEL • ${indisponiveisSet.size}`}
                   sx={{ bgcolor: 'rgba(211,47,47,0.18)', border: '1px solid', borderColor: 'error.main', color: 'error.main', fontWeight: 700 }}
                 />
                 {!!selecionados.length && (
@@ -446,7 +540,6 @@ export default function NewStorePage({
                 {selecionados.slice().sort((a, b) => a - b).map(pad2).join(', ')}
               </Typography>
 
-              {/* Total da seleção */}
               <Typography variant="body1" sx={{ mt: 0.5, mb: 1 }}>
                 Total: <strong>R$ {(selecionados.length * PRICE).toFixed(2)}</strong>
               </Typography>
