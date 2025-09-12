@@ -8,10 +8,8 @@ const API_BASE =
   ).replace(/\/+$/, '');
 
 const USE_BACKEND =
-  String(
-    process.env.REACT_APP_USE_BACKEND ||
-    (process.env.REACT_APP_AUTH_PROVIDER === 'backend')
-  ).toLowerCase() === 'true';
+  String(process.env.REACT_APP_USE_BACKEND || (process.env.REACT_APP_AUTH_PROVIDER === 'backend'))
+    .toLowerCase() === 'true';
 
 /* -------------------- Auth helpers -------------------- */
 function sanitizeToken(t) {
@@ -47,21 +45,20 @@ async function doFetch(url, opts = {}) {
 
   const res = await fetch(url, { ...opts, headers, credentials: 'include' });
 
-  // Tenta extrair json/erro para propagar mensagens úteis
-  let bodyText = '';
-  try { bodyText = await res.text(); } catch {}
-  const tryJson = () => { try { return JSON.parse(bodyText || '{}'); } catch { return {}; } };
+  let text = '';
+  try { text = await res.text(); } catch {}
+  const asJson = () => { try { return JSON.parse(text || '{}'); } catch { return {}; } };
 
   if (!res.ok) {
-    const j = tryJson();
-    const msg = j?.error ? String(j.error) : (bodyText && bodyText.length < 400 ? bodyText : '');
-    const err = new Error(msg || `HTTP ${res.status}`);
+    const j = asJson();
+    const msg = j?.error ? String(j.error) : (text && text.length < 400 ? text : `HTTP ${res.status}`);
+    const err = new Error(msg);
     err.status = res.status;
     err.body = j;
     throw err;
   }
   if (res.status === 204) return null;
-  return bodyText ? JSON.parse(bodyText) : null;
+  return text ? JSON.parse(text) : null;
 }
 
 /* -------------------- Backend calls -------------------- */
@@ -91,13 +88,12 @@ async function createPixMock({ amount }) {
   const paymentId = String(Math.floor(1e9 + Math.random() * 9e9));
   const cents = String(Number(amount || 0).toFixed(2)).replace('.', '');
   const copy = `00020126580014br.gov.bcb.pix0136EXEMPLO-PIX-NAO-PAGAVEL520400005303986540${cents}`;
-  const pngBase64 = '';
   return {
     id: paymentId,
     paymentId,
     status: 'pending',
     qr_code: copy,
-    qr_code_base64: pngBase64,
+    qr_code_base64: '',
     copy_paste_code: copy,
     amount,
     expires_in: 30 * 60,
@@ -105,29 +101,23 @@ async function createPixMock({ amount }) {
 }
 
 /* -------------------- API principal para a UI -------------------- */
-/**
- * createPixPayment:
- * - Se USE_BACKEND=true:
- *    - usa reservationId já criado OU cria a reserva
- *    - chama o backend para gerar o PIX
- * - Se USE_BACKEND=false: usa mock local
- */
 export async function createPixPayment({
   orderId,
   amount,
   numbers = [],
   customer,
-  reservationId,        // aceita id já criado
+  reservationId,
 } = {}) {
   if (!USE_BACKEND) return createPixMock({ amount });
 
-  // 1) Garante uma reserva válida (caso não tenha vindo pronta)
+  // 1) Garante uma reserva válida (se não foi passada)
   let rid = (reservationId || '').trim();
   if (!rid) {
     try {
       const r = await createReservationBackend(numbers);
       rid = r?.reservationId || r?.id || r;
     } catch (e) {
+      if (e.status === 401) throw new Error('Você precisa entrar para reservar e pagar.');
       if (e.status === 409) {
         const conflicts = Array.isArray(e.body?.conflicts) ? e.body.conflicts.join(', ') : e.body?.n || '';
         throw new Error(`Alguns números ficaram indisponíveis: ${conflicts}`);
@@ -136,10 +126,10 @@ export async function createPixPayment({
     }
   }
 
-  // 2) Solicita o PIX no backend
+  // 2) Solicita o PIX
   const data = await createPixBackend(rid);
 
-  // 3) Normaliza para a UI
+  // 3) Normaliza
   return {
     paymentId: data.paymentId || data.id,
     id: data.paymentId || data.id,
