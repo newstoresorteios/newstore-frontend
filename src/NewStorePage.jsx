@@ -64,50 +64,25 @@ const RESULTADOS_LOTERIAS =
 // PREÇO por número (ENV ou 55)
 const PRICE = Number(process.env.REACT_APP_PIX_PRICE) || 55;
 
-// Base do backend
+// Base do backend (usada apenas para listar status dos números)
 const API_BASE = (process.env.REACT_APP_API_BASE || '').replace(/\/+$/, '');
 
-// ==== Helpers de API (token + reserva) ====
+// ==== Auth helper (para endpoints de status) ====
 function getAuthToken() {
-  return (
-    localStorage.getItem('token') ||
-    localStorage.getItem('access_token') ||
-    localStorage.getItem('jwt') ||
-    ''
-  );
-}
-
-async function reserveNumbers(numbers) {
-  if (!API_BASE) throw new Error('API base não configurada');
-  const token = getAuthToken();
-  const r = await fetch(`${API_BASE}/api/reservations`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    },
-    credentials: 'include',
-    body: JSON.stringify({ numbers }),
-  });
-
-  if (r.status === 409) {
-    const j = await r.json().catch(() => ({}));
-    const conflitantes = j?.conflicts || j?.n || [];
-    throw new Error(
-      `Alguns números ficaram indisponíveis: ${
-        Array.isArray(conflitantes) ? conflitantes.join(', ') : conflitantes
-      }`
-    );
+  try {
+    const keys = ['ns_auth_token', 'authToken', 'token', 'jwt', 'access_token'];
+    for (const k of keys) {
+      const v =
+        localStorage.getItem(k) ||
+        sessionStorage.getItem(k) ||
+        '';
+      if (v) return v;
+    }
+    const cookie = document.cookie.match(/(?:^|;\s*)(token|jwt)=([^;]+)/i);
+    return cookie ? decodeURIComponent(cookie[2]) : '';
+  } catch {
+    return '';
   }
-  if (!r.ok) {
-    const j = await r.json().catch(() => ({}));
-    const msg =
-      j?.error === 'no_open_draw'
-        ? 'Não há um sorteio aberto no momento.'
-        : j?.error || 'reserve_failed';
-    throw new Error(`Falha ao reservar: ${msg}`);
-  }
-  return r.json(); // { reservationId, drawId, expiresAt, numbers }
 }
 
 // Normaliza qualquer resposta do backend para { confirmed: number[], pending: number[] }
@@ -224,34 +199,40 @@ export default function NewStorePage({
   const [pixData, setPixData] = React.useState(null);
   const [pixAmount, setPixAmount] = React.useState(0);
 
-  // >>> Alterado: cria reserva antes de gerar o PIX
+  // >>> Cria reserva + PIX pelo services/pix (único fluxo)
   const handleIrPagamento = async () => {
     setOpen(false);
+
     if (!isAuthenticated) {
       navigate('/login', { replace: false, state: { from: '/', wantPay: true } });
       return;
     }
+    if (!selecionados?.length) {
+      alert('Selecione pelo menos 1 número.');
+      return;
+    }
+
+    const amount = selecionados.length * PRICE;
+    setPixAmount(amount);
+    setPixOpen(true);
+    setPixLoading(true);
 
     try {
-      // 1) Cria/valida a reserva
-      const { reservationId } = await reserveNumbers(selecionados);
-      const amount = selecionados.length * PRICE;
-
-      // 2) Abre modal e chama o backend do PIX
-      setPixAmount(amount);
-      setPixOpen(true);
-      setPixLoading(true);
-
       const data = await createPixPayment({
         orderId: String(Date.now()),
         amount,
         numbers: selecionados,
-        reservationId, // importante
       });
 
-      setPixData(data);
-    } catch (e) {
-      alert(e.message || 'Falha ao iniciar pagamento.');
+      // Normaliza campos esperados pelo PixModal
+      setPixData({
+        paymentId: data.paymentId || data.id,
+        status: data.status || 'pending',
+        qr_code_base64: (data.qr_code_base64 || '').replace(/\s/g, ''),
+        copy_paste_code: data.copy_paste_code || data.qr_code || '',
+      });
+    } catch (err) {
+      alert(err?.message || 'Falha ao gerar PIX');
       setPixOpen(false);
     } finally {
       setPixLoading(false);
@@ -632,7 +613,12 @@ export default function NewStorePage({
         loading={pixLoading}
         data={pixData}
         amount={pixAmount}
-        onCopy={() => { if (pixData) { navigator.clipboard.writeText(pixData.copy_paste_code || pixData.qr_code || ''); } }}
+        onCopy={() => {
+          if (pixData?.copy_paste_code || pixData?.qr_code) {
+            navigator.clipboard.writeText(pixData.copy_paste_code || pixData.qr_code);
+            alert('Código copiado!');
+          }
+        }}
         onRefresh={async () => {
           if (!pixData?.paymentId) { setPixOpen(false); return; }
           try {
@@ -643,7 +629,7 @@ export default function NewStorePage({
             } else {
               alert(`Status: ${st.status || 'pendente'}`);
             }
-          } catch (e) {
+          } catch {
             alert('Não foi possível consultar o status agora.');
           }
         }}
