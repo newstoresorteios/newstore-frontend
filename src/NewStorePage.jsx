@@ -64,28 +64,7 @@ const RESULTADOS_LOTERIAS =
 // PREÇO por número (ENV ou 55)
 const PRICE = Number(process.env.REACT_APP_PIX_PRICE) || 55;
 
-// Base do backend (usada apenas para listar status dos números)
-const API_BASE = (process.env.REACT_APP_API_BASE || '').replace(/\/+$/, '');
-
-// ==== Auth helper (para endpoints de status) ====
-function getAuthToken() {
-  try {
-    const keys = ['ns_auth_token', 'authToken', 'token', 'jwt', 'access_token'];
-    for (const k of keys) {
-      const v =
-        localStorage.getItem(k) ||
-        sessionStorage.getItem(k) ||
-        '';
-      if (v) return v;
-    }
-    const cookie = document.cookie.match(/(?:^|;\s*)(token|jwt)=([^;]+)/i);
-    return cookie ? decodeURIComponent(cookie[2]) : '';
-  } catch {
-    return '';
-  }
-}
-
-// Normaliza qualquer resposta do backend para { confirmed: number[], pending: number[] }
+// ==== Normalização dos payloads de “números” do backend ====
 function normalizeNumbersPayload(json) {
   if (!json || typeof json !== 'object') return { confirmed: [], pending: [] };
 
@@ -117,12 +96,22 @@ function normalizeNumbersPayload(json) {
   return { confirmed: [], pending: [] };
 }
 
-// Busca os números no backend com alguns endpoints comuns
-async function fetchReservedFromBackend(authToken) {
+// Busca números pagos/reservados em alguns endpoints comuns do backend
+async function fetchReservedFromBackend() {
+  const API_BASE = (process.env.REACT_APP_API_BASE || '').replace(/\/+$/, '');
   if (!API_BASE) return { confirmed: [], pending: [] };
 
+  // tenta achar um token salvo (se houver)
+  let token =
+    localStorage.getItem('ns_auth_token') ||
+    localStorage.getItem('authToken') ||
+    localStorage.getItem('token') ||
+    localStorage.getItem('jwt') ||
+    '';
+
+  if (token && /^Bearer\s+/i.test(token)) token = token.replace(/^Bearer\s+/i, '').trim();
+
   const headers = { 'Content-Type': 'application/json' };
-  const token = authToken || getAuthToken();
   if (token) headers['Authorization'] = `Bearer ${token}`;
 
   const endpoints = [
@@ -166,6 +155,7 @@ export default function NewStorePage({
   const reservadosSet    = React.useMemo(() => new Set(pendingReserved.map(Number)), [pendingReserved]);
   const indisponiveisSet = React.useMemo(() => new Set(confirmedPaid.map(Number)), [confirmedPaid]);
 
+  // carrega periodicamente os números do backend
   React.useEffect(() => {
     let active = true;
     async function load() {
@@ -199,40 +189,30 @@ export default function NewStorePage({
   const [pixData, setPixData] = React.useState(null);
   const [pixAmount, setPixAmount] = React.useState(0);
 
-  // >>> Cria reserva + PIX pelo services/pix (único fluxo)
+  // >>> Agora deixa o services/pix.js fazer: reserva -> PIX
   const handleIrPagamento = async () => {
     setOpen(false);
-
     if (!isAuthenticated) {
       navigate('/login', { replace: false, state: { from: '/', wantPay: true } });
       return;
     }
-    if (!selecionados?.length) {
-      alert('Selecione pelo menos 1 número.');
-      return;
-    }
-
-    const amount = selecionados.length * PRICE;
-    setPixAmount(amount);
-    setPixOpen(true);
-    setPixLoading(true);
 
     try {
+      const amount = selecionados.length * PRICE;
+
+      setPixAmount(amount);
+      setPixOpen(true);
+      setPixLoading(true);
+
       const data = await createPixPayment({
         orderId: String(Date.now()),
         amount,
-        numbers: selecionados,
+        numbers: selecionados,   // o services/pix vai reservar e gerar o PIX
       });
 
-      // Normaliza campos esperados pelo PixModal
-      setPixData({
-        paymentId: data.paymentId || data.id,
-        status: data.status || 'pending',
-        qr_code_base64: (data.qr_code_base64 || '').replace(/\s/g, ''),
-        copy_paste_code: data.copy_paste_code || data.qr_code || '',
-      });
-    } catch (err) {
-      alert(err?.message || 'Falha ao gerar PIX');
+      setPixData(data);
+    } catch (e) {
+      alert(e.message || 'Falha ao iniciar pagamento.');
       setPixOpen(false);
     } finally {
       setPixLoading(false);
@@ -613,12 +593,7 @@ export default function NewStorePage({
         loading={pixLoading}
         data={pixData}
         amount={pixAmount}
-        onCopy={() => {
-          if (pixData?.copy_paste_code || pixData?.qr_code) {
-            navigator.clipboard.writeText(pixData.copy_paste_code || pixData.qr_code);
-            alert('Código copiado!');
-          }
-        }}
+        onCopy={() => { if (pixData) { navigator.clipboard.writeText(pixData.copy_paste_code || pixData.qr_code || ''); } }}
         onRefresh={async () => {
           if (!pixData?.paymentId) { setPixOpen(false); return; }
           try {
@@ -629,7 +604,7 @@ export default function NewStorePage({
             } else {
               alert(`Status: ${st.status || 'pendente'}`);
             }
-          } catch {
+          } catch (e) {
             alert('Não foi possível consultar o status agora.');
           }
         }}
