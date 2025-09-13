@@ -68,6 +68,13 @@ const MOCK_INDISPONIVEIS = [];
 // PREÇO por número (ENV ou 55) — usado no total e no PIX
 const PRICE = Number(process.env.REACT_APP_PIX_PRICE) || 55;
 
+// Base do backend (sem alterar nada do layout)
+const API_BASE = (
+  process.env.REACT_APP_API_BASE_URL ||
+  process.env.REACT_APP_API_BASE ||
+  'https://newstore-backend.onrender.com'
+).replace(/\/+$/, '');
+
 export default function NewStorePage({
   reservados = MOCK_RESERVADOS,
   indisponiveis = MOCK_INDISPONIVEIS,
@@ -78,6 +85,49 @@ export default function NewStorePage({
   const navigate = useNavigate();
   const { selecionados, setSelecionados, limparSelecao } = React.useContext(SelectionContext);
   const { isAuthenticated, logout } = useAuth();
+
+  // === NOVO: estados somente para pintar reservados/indisponíveis vindos do backend
+  const [srvReservados, setSrvReservados] = React.useState([]);
+  const [srvIndisponiveis, setSrvIndisponiveis] = React.useState([]);
+
+  // Polling leve para /api/numbers (sem mexer no resto)
+  React.useEffect(() => {
+    let alive = true;
+
+    async function load() {
+      try {
+        const res = await fetch(`${API_BASE}/api/numbers`, {
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+        });
+        if (!res.ok) return;
+        const j = await res.json();
+        const reserv = [];
+        const indis  = [];
+        for (const it of j?.numbers || []) {
+          if (String(it.status) === 'reserved') reserv.push(Number(it.n));
+          if (String(it.status) === 'sold')     indis.push(Number(it.n));
+        }
+        if (!alive) return;
+        setSrvReservados(Array.from(new Set(reserv)));
+        setSrvIndisponiveis(Array.from(new Set(indis)));
+      } catch {}
+    }
+
+    load();
+    const id = setInterval(load, 15000);
+    return () => { alive = false; clearInterval(id); };
+  }, []);
+
+  // Combina o que vier por props com o que veio do backend (sem mudar nomes/assinaturas)
+  const reservadosAll = React.useMemo(
+    () => Array.from(new Set([...(reservados || []), ...srvReservados])),
+    [reservados, srvReservados]
+  );
+  const indisponiveisAll = React.useMemo(
+    () => Array.from(new Set([...(indisponiveis || []), ...srvIndisponiveis])),
+    [indisponiveis, srvIndisponiveis]
+  );
 
   // menu avatar
   const [menuEl, setMenuEl] = React.useState(null);
@@ -118,8 +168,8 @@ export default function NewStorePage({
   };
 
   // cartela
-  const isReservado = (n) => reservados.includes(n);
-  const isIndisponivel = (n) => indisponiveis.includes(n);
+  const isReservado = (n) => reservadosAll.includes(n);
+  const isIndisponivel = (n) => indisponiveisAll.includes(n);
   const isSelecionado = (n) => selecionados.includes(n);
   const handleClickNumero = (n) => {
     if (isIndisponivel(n)) return;
