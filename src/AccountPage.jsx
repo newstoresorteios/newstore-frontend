@@ -476,16 +476,18 @@ export default function AccountPage() {
             )}
 
             <Stack direction="row" justifyContent="flex-end" gap={1.5} sx={{ mt: 2 }}>
-              <Button variant="outlined" color="error" onClick={limparSelecao}>
-                Limpar meus números
-              </Button>
-              <Button
-                variant="contained"
-                color="success"
-                onClick={() => alert('Resgatar cupom: ' + cupom)}
-              >
-                Resgatar cupom
-              </Button>
+              
+             <Button
+              component="a"
+              href="http://newstorerj.com.br/"
+              target="_blank"
+              rel="noopener"
+              variant="contained"
+              color="success"
+            >
+              Resgatar cupom
+            </Button>
+
               <Button variant="text" onClick={doLogout}>
                 Sair
               </Button>
