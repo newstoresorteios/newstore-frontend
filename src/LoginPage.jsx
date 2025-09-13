@@ -13,11 +13,7 @@ import logoNewStore from "./Logo-branca-sem-fundo-768x132.png";
 import { useAuth } from "./authContext";
 
 const theme = createTheme({
-  palette: {
-    mode: "dark",
-    primary: { main: "#67C23A" },
-    background: { default: "#0E0E0E", paper: "#121212" },
-  },
+  palette: { mode: "dark", primary: { main: "#67C23A" }, background: { default: "#0E0E0E", paper: "#121212" } },
   shape: { borderRadius: 12 },
   typography: { fontFamily: ['Inter','system-ui','Segoe UI','Roboto','Arial'].join(',') }
 });
@@ -31,10 +27,11 @@ const authHeaders = () => {
   return tk ? { Authorization: `Bearer ${tk}` } : {};
 };
 
-const ADMIN_EMAIL_FALLBACK = "admin@newstore.com.br"; // fallback caso /me não traga is_admin
+// fallback por e-mail caso /api/me não traga is_admin por algum motivo
+const ADMIN_EMAIL_FALLBACK = "admin@newstore.com.br";
 
 export default function LoginPage() {
-  const { login } = useAuth();
+  const { login, user } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const from = location.state?.from?.pathname || "/conta";
@@ -46,18 +43,25 @@ export default function LoginPage() {
   const [error, setError] = React.useState("");
   const [loading, setLoading] = React.useState(false);
 
+  // Se o contexto já disser que é admin, redireciona automaticamente
+  React.useEffect(() => {
+    if (user?.is_admin) {
+      navigate("/admin", { replace: true });
+    }
+  }, [user, navigate]);
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError("");
+
     if (!/\S+@\S+\.\S+/.test(email)) { setError("Informe um e-mail válido."); return; }
     if (password.length < 6) { setError("A senha deve ter pelo menos 6 caracteres."); return; }
 
     try {
       setLoading(true);
-      // realiza o login (salva token/cookies via authContext)
-      await login({ email, password, remember });
+      await login({ email, password, remember }); // não faz navigate aqui
 
-      // depois do login, confirma o perfil no backend
+      // Confirma no backend quem é o usuário logado
       let isAdmin = false;
       try {
         const r = await fetch(`${API_BASE}/me`, {
@@ -69,16 +73,18 @@ export default function LoginPage() {
           const me = await r.json();
           isAdmin = !!me?.user?.is_admin;
         }
-      } catch {
-        // sem problema — usa fallback por e-mail se necessário
-      }
+      } catch {}
 
-      // fallback se /me não respondeu mas é o e-mail conhecido do admin
       if (!isAdmin && email.toLowerCase() === ADMIN_EMAIL_FALLBACK) {
         isAdmin = true;
       }
 
-      navigate(isAdmin ? "/admin" : from, { replace: true });
+      if (isAdmin) {
+        // força o redirect para evitar que qualquer guard anterior sobreponha
+        navigate("/admin", { replace: true });
+      } else {
+        navigate(from, { replace: true });
+      }
     } catch (err) {
       setError(err?.message || "Falha ao entrar.");
     } finally {
@@ -97,10 +103,7 @@ export default function LoginPage() {
           <Box
             component={RouterLink}
             to="/"
-            sx={{
-              position: "absolute", left: "50%", top: "50%",
-              transform: "translate(-50%, -50%)", display: "flex", alignItems: "center"
-            }}
+            sx={{ position: "absolute", left: "50%", top: "50%", transform: "translate(-50%, -50%)", display: "flex", alignItems: "center" }}
           >
             <Box component="img" src={logoNewStore} alt="NEW STORE" sx={{ height: 40, objectFit: "contain" }} />
           </Box>
@@ -126,6 +129,7 @@ export default function LoginPage() {
               required
               autoComplete="email"
             />
+
             <TextField
               label="Senha"
               type={showPass ? "text" : "password"}
@@ -159,12 +163,7 @@ export default function LoginPage() {
               {loading ? "Entrando..." : "Entrar"}
             </Button>
 
-            <Button
-              component={RouterLink}
-              to="/cadastro"
-              variant="text"
-              sx={{ fontWeight: 700, mt: 1 }}
-            >
+            <Button component={RouterLink} to="/cadastro" variant="text" sx={{ fontWeight: 700, mt: 1 }}>
               Criar conta
             </Button>
 
