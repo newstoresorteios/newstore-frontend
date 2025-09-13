@@ -15,8 +15,25 @@ const theme = createTheme({
   palette: { mode: "dark", background: { default: "#0E0E0E", paper: "#121212" } },
 });
 
-const API_BASE = (process.env.REACT_APP_API_BASE_URL || "/api").replace(/\/+$/, "");
-const pad3 = (n) => n != null ? String(n).padStart(3, "0") : "--";
+// ---------- API base normalizada ----------
+const RAW_API_BASE =
+  process.env.REACT_APP_API_BASE_URL ||
+  process.env.REACT_APP_API_BASE ||
+  "/api";
+
+function normalizeApiBase(b) {
+  if (!b) return "/api";
+  let base = String(b).replace(/\/+$/, "");
+  // Se for http(s) e não terminar com /api, acrescenta /api
+  if (/^https?:\/\//i.test(base) && !/\/api$/i.test(base)) {
+    base += "/api";
+  }
+  return base;
+}
+const API_BASE = normalizeApiBase(RAW_API_BASE);
+
+// ---------- helpers ----------
+const pad3 = (n) => (n != null ? String(n).padStart(3, "0") : "--");
 const fmtDate = (v) => {
   if (!v) return "-";
   const d = new Date(v);
@@ -50,7 +67,7 @@ async function getJSON(path) {
 
 async function getFirst(paths) {
   for (const p of paths) {
-    try { return await getJSON(p); } catch { /* tenta próximo */ }
+    try { return await getJSON(p); } catch { /* tenta o próximo */ }
   }
   return null;
 }
@@ -77,7 +94,6 @@ function buildRows(payload) {
         it.usuario_vencedor ??
         "-";
 
-      // calcula dias aberto quando possível
       const dias =
         it.days_open ??
         it.dias_aberto ??
@@ -92,7 +108,6 @@ function buildRows(payload) {
         vencedor: winner || "-",
       };
     })
-    // ordena do mais recente para o mais antigo
     .sort((a, b) => Number(b.n || 0) - Number(a.n || 0));
 }
 
@@ -114,13 +129,12 @@ export default function AdminSorteios() {
     let alive = true;
     (async () => {
       try {
-        // Tenta alguns endpoints prováveis. Ajuste no backend para servir um destes.
         const payload = await getFirst([
-          "/admin/draws/history",  // preferencial
+          "/admin/draws/history",   // preferencial (backend novo)
           "/draws/history",
           "/admin/draws?status=closed",
           "/draws?status=closed",
-          "/draws"                 // fallback
+          "/draws"                  // fallback
         ]);
         if (alive && payload) setRows(buildRows(payload));
       } catch (e) {
