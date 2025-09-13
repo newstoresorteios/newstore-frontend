@@ -270,14 +270,13 @@ export default function AccountPage() {
     return () => { alive = false; };
   }, [ctxUser]);
 
-  const displayName =
-    user?.name ||
-    user?.fullName ||
-    user?.nome ||
-    user?.displayName ||
-    user?.username ||
-    user?.email ||
-    'NOME DO CLIENTE';
+  const headingName =
+  user?.name ||
+  user?.fullName ||
+  user?.nome ||
+  user?.displayName ||
+  user?.username ||
+  'NOME DO CLIENTE';
 
   const posicoes = selecionados.length
     ? selecionados.slice(0, 6).map(pad2)
