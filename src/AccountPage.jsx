@@ -132,8 +132,11 @@ const ResultChip = ({ result }) => {
   );
 };
 
-/** Constrói linhas a partir de /payments/me + /draws */
-function buildRows(payPayload, drawsMap) {
+/** Constrói linhas a partir de /payments/me + /draws
+ *  Extra: se fornecidos openDrawId + liveSet (números reserved/sold do sorteio aberto),
+ *  remove números que já voltaram a available (reserva expirada).
+ */
+function buildRows(payPayload, drawsMap, openDrawId = null, liveSet = null) {
   const list = Array.isArray(payPayload)
     ? payPayload
     : payPayload?.payments || payPayload?.items || [];
@@ -145,27 +148,35 @@ function buildRows(payPayload, drawsMap) {
     const payStatus = p.status || p.paymentStatus || 'pending';
     const when = p.paid_at || p.created_at || p.updated_at || null;
 
-    // status do sorteio (fallback: aberto/fechado)
+    // status do sorteio (fallback: aberto)
     const drawInfo = drawsMap?.get?.(Number(drawId)) || drawsMap?.[Number(drawId)] || {};
     let result = drawInfo.status || drawInfo.result || '';
-    if (!result) {
-      // sem info do draw → usa um padrão legível
-      result = 'aberto';
-    }
+    if (!result) result = 'aberto';
 
-    // Cada número continua virando uma linha (mantém densidade da tabela)
+    // Cada número vira uma linha; para pendentes do sorteio aberto, filtra expirados
     for (const n of numbers) {
+      let include = true;
+      if (
+        String(payStatus).toLowerCase() !== 'approved' &&
+        openDrawId != null &&
+        Number(drawId) === Number(openDrawId) &&
+        liveSet instanceof Set
+      ) {
+        include = liveSet.has(`${openDrawId}-${Number(n)}`); // só mantém se ainda estiver reserved/sold
+      }
+      if (!include) continue;
+
       rows.push({
         sorteio: drawId != null ? String(drawId) : '--',
         dia: when ? new Date(when).toLocaleDateString('pt-BR') : '--/--/----',
-        pagamento: payStatus,     // chip PAGO/PENDENTE
-        resultado: result,        // chip ABERTO/FECHADO/CONTEMPLADO/…
-        numero: n,                // mantemos se quiser usar depois
+        pagamento: payStatus,
+        resultado: result,
+        numero: n,
       });
     }
   }
 
-  // Ordena: pendentes primeiro
+  // pendentes primeiro
   return rows.sort((a, b) => {
     const ap = String(a.pagamento).toLowerCase() === 'pending';
     const bp = String(b.pagamento).toLowerCase() === 'pending';
@@ -211,19 +222,41 @@ export default function AccountPage() {
 
         // Pagamentos do usuário
         const pay = await getFirst(['/payments/me', '/api/payments/me']);
-        // Pega status dos sorteios (quando possível)
+
+        // Pega status dos sorteios
         let drawsMap = new Map();
+        let openDrawId = null;
         try {
           const draws = await getFirst(['/draws', '/api/draws', '/draws-ext', '/api/draws-ext']);
           const arr = Array.isArray(draws) ? draws : (draws?.draws || draws?.items || []);
           drawsMap = new Map(arr.map(d => [Number(d.id ?? d.draw_id), { status: d.status ?? d.result ?? '' }]));
+          const open = arr.find(d => String(d.status ?? d.result ?? '').toLowerCase() === 'open');
+          if (open) openDrawId = Number(open.id ?? open.draw_id);
         } catch {}
 
+        // Mapa de números ainda válidos (reserved/sold) do sorteio aberto
+        let liveSet = null;
+        if (openDrawId != null) {
+          try {
+            const numsPayload = await getFirst(['/numbers', '/api/numbers']);
+            const list = Array.isArray(numsPayload?.numbers) ? numsPayload.numbers : (numsPayload || []);
+            const s = new Set();
+            for (const it of list || []) {
+              const n = Number(it.n ?? it.number ?? it.num);
+              const st = String(it.status || '').toLowerCase();
+              if (!Number.isNaN(n) && (st === 'reserved' || st === 'sold')) {
+                s.add(`${openDrawId}-${n}`);
+              }
+            }
+            liveSet = s;
+          } catch {}
+        }
+
         if (alive && pay) {
-          const tableRows = buildRows(pay, drawsMap);
+          const tableRows = buildRows(pay, drawsMap, openDrawId, liveSet);
           setRows(tableRows);
 
-          // total acumulado (se backend não mandar, faz a soma dos pagos)
+          // total acumulado (se backend não mandar, soma dos pagos)
           const backendTotal =
             pay.total || pay.valor || pay.amount || (Array.isArray(pay) ? null : pay?.summary?.total);
           if (backendTotal != null) {
@@ -236,7 +269,7 @@ export default function AccountPage() {
             setValorAcumulado((cents || 0) / 100);
           }
 
-          // cupom/validade se vierem do backend
+          // cupom/validade (se vierem do backend)
           const maybeCoupon = pay.coupon || pay.cupom || pay.discountCode || pay.codigo;
           const maybeDue = pay.validity || pay.validade || pay.expiresAt || pay.expiraEm || null;
           if (maybeCoupon) setCupom(String(maybeCoupon).toUpperCase());
@@ -262,7 +295,7 @@ export default function AccountPage() {
     user?.email ||
     'NOME DO CLIENTE';
 
-  // Posições exibidas no cartão (apenas visual, não interfere na tabela)
+  // Posições exibidas no cartão (visual)
   const posicoes = selecionados.length
     ? selecionados.slice(0, 6).map(pad2)
     : ['05', '12', '27', '33', '44', '59'];
@@ -416,6 +449,7 @@ export default function AccountPage() {
                   <TableHead>
                     <TableRow>
                       <TableCell sx={{ fontWeight: 800 }}>SORTEIO</TableCell>
+                      <TableCell sx={{ fontWeight: 800 }}>NÚMERO</TableCell>
                       <TableCell sx={{ fontWeight: 800 }}>DIA</TableCell>
                       <TableCell sx={{ fontWeight: 800 }}>PAGAMENTO</TableCell>
                       <TableCell sx={{ fontWeight: 800 }}>RESULTADO</TableCell>
@@ -424,7 +458,7 @@ export default function AccountPage() {
                   <TableBody>
                     {rows.length === 0 && (
                       <TableRow>
-                        <TableCell colSpan={4} sx={{ color: '#bbb' }}>
+                        <TableCell colSpan={5} sx={{ color: '#bbb' }}>
                           Nenhuma participação encontrada.
                         </TableCell>
                       </TableRow>
@@ -433,6 +467,9 @@ export default function AccountPage() {
                       <TableRow key={`${row.sorteio}-${row.numero}-${idx}`} hover>
                         <TableCell sx={{ width: 120, fontWeight: 700 }}>
                           {String(row.sorteio || '--')}
+                        </TableCell>
+                        <TableCell sx={{ width: 120, fontWeight: 700 }}>
+                          {pad2(row.numero)}
                         </TableCell>
                         <TableCell sx={{ width: 180 }}>{row.dia}</TableCell>
                         <TableCell><PayChip status={row.pagamento} /></TableCell>
