@@ -22,7 +22,16 @@ const theme = createTheme({
   typography: { fontFamily: ['Inter','system-ui','Segoe UI','Roboto','Arial'].join(',') }
 });
 
-const ADMIN_EMAIL = "admin@newstore.com.br";
+const API_BASE = (process.env.REACT_APP_API_BASE_URL || "/api").replace(/\/+$/, "");
+const authHeaders = () => {
+  const tk =
+    localStorage.getItem("token") ||
+    localStorage.getItem("access_token") ||
+    sessionStorage.getItem("token");
+  return tk ? { Authorization: `Bearer ${tk}` } : {};
+};
+
+const ADMIN_EMAIL_FALLBACK = "admin@newstore.com.br"; // fallback caso /me não traga is_admin
 
 export default function LoginPage() {
   const { login } = useAuth();
@@ -45,22 +54,37 @@ export default function LoginPage() {
 
     try {
       setLoading(true);
+      // realiza o login (salva token/cookies via authContext)
       await login({ email, password, remember });
 
-      // se admin -> vai para o painel
-      if (email.toLowerCase() === ADMIN_EMAIL) {
-        navigate("/admin", { replace: true });
-      } else {
-        navigate(from, { replace: true });
+      // depois do login, confirma o perfil no backend
+      let isAdmin = false;
+      try {
+        const r = await fetch(`${API_BASE}/me`, {
+          method: "GET",
+          headers: { "Content-Type": "application/json", ...authHeaders() },
+          credentials: "include",
+        });
+        if (r.ok) {
+          const me = await r.json();
+          isAdmin = !!me?.user?.is_admin;
+        }
+      } catch {
+        // sem problema — usa fallback por e-mail se necessário
       }
+
+      // fallback se /me não respondeu mas é o e-mail conhecido do admin
+      if (!isAdmin && email.toLowerCase() === ADMIN_EMAIL_FALLBACK) {
+        isAdmin = true;
+      }
+
+      navigate(isAdmin ? "/admin" : from, { replace: true });
     } catch (err) {
-      setError(err.message || "Falha ao entrar.");
+      setError(err?.message || "Falha ao entrar.");
     } finally {
       setLoading(false);
     }
   };
-
-  
 
   return (
     <ThemeProvider theme={theme}>
@@ -135,18 +159,18 @@ export default function LoginPage() {
               {loading ? "Entrando..." : "Entrar"}
             </Button>
 
-              <Button
-                  component={RouterLink}
-                  to="/cadastro"
-                  variant="text"
-                  sx={{ fontWeight: 700, mt: 1 }}
-                >
+            <Button
+              component={RouterLink}
+              to="/cadastro"
+              variant="text"
+              sx={{ fontWeight: 700, mt: 1 }}
+            >
               Criar conta
             </Button>
 
             <Typography variant="caption" sx={{ opacity: 0.7, mt: 1 }}>
               Dica (mock): qualquer e-mail válido e senha com 6+ caracteres funcionam.
-              Para o admin usar o email: admin@newstore.com.br
+              Para o admin use: admin@newstore.com.br
             </Typography>
           </Stack>
         </Paper>
