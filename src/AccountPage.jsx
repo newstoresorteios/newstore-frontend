@@ -32,7 +32,7 @@ import {
 import ArrowBackIosNewRoundedIcon from '@mui/icons-material/ArrowBackIosNewRounded';
 import AccountCircleRoundedIcon from '@mui/icons-material/AccountCircleRounded';
 
-// ======= (mesmo tema e layout do seu arquivo) =======
+// ======= Tema (inalterado) =======
 const theme = createTheme({
   palette: {
     mode: 'dark',
@@ -50,16 +50,33 @@ const theme = createTheme({
 });
 
 const pad2 = (n) => n.toString().padStart(2, '0');
+const brMoney = (v) => Number(v || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+const addMonths = (d, m) => { const x = new Date(d); x.setMonth(x.getMonth() + m); return x; };
 
-// ======= helpers de API (sem mudar layout) =======
-const API_BASE =
-  (process.env.REACT_APP_API_BASE_URL || '/api').replace(/\/+$/, '');
+// ======= helpers de API =======
+const API_BASE = (process.env.REACT_APP_API_BASE_URL || '/api').replace(/\/+$/, '');
 
+function sanitizeToken(t) {
+  if (!t) return '';
+  let s = String(t).trim();
+  if ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'"))) s = s.slice(1, -1);
+  if (/^Bearer\s+/i.test(s)) s = s.replace(/^Bearer\s+/i, '').trim();
+  return s.replace(/\s+/g, '');
+}
 const authHeaders = () => {
-  const tk =
-    localStorage.getItem('token') ||
-    localStorage.getItem('access_token') ||
-    sessionStorage.getItem('token');
+  const sources = [
+    'ns_auth_token', 'token', 'access_token', 'jwt'
+  ];
+  let tk = '';
+  for (const k of sources) {
+    tk = localStorage.getItem(k) || sessionStorage.getItem(k) || '';
+    if (tk) break;
+  }
+  if (!tk && typeof document !== 'undefined') {
+    const m = document.cookie.match(/(?:^|;\s*)(token|jwt)=([^;]+)/i);
+    if (m) tk = decodeURIComponent(m[2]);
+  }
+  tk = sanitizeToken(tk);
   return tk ? { Authorization: `Bearer ${tk}` } : {};
 };
 
@@ -74,46 +91,29 @@ async function getJSON(path) {
 
 async function getFirst(paths) {
   for (const p of paths) {
-    try {
-      const data = await getJSON(p);
-      return data;
-    } catch (_) {}
+    try { return await getJSON(p); } catch {}
   }
   return null;
 }
 
-// Normaliza participações -> linhas iguais ao MOCK original (numero, data, status)
+// Normaliza participações -> linhas (numero, data, status) para a TABELA
 function normalizeRows(payload) {
   const items = Array.isArray(payload)
     ? payload
-    : payload?.items || payload?.participations || payload?.orders || [];
+    : payload?.payments || payload?.items || payload?.participations || payload?.orders || [];
 
   const rows = [];
   for (const it of items) {
-    const raffle =
-      it.raffle || it.sorteio || it.draw || it.event || it.lottery || {};
-    // números comprados
-    const nums =
-      it.numbers || it.cotas || it.tickets || it.itens || it.itensCompra || [];
+    const raffle = it.raffle || it.sorteio || it.draw || it.event || it.lottery || {};
+    const nums = it.numbers || it.cotas || it.tickets || it.itens || [];
     const dateRaw =
-      it.drawDate ||
-      raffle.drawDate ||
-      raffle.date ||
-      it.date ||
-      it.createdAt ||
-      it.updatedAt ||
-      null;
+      it.drawDate || raffle.drawDate || raffle.date || it.paid_at || it.created_at || it.createdAt || it.date || null;
 
-    // status → mantém a paleta da sua UI: PENDENTE / CONTEMPLADO / NÃO CONTEMPLADO
-    const raw =
-      String(
-        it.status || it.paymentStatus || it.pagamento?.status || raffle.status
-      ).toLowerCase();
+    const raw = String(it.status || it.paymentStatus || raffle.status || '').toLowerCase();
     let status = 'NÃO CONTEMPLADO';
     if (raw.includes('pend')) status = 'PENDENTE';
     if (raw.includes('win') || raw.includes('contempla')) status = 'CONTEMPLADO';
 
-    // Cada número vira uma linha (sem mexer nas 3 colunas da tabela)
     (Array.isArray(nums) ? nums : [nums]).forEach((n) => {
       rows.push({
         numero: Number(n),
@@ -137,13 +137,7 @@ const StatusChip = ({ status }) => {
     return (
       <Chip
         label="CONTEMPLADO"
-        sx={{
-          bgcolor: 'success.main',
-          color: '#fff',
-          fontWeight: 800,
-          borderRadius: 999,
-          px: 1.5,
-        }}
+        sx={{ bgcolor: 'success.main', color: '#fff', fontWeight: 800, borderRadius: 999, px: 1.5 }}
       />
     );
   }
@@ -151,26 +145,14 @@ const StatusChip = ({ status }) => {
     return (
       <Chip
         label="PENDENTE"
-        sx={{
-          bgcolor: 'warning.main',
-          color: '#000',
-          fontWeight: 800,
-          borderRadius: 999,
-          px: 1.5,
-        }}
+        sx={{ bgcolor: 'warning.main', color: '#000', fontWeight: 800, borderRadius: 999, px: 1.5 }}
       />
     );
   }
   return (
     <Chip
       label="NÃO CONTEMPLADO"
-      sx={{
-        bgcolor: 'error.main',
-        color: '#fff',
-        fontWeight: 800,
-        borderRadius: 999,
-        px: 1.5,
-      }}
+      sx={{ bgcolor: 'error.main', color: '#fff', fontWeight: 800, borderRadius: 999, px: 1.5 }}
     />
   );
 };
@@ -184,119 +166,110 @@ const sortPendingFirst = (rows) =>
     return 0;
   });
 
-// ======= Componente principal (layout intacto) =======
+// ======= Componente principal =======
 export default function AccountPage() {
   const navigate = useNavigate();
   const { selecionados, limparSelecao } = React.useContext(SelectionContext);
   const { logout, isAuthenticated, user: ctxUser } = useAuth();
 
-  // menu avatar (idêntico)
+  // menu avatar
   const [menuEl, setMenuEl] = React.useState(null);
   const menuOpen = Boolean(menuEl);
   const handleOpenMenu = (e) => setMenuEl(e.currentTarget);
   const handleCloseMenu = () => setMenuEl(null);
-  const doLogout = () => {
-    handleCloseMenu();
-    logout();
-    navigate('/');
-  };
+  const doLogout = () => { handleCloseMenu(); logout(); navigate('/'); };
 
   // estado de dados
   const [loading, setLoading] = React.useState(true);
   const [user, setUser] = React.useState(ctxUser || null);
-  const [rows, setRows] = React.useState([]); // linhas da tabela
-  const [valorAcumulado, setValorAcumulado] = React.useState(65); // mantém default visual
+  const [rows, setRows] = React.useState([]);               // linhas da tabela
+  const [valorAcumulado, setValorAcumulado] = React.useState(0); // acumulado aprovado
   const [cupom, setCupom] = React.useState('CUPOMAQUI');
-  const [validade, setValidade] = React.useState('28/10/25');
+  const [validade, setValidade] = React.useState('--/--/----');
+  const [posicoesAprovadas, setPosicoesAprovadas] = React.useState([]); // posições approved
 
   React.useEffect(() => {
     let alive = true;
 
     (async () => {
       try {
-        // Perfil
+        // Perfil (/api/me primeiro, com fallbacks)
         let me = ctxUser;
         if (!me) {
-          const meData = await getFirst(['/me', '/auth/me', '/users/me', '/account/me']);
+          const meData = await getFirst(['/api/me', '/me', '/auth/me', '/users/me', '/account/me']);
           if (meData) me = meData.user || meData;
         }
         if (alive) setUser(me || null);
 
-        // Participações
+        // Pagamentos/participações do usuário (prioriza /api/payments/me + aliases)
         const part = await getFirst([
-          '/account/participations',
-          '/me/participations',
-          '/users/me/participations',
+          '/api/payments/me',
+          '/api/participations/me',
+          '/api/orders/me',
+          '/payments/me',
           '/participations/me',
-          '/tickets/me',
           '/orders/me',
         ]);
 
-        if (alive && part) {
-          const normRows = normalizeRows(part);
-          setRows(normRows);
+        // Tabela: normaliza para manter layout
+        if (alive && part) setRows(normalizeRows(part));
 
-          // valor acumulado (se backend fornecer, usa; senão soma 55 por número)
-          const backendTotal =
-            part.total ||
-            part.valor ||
-            part.amount ||
-            (Array.isArray(part) ? null : part?.summary?.total);
-          setValorAcumulado(
-            backendTotal != null
-              ? Number(backendTotal)
-              : normRows.length * 55
-          );
+        // ======= Métricas para o CARTÃO =======
+        // Aceita shape { payments: [...] } ou array direto
+        const list = Array.isArray(part?.payments) ? part.payments : Array.isArray(part) ? part : [];
+        const approved = list.filter((p) => String(p.status).toLowerCase() === 'approved');
 
-          // cupom/validade se vierem do backend
-          const maybeCoupon =
-            part.coupon || part.cupom || part.discountCode || part.codigo;
-          const maybeDue =
-            part.validity ||
-            part.validade ||
-            part.expiresAt ||
-            part.expiraEm ||
-            null;
+        // posições aprovadas (únicas, ordenadas)
+        const pos = Array.from(
+          new Set(
+            approved.flatMap((p) => p.numbers || []).map(Number).filter((n) => Number.isInteger(n))
+          )
+        ).sort((a, b) => a - b);
+        if (alive) setPosicoesAprovadas(pos);
 
-          if (maybeCoupon) setCupom(String(maybeCoupon).toUpperCase());
-          if (maybeDue) {
-            const d = new Date(maybeDue);
-            if (!isNaN(d)) setValidade(d.toLocaleDateString('pt-BR'));
-          }
+        // total acumulado (amount_cents → BRL)
+        const cents = approved.reduce((acc, p) => {
+          if (p.amount_cents != null) return acc + Number(p.amount_cents || 0);
+          if (p.amountCents != null) return acc + Number(p.amountCents || 0);
+          if (p.amount != null) return acc + Math.round(Number(p.amount) * 100);
+          return acc;
+        }, 0);
+        if (alive) setValorAcumulado(cents / 100);
+
+        // validade: 6 meses após a última compra aprovada (paid_at > created_at)
+        if (approved.length) {
+          const last = approved
+            .map((p) => new Date(p.paid_at || p.created_at || p.createdAt || Date.now()))
+            .filter((d) => !Number.isNaN(+d))
+            .sort((a, b) => a - b)
+            .at(-1);
+          const v = addMonths(last, 6);
+          if (alive) setValidade(v.toLocaleDateString('pt-BR'));
         }
+
+        // cupom se backend enviar algum código
+        const maybeCoupon =
+          part?.coupon || part?.cupom || part?.discountCode || part?.codigo;
+        if (alive && maybeCoupon) setCupom(String(maybeCoupon).toUpperCase());
       } catch (_) {
-        // mantém layout; sem alertas
+        // silencioso para não quebrar layout
       } finally {
         if (alive) setLoading(false);
       }
     })();
 
-    return () => {
-      alive = false;
-    };
+    return () => { alive = false; };
   }, [ctxUser]);
 
-  // Nome exibido (sem mexer na tipografia/layout)
+  // Nome exibido
   const displayName =
-    user?.name ||
-    user?.fullName ||
-    user?.nome ||
-    user?.displayName ||
-    user?.username ||
-    user?.email ||
-    'NOME DO CLIENTE';
+    user?.name || user?.fullName || user?.nome || user?.displayName || user?.username || user?.email || 'NOME DO CLIENTE';
 
-  // Posições mostradas no cartão (pega dos dados ou da seleção atual)
+  // Posições a exibir no cartão
   const posicoes =
-    rows.length > 0
-      ? rows
-          .map((r) => r.numero)
-          .filter((n) => !Number.isNaN(n))
-          .slice(0, 6)
-          .map(pad2)
-      : selecionados.length
-      ? selecionados.slice(0, 6).map(pad2)
-      : ['05', '12', '27', '33', '44', '59'];
+    posicoesAprovadas.length
+      ? posicoesAprovadas.map(pad2)
+      : (selecionados.length ? selecionados.slice(0, 6).map(pad2) : ['05', '12', '27', '33', '44', '59']);
 
   return (
     <ThemeProvider theme={theme}>
@@ -352,7 +325,7 @@ export default function AccountPage() {
             {displayName}
           </Typography>
 
-          {/* Cartão — visual idêntico ao seu */}
+          {/* Cartão */}
           <Box sx={{ width: '100%', display: 'flex', justifyContent: 'center' }}>
             <Paper
               elevation={0}
@@ -390,12 +363,14 @@ export default function AccountPage() {
                 <Stack spacing={0.8} flex={1} minWidth={0}>
                   <Box>
                     <Typography variant="caption" sx={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace', letterSpacing: 1, opacity: 0.85, display: 'block' }}>
-                      PRÊMIO: VOUCHER DE X EM COMPRAS NO SITE
+                      {/* TEXTO AJUSTADO */}
+                      PRÊMIO: VOUCHER DE R$ 5000,00 EM COMPRAS NO SITE
                     </Typography>
                     <Typography variant="caption" sx={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace', letterSpacing: 1, opacity: 0.85, display: 'block' }}>
                       CARTÃO PRESENTE
                     </Typography>
                     <Typography variant="caption" sx={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace', letterSpacing: 1, opacity: 0.85, display: 'block' }}>
+                      {/* POSIÇÕES APROVADAS */}
                       POSIÇÕES: {posicoes.join(', ')}
                     </Typography>
                   </Box>
@@ -412,6 +387,7 @@ export default function AccountPage() {
                       VÁLIDO ATÉ
                     </Typography>
                     <Typography variant="body2" sx={{ fontWeight: 800 }}>
+                      {/* +6 MESES DA ÚLTIMA COMPRA APROVADA */}
                       {validade}
                     </Typography>
                   </Stack>
@@ -428,7 +404,8 @@ export default function AccountPage() {
                     VALOR ACUMULADO:
                   </Typography>
                   <Typography sx={{ fontWeight: 900, color: '#9AE6B4' }}>
-                    {valorAcumulado.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                    {/* TOTAL APROVADO */}
+                    {brMoney(valorAcumulado)}
                   </Typography>
                 </Stack>
               </Stack>
@@ -475,11 +452,7 @@ export default function AccountPage() {
               <Button variant="outlined" color="error" onClick={limparSelecao}>
                 Limpar meus números
               </Button>
-              <Button
-                variant="contained"
-                color="success"
-                onClick={() => alert('Resgatar cupom: ' + cupom)}
-              >
+              <Button variant="contained" color="success" onClick={() => alert('Resgatar cupom: ' + cupom)}>
                 Resgatar cupom
               </Button>
               <Button variant="text" onClick={doLogout}>

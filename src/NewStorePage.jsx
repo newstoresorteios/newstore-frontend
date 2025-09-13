@@ -73,7 +73,7 @@ export default function NewStorePage({
   indisponiveis = MOCK_INDISPONIVEIS,
   onIrParaPagamento,
   // URL do grupo (WhatsApp/Telegram). Substitua abaixo pela sua URL real.
-  groupUrl = 'https://wa.me/5599999999999?text=Quero%20participar%20do%20sorteio%20New%20Store',
+  groupUrl = 'https://chat.whatsapp.com/LoHdJ8887Ku4RTsHgFQ102',
 }) {
   const navigate = useNavigate();
   const { selecionados, setSelecionados, limparSelecao } = React.useContext(SelectionContext);
