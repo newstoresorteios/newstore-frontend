@@ -13,16 +13,21 @@ import logoNewStore from "./Logo-branca-sem-fundo-768x132.png";
 import { useAuth } from "./authContext";
 
 const theme = createTheme({
-  palette: {
-    mode: "dark",
-    primary: { main: "#67C23A" },
-    background: { default: "#0E0E0E", paper: "#121212" },
-  },
+  palette: { mode: "dark", primary: { main: "#67C23A" }, background: { default: "#0E0E0E", paper: "#121212" } },
   shape: { borderRadius: 12 },
   typography: { fontFamily: ['Inter','system-ui','Segoe UI','Roboto','Arial'].join(',') }
 });
 
 const ADMIN_EMAIL = "admin@newstore.com.br";
+const API_BASE = (process.env.REACT_APP_API_BASE_URL || "/api").replace(/\/+$/, "");
+
+const authHeaders = () => {
+  const tk =
+    localStorage.getItem("token") ||
+    localStorage.getItem("access_token") ||
+    sessionStorage.getItem("token");
+  return tk ? { Authorization: `Bearer ${tk}` } : {};
+};
 
 export default function LoginPage() {
   const { login } = useAuth();
@@ -47,20 +52,31 @@ export default function LoginPage() {
       setLoading(true);
       await login({ email, password, remember });
 
-      // se admin -> vai para o painel
-      if (email.toLowerCase() === ADMIN_EMAIL) {
-        navigate("/admin", { replace: true });
-      } else {
-        navigate(from, { replace: true });
-      }
+      // Confirma com o backend quem é o usuário
+      let user = null;
+      try {
+        const r = await fetch(`${API_BASE}/me`, {
+          method: "GET",
+          headers: { "Content-Type": "application/json", ...authHeaders() },
+          credentials: "include",
+        });
+        if (r.ok) {
+          const body = await r.json();
+          user = body?.user || body || null;
+          // guarda um fallback local para outras telas (AccountPage)
+          if (user) localStorage.setItem("me", JSON.stringify(user));
+        }
+      } catch { /* ignora */ }
+
+      // Decide o destino
+      const isAdmin = !!user?.is_admin || email.trim().toLowerCase() === ADMIN_EMAIL;
+      navigate(isAdmin ? "/admin" : from, { replace: true });
     } catch (err) {
       setError(err.message || "Falha ao entrar.");
     } finally {
       setLoading(false);
     }
   };
-
-  
 
   return (
     <ThemeProvider theme={theme}>
@@ -73,10 +89,7 @@ export default function LoginPage() {
           <Box
             component={RouterLink}
             to="/"
-            sx={{
-              position: "absolute", left: "50%", top: "50%",
-              transform: "translate(-50%, -50%)", display: "flex", alignItems: "center"
-            }}
+            sx={{ position: "absolute", left: "50%", top: "50%", transform: "translate(-50%, -50%)", display: "flex", alignItems: "center" }}
           >
             <Box component="img" src={logoNewStore} alt="NEW STORE" sx={{ height: 40, objectFit: "contain" }} />
           </Box>
@@ -135,18 +148,13 @@ export default function LoginPage() {
               {loading ? "Entrando..." : "Entrar"}
             </Button>
 
-              <Button
-                  component={RouterLink}
-                  to="/cadastro"
-                  variant="text"
-                  sx={{ fontWeight: 700, mt: 1 }}
-                >
+            <Button component={RouterLink} to="/cadastro" variant="text" sx={{ fontWeight: 700, mt: 1 }}>
               Criar conta
             </Button>
 
             <Typography variant="caption" sx={{ opacity: 0.7, mt: 1 }}>
               Dica (mock): qualquer e-mail válido e senha com 6+ caracteres funcionam.
-              Para o admin usar o email: admin@newstore.com.br
+              Para o admin use: admin@newstore.com.br
             </Typography>
           </Stack>
         </Paper>

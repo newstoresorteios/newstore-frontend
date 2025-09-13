@@ -203,6 +203,8 @@ export default function AccountPage() {
   const [cupom, setCupom] = React.useState('CUPOMAQUI');
   const [validade, setValidade] = React.useState('28/10/25');
 
+  
+
   React.useEffect(() => {
     let alive = true;
     (async () => {
@@ -278,6 +280,12 @@ export default function AccountPage() {
     })();
     return () => { alive = false; };
   }, [ctxUser]);
+
+  const storedMe = React.useMemo(() => {
+  try { return JSON.parse(localStorage.getItem("me") || "{}"); }
+  catch { return {}; }
+}, []);
+
 
   // Nome no título grande
   const headingName =
