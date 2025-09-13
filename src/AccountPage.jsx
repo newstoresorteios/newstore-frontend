@@ -272,12 +272,13 @@ export default function AccountPage() {
 
   // Nome no título grande
   const headingName =
-    user?.name ||
-    user?.fullName ||
-    user?.nome ||
-    user?.displayName ||
-    user?.username ||
-    'NOME DO CLIENTE';
+  user?.name ||
+  user?.fullName ||
+  user?.nome ||
+  user?.displayName ||
+  user?.username ||
+  user?.email ||             // << fallback com o e-mail
+  'NOME DO CLIENTE';
 
   // E-mail no cartão
   const cardEmail =
