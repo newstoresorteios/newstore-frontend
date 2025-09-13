@@ -75,6 +75,52 @@ const API_BASE = (
   'https://newstore-backend.onrender.com'
 ).replace(/\/+$/, '');
 
+// ===== Helpers de auth + reserva (necessários para o PIX) =====
+function sanitizeToken(t) {
+  if (!t) return '';
+  let s = String(t).trim();
+  if ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'"))) s = s.slice(1, -1);
+  if (/^Bearer\s+/i.test(s)) s = s.replace(/^Bearer\s+/i, '').trim();
+  return s.replace(/\s+/g, '');
+}
+function getAuthToken() {
+  try {
+    const keys = ['ns_auth_token', 'authToken', 'token', 'jwt', 'access_token'];
+    for (const k of keys) {
+      const raw = localStorage.getItem(k) || sessionStorage.getItem(k);
+      if (raw) return sanitizeToken(raw);
+    }
+    return '';
+  } catch {
+    return '';
+  }
+}
+async function reserveNumbers(numbers) {
+  const token = getAuthToken();
+  const headers = { 'Content-Type': 'application/json' };
+  if (token) headers.Authorization = `Bearer ${token}`;
+
+  const r = await fetch(`${API_BASE}/api/reservations`, {
+    method: 'POST',
+    headers,
+    credentials: 'include',
+    body: JSON.stringify({ numbers }),
+  });
+
+  if (r.status === 409) {
+    const j = await r.json().catch(() => ({}));
+    const c = j?.conflicts || j?.n || [];
+    throw new Error(
+      `Alguns números ficaram indisponíveis: ${Array.isArray(c) ? c.join(', ') : c}`
+    );
+  }
+  if (!r.ok) {
+    const j = await r.json().catch(() => ({}));
+    throw new Error(j?.error || 'Falha ao reservar');
+  }
+  return r.json(); // { reservationId, drawId, expiresAt, numbers }
+}
+
 export default function NewStorePage({
   reservados = MOCK_RESERVADOS,
   indisponiveis = MOCK_INDISPONIVEIS,
@@ -151,13 +197,28 @@ export default function NewStorePage({
 
   const handleIrPagamento = async () => {
     setOpen(false);
-    if (!isAuthenticated) { navigate('/login', { replace: false, state: { from: '/', wantPay: true } }); return; }
-    const amount = selecionados.length * PRICE; // ← usa env/55
+    if (!isAuthenticated) {
+      navigate('/login', { replace: false, state: { from: '/', wantPay: true } });
+      return;
+    }
+
+    const amount = selecionados.length * PRICE;
     setPixAmount(amount);
     setPixOpen(true);
     setPixLoading(true);
+
     try {
-      const data = await createPixPayment({ orderId: String(Date.now()), amount, numbers: selecionados });
+      // 1) cria a reserva (necessário para o backend aceitar o PIX)
+      const { reservationId } = await reserveNumbers(selecionados);
+
+      // 2) cria o PIX informando o reservationId
+      const data = await createPixPayment({
+        orderId: String(Date.now()),
+        amount,
+        numbers: selecionados,
+        reservationId,
+      });
+
       setPixData(data);
     } catch (e) {
       alert(e.message || 'Falha ao gerar PIX');
