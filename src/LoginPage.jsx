@@ -13,25 +13,19 @@ import logoNewStore from "./Logo-branca-sem-fundo-768x132.png";
 import { useAuth } from "./authContext";
 
 const theme = createTheme({
-  palette: { mode: "dark", primary: { main: "#67C23A" }, background: { default: "#0E0E0E", paper: "#121212" } },
+  palette: {
+    mode: "dark",
+    primary: { main: "#67C23A" },
+    background: { default: "#0E0E0E", paper: "#121212" },
+  },
   shape: { borderRadius: 12 },
   typography: { fontFamily: ['Inter','system-ui','Segoe UI','Roboto','Arial'].join(',') }
 });
 
-const API_BASE = (process.env.REACT_APP_API_BASE_URL || "/api").replace(/\/+$/, "");
-const authHeaders = () => {
-  const tk =
-    localStorage.getItem("token") ||
-    localStorage.getItem("access_token") ||
-    sessionStorage.getItem("token");
-  return tk ? { Authorization: `Bearer ${tk}` } : {};
-};
-
-// fallback por e-mail caso /api/me não traga is_admin por algum motivo
-const ADMIN_EMAIL_FALLBACK = "admin@newstore.com.br";
+const ADMIN_EMAIL = "admin@newstore.com.br";
 
 export default function LoginPage() {
-  const { login, user } = useAuth();
+  const { login } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const from = location.state?.from?.pathname || "/conta";
@@ -43,54 +37,30 @@ export default function LoginPage() {
   const [error, setError] = React.useState("");
   const [loading, setLoading] = React.useState(false);
 
-  // Se o contexto já disser que é admin, redireciona automaticamente
-  React.useEffect(() => {
-    if (user?.is_admin) {
-      navigate("/admin", { replace: true });
-    }
-  }, [user, navigate]);
-
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError("");
-
     if (!/\S+@\S+\.\S+/.test(email)) { setError("Informe um e-mail válido."); return; }
     if (password.length < 6) { setError("A senha deve ter pelo menos 6 caracteres."); return; }
 
     try {
       setLoading(true);
-      await login({ email, password, remember }); // não faz navigate aqui
+      await login({ email, password, remember });
 
-      // Confirma no backend quem é o usuário logado
-      let isAdmin = false;
-      try {
-        const r = await fetch(`${API_BASE}/me`, {
-          method: "GET",
-          headers: { "Content-Type": "application/json", ...authHeaders() },
-          credentials: "include",
-        });
-        if (r.ok) {
-          const me = await r.json();
-          isAdmin = !!me?.user?.is_admin;
-        }
-      } catch {}
-
-      if (!isAdmin && email.toLowerCase() === ADMIN_EMAIL_FALLBACK) {
-        isAdmin = true;
-      }
-
-      if (isAdmin) {
-        // força o redirect para evitar que qualquer guard anterior sobreponha
+      // se admin -> vai para o painel
+      if (email.toLowerCase() === ADMIN_EMAIL) {
         navigate("/admin", { replace: true });
       } else {
         navigate(from, { replace: true });
       }
     } catch (err) {
-      setError(err?.message || "Falha ao entrar.");
+      setError(err.message || "Falha ao entrar.");
     } finally {
       setLoading(false);
     }
   };
+
+  
 
   return (
     <ThemeProvider theme={theme}>
@@ -103,7 +73,10 @@ export default function LoginPage() {
           <Box
             component={RouterLink}
             to="/"
-            sx={{ position: "absolute", left: "50%", top: "50%", transform: "translate(-50%, -50%)", display: "flex", alignItems: "center" }}
+            sx={{
+              position: "absolute", left: "50%", top: "50%",
+              transform: "translate(-50%, -50%)", display: "flex", alignItems: "center"
+            }}
           >
             <Box component="img" src={logoNewStore} alt="NEW STORE" sx={{ height: 40, objectFit: "contain" }} />
           </Box>
@@ -129,7 +102,6 @@ export default function LoginPage() {
               required
               autoComplete="email"
             />
-
             <TextField
               label="Senha"
               type={showPass ? "text" : "password"}
@@ -163,13 +135,18 @@ export default function LoginPage() {
               {loading ? "Entrando..." : "Entrar"}
             </Button>
 
-            <Button component={RouterLink} to="/cadastro" variant="text" sx={{ fontWeight: 700, mt: 1 }}>
+              <Button
+                  component={RouterLink}
+                  to="/cadastro"
+                  variant="text"
+                  sx={{ fontWeight: 700, mt: 1 }}
+                >
               Criar conta
             </Button>
 
             <Typography variant="caption" sx={{ opacity: 0.7, mt: 1 }}>
               Dica (mock): qualquer e-mail válido e senha com 6+ caracteres funcionam.
-              Para o admin use: admin@newstore.com.br
+              Para o admin usar o email: admin@newstore.com.br
             </Typography>
           </Stack>
         </Paper>
