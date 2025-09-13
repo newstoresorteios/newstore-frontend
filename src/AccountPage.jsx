@@ -212,7 +212,16 @@ export default function AccountPage() {
         if (!me) {
           const meData = await getFirst(['/me', '/auth/me', '/users/me', '/account/me', '/api/me']);
           if (meData) me = meData.user || meData;
+        } 
+
+        if (me && !me.name) {
+          try {
+            const u = await getFirst(['/users/me', '/api/users/me']);
+            if (u?.name) me = { ...me, name: u.name };
+          } catch {}
         }
+        setUser(me || null);
+
         if (alive) setUser(me || null);
 
         // Pagamentos do usuário
