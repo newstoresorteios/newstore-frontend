@@ -270,13 +270,18 @@ export default function AccountPage() {
     return () => { alive = false; };
   }, [ctxUser]);
 
+  // Nome no título grande
   const headingName =
-  user?.name ||
-  user?.fullName ||
-  user?.nome ||
-  user?.displayName ||
-  user?.username ||
-  'NOME DO CLIENTE';
+    user?.name ||
+    user?.fullName ||
+    user?.nome ||
+    user?.displayName ||
+    user?.username ||
+    'NOME DO CLIENTE';
+
+  // E-mail no cartão
+  const cardEmail =
+    user?.email || (user?.username?.includes?.('@') ? user.username : headingName);
 
   const posicoes = selecionados.length
     ? selecionados.slice(0, 6).map(pad2)
@@ -333,10 +338,10 @@ export default function AccountPage() {
             variant="h4"
             sx={{ fontWeight: 900, letterSpacing: 1, textTransform: 'uppercase', display: { xs: 'none', md: 'block' }, opacity: 0.9 }}
           >
-            {displayName}
+            {headingName}
           </Typography>
 
-          {/* Cartão visual (textos preservados) */}
+          {/* Cartão visual */}
           <Box sx={{ width: '100%', display: 'flex', justifyContent: 'center' }}>
             <Paper
               elevation={0}
@@ -379,13 +384,12 @@ export default function AccountPage() {
                     <Typography variant="caption" sx={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace', letterSpacing: 1, opacity: 0.85, display: 'block' }}>
                       CARTÃO PRESENTE
                     </Typography>
-                    
                   </Box>
 
                   <Stack direction="row" spacing={1} alignItems="center" sx={{ mt: 'auto' }}>
                     <Box component="img" src={logoNewStore} alt="NS" sx={{ height: 18, opacity: 0.9 }} />
                     <Typography variant="subtitle1" sx={{ fontWeight: 900, letterSpacing: 2, textTransform: 'uppercase', lineHeight: 1.1 }}>
-                      {displayName}
+                      {cardEmail}
                     </Typography>
                   </Stack>
 
