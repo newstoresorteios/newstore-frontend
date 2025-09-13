@@ -32,7 +32,7 @@ import {
 } from '@mui/material';
 import AccountCircleRoundedIcon from '@mui/icons-material/AccountCircleRounded';
 
-// Imagens locais (substituem links externos)
+// Imagens locais
 import imgCardExemplo from './cartaoilustrativoTexto-do-seu-paragrafo-6-1024x1024.png';
 import imgTabelaUtilizacao from './Tabela-para-utilizacao-do-3-1024x1024.png';
 import imgAcumulo1 from './1-2-1-1024x512.png';
@@ -57,7 +57,7 @@ const theme = createTheme({
 // Helpers
 const pad2 = (n) => n.toString().padStart(2, '0');
 
-// Link externo (ok manter externo)
+// Link externo
 const RESULTADOS_LOTERIAS =
   'https://asloterias.com.br/todos-resultados-loteria-federal';
 
@@ -65,10 +65,10 @@ const RESULTADOS_LOTERIAS =
 const MOCK_RESERVADOS = [];
 const MOCK_INDISPONIVEIS = [];
 
-// PREÇO por número (ENV ou 55) — usado no total e no PIX
+// PREÇO por número (ENV ou 55)
 const PRICE = Number(process.env.REACT_APP_PIX_PRICE) || 55;
 
-// Base do backend (sem alterar nada do layout)
+// Base do backend
 const API_BASE = (
   process.env.REACT_APP_API_BASE_URL ||
   process.env.REACT_APP_API_BASE ||
@@ -125,18 +125,17 @@ export default function NewStorePage({
   reservados = MOCK_RESERVADOS,
   indisponiveis = MOCK_INDISPONIVEIS,
   onIrParaPagamento,
-  // URL do grupo (WhatsApp/Telegram). Substitua abaixo pela sua URL real.
   groupUrl = 'https://chat.whatsapp.com/LoHdJ8887Ku4RTsHgFQ102',
 }) {
   const navigate = useNavigate();
   const { selecionados, setSelecionados, limparSelecao } = React.useContext(SelectionContext);
   const { isAuthenticated, logout } = useAuth();
 
-  // === NOVO: estados somente para pintar reservados/indisponíveis vindos do backend
+  // Estados vindos do backend para pintar reservados/indisponíveis
   const [srvReservados, setSrvReservados] = React.useState([]);
   const [srvIndisponiveis, setSrvIndisponiveis] = React.useState([]);
 
-  // Polling leve para /api/numbers (sem mexer no resto)
+  // Polling leve para /api/numbers
   React.useEffect(() => {
     let alive = true;
 
@@ -165,7 +164,7 @@ export default function NewStorePage({
     return () => { alive = false; clearInterval(id); };
   }, []);
 
-  // Combina o que vier por props com o que veio do backend (sem mudar nomes/assinaturas)
+  // Combina props + backend
   const reservadosAll = React.useMemo(
     () => Array.from(new Set([...(reservados || []), ...srvReservados])),
     [reservados, srvReservados]
@@ -184,7 +183,7 @@ export default function NewStorePage({
   const goLogin = () => { handleCloseMenu(); navigate('/login'); };
   const doLogout = () => { handleCloseMenu(); logout(); navigate('/'); };
 
-  // modal (abre só ao clicar em CONTINUAR)
+  // modal (confirmação)
   const [open, setOpen] = React.useState(false);
   const handleAbrirConfirmacao = () => setOpen(true);
   const handleFechar = () => setOpen(false);
@@ -194,6 +193,14 @@ export default function NewStorePage({
   const [pixLoading, setPixLoading] = React.useState(false);
   const [pixData, setPixData] = React.useState(null);
   const [pixAmount, setPixAmount] = React.useState(0);
+
+  // >>> NOVO: estado para sucesso e callback
+  const [pixApproved, setPixApproved] = React.useState(false);
+  const handlePixApproved = React.useCallback(() => {
+    setPixApproved(true);      // abre a modal de sucesso
+    setPixOpen(false);         // fecha a modal do QR
+    setPixLoading(false);
+  }, []);
 
   const handleIrPagamento = async () => {
     setOpen(false);
@@ -206,12 +213,13 @@ export default function NewStorePage({
     setPixAmount(amount);
     setPixOpen(true);
     setPixLoading(true);
+    setPixApproved(false);
 
     try {
-      // 1) cria a reserva (necessário para o backend aceitar o PIX)
+      // 1) cria a reserva
       const { reservationId } = await reserveNumbers(selecionados);
 
-      // 2) cria o PIX informando o reservationId
+      // 2) cria o PIX usando a reserva
       const data = await createPixPayment({
         orderId: String(Date.now()),
         amount,
@@ -227,6 +235,18 @@ export default function NewStorePage({
       setPixLoading(false);
     }
   };
+
+  // >>> NOVO: polling automático enquanto a modal do PIX estiver aberta
+  React.useEffect(() => {
+    if (!pixOpen || !pixData?.paymentId || pixApproved) return;
+    const id = setInterval(async () => {
+      try {
+        const st = await checkPixStatus(pixData.paymentId);
+        if (st?.status === 'approved') handlePixApproved();
+      } catch {}
+    }, 3500);
+    return () => clearInterval(id);
+  }, [pixOpen, pixData, pixApproved, handlePixApproved]);
 
   // cartela
   const isReservado = (n) => reservadosAll.includes(n);
@@ -273,7 +293,7 @@ export default function NewStorePage({
       <AppBar position="sticky" elevation={0} sx={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
         <Toolbar sx={{ position: 'relative', minHeight: 64 }}>
           <IconButton edge="start" color="inherit">
-            {/* (vazio pra manter espaçamento do layout) */}
+            {/* espaçamento */}
           </IconButton>
 
           <Button
@@ -340,7 +360,7 @@ export default function NewStorePage({
             </Stack>
           </Paper>
 
-          {/* === CARTELA LOGO ABAIXO DO TEXTO === */}
+          {/* === CARTELA === */}
           <Paper variant="outlined" sx={{ p: { xs: 1.5, md: 3 }, bgcolor: 'background.paper' }}>
             {/* Ações e legenda */}
             <Stack
@@ -371,7 +391,7 @@ export default function NewStorePage({
               </Stack>
             </Stack>
 
-            {/* Grid 10x10 — dimensões preservadas */}
+            {/* Grid 10x10 */}
             <Box
               sx={{
                 width: { xs: 'calc(100vw - 32px)', sm: 'calc(100vw - 64px)', md: '100%' },
@@ -416,7 +436,7 @@ export default function NewStorePage({
           </Paper>
           {/* === FIM CARTELA === */}
 
-          {/* Demais seções (abaixo da cartela) */}
+          {/* Demais seções */}
           <Paper variant="outlined" sx={{ p: { xs: 2, md: 3 } }}>
             <Stack spacing={1.5}>
               <Typography sx={{ color: '#ff6b6b', fontWeight: 800, letterSpacing: 0.5 }}>
@@ -491,7 +511,7 @@ export default function NewStorePage({
             </Stack>
           </Paper>
 
-          {/* === NOVA SEÇÃO: CONVITE PARA O GRUPO === */}
+          {/* Convite grupo */}
           <Paper
             variant="outlined"
             sx={{
@@ -538,12 +558,9 @@ export default function NewStorePage({
               <Typography variant="h6" sx={{ fontWeight: 800, letterSpacing: 1, mb: 1 }}>
                 {selecionados.slice().sort((a, b) => a - b).map(pad2).join(', ')}
               </Typography>
-
-              {/* >>> NOVO: Total da seleção (preserva o layout) */}
               <Typography variant="body1" sx={{ mt: 0.5, mb: 1 }}>
                 Total: <strong>R$ {(selecionados.length * PRICE).toFixed(2)}</strong>
               </Typography>
-
               <Typography variant="caption" sx={{ opacity: 0.7 }}>
                 Você pode voltar e ajustar a seleção, se quiser.
               </Typography>
@@ -586,9 +603,10 @@ export default function NewStorePage({
         </DialogActions>
       </Dialog>
 
+      {/* Modal PIX (QR) */}
       <PixModal
         open={pixOpen}
-        onClose={() => setPixOpen(false)}
+        onClose={() => { setPixOpen(false); setPixApproved(false); }}
         loading={pixLoading}
         data={pixData}
         amount={pixAmount}
@@ -598,8 +616,7 @@ export default function NewStorePage({
           try {
             const st = await checkPixStatus(pixData.paymentId);
             if (st.status === 'approved') {
-              alert('Pagamento aprovado!');
-              setPixOpen(false);
+              handlePixApproved(); // <<< troca para a modal de sucesso
             } else {
               alert(`Status: ${st.status || 'pendente'}`);
             }
@@ -609,6 +626,37 @@ export default function NewStorePage({
         }}
       />
 
+      {/* >>> NOVA MODAL DE SUCESSO (abre quando aprovado) */}
+      <Dialog
+        open={pixApproved}
+        onClose={() => setPixApproved(false)}
+        maxWidth="xs"
+        fullWidth
+        PaperProps={{ sx: { borderRadius: 3 } }}
+      >
+        <DialogTitle sx={{ fontSize: 22, fontWeight: 900, textAlign: 'center' }}>
+          Pagamento confirmado! 🎉
+        </DialogTitle>
+        <DialogContent sx={{ textAlign: 'center' }}>
+          <Typography variant="h6" sx={{ fontWeight: 800, mb: 1 }}>
+            Seus números foram reservados.
+          </Typography>
+          <Typography sx={{ opacity: 0.9 }}>
+            Boa sorte! Você pode acompanhar tudo na <strong>Área do cliente</strong>.
+          </Typography>
+        </DialogContent>
+        <DialogActions sx={{ px: 3, pb: 3 }}>
+          <Button
+            fullWidth
+            variant="contained"
+            color="success"
+            onClick={() => setPixApproved(false)}
+            sx={{ py: 1.2, fontWeight: 800 }}
+          >
+            OK
+          </Button>
+        </DialogActions>
+      </Dialog>
     </ThemeProvider>
   );
 }

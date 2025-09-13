@@ -8,7 +8,7 @@ import ContentCopyRoundedIcon from '@mui/icons-material/ContentCopyRounded';
 
 export default function PixModal({ open, onClose, loading, data, onCopy, onRefresh, amount, inlineMessage }) {
   // --- Normalização e fontes do QR ---
-  const rawB64 = (data?.qr_code_base64 || '').replace(/\s/g, ''); // remove quebras de linha/espacos
+  const rawB64 = (data?.qr_code_base64 || '').replace(/\s/g, '');
   const copyPaste = data?.copy_paste_code || data?.qr_code || '';
 
   // fonte 1: base64 vindo do backend
@@ -42,13 +42,11 @@ export default function PixModal({ open, onClose, loading, data, onCopy, onRefre
 
   // onError: troca para o próximo provedor automaticamente
   const handleImgError = React.useCallback(() => {
-    // se já tentou qrserver, vai para quickchart; se estava em b64, tenta qrserver
     if (imgSrc === b64Src && qrServerSrc) {
       setImgSrc(qrServerSrc);
     } else if (imgSrc === qrServerSrc && quickChartSrc) {
       setImgSrc(quickChartSrc);
     } else {
-      // sem mais o que tentar: deixa vazio para não mostrar imagem quebrada
       setImgSrc('');
     }
   }, [imgSrc, b64Src, qrServerSrc, quickChartSrc]);
@@ -78,7 +76,7 @@ export default function PixModal({ open, onClose, loading, data, onCopy, onRefre
               Valor: <strong>{formattedAmount}</strong>
             </Typography>
 
-            {/* --- QR Code (não altera layout/tamanho) --- */}
+            {/* --- QR Code --- */}
             {(rawB64 || copyPaste) && imgSrc && (
               <img
                 src={imgSrc}
@@ -109,7 +107,7 @@ export default function PixModal({ open, onClose, loading, data, onCopy, onRefre
               InputProps={{
                 readOnly: true,
                 endAdornment: (
-                  <IconButton onClick={onCopy} edge="end" aria-label="copiar">
+                  <IconButton onClick={onCopy} edge="end" aria-label="copiar" disabled={!copyPaste}>
                     <ContentCopyRoundedIcon fontSize="small" />
                   </IconButton>
                 ),
@@ -122,7 +120,17 @@ export default function PixModal({ open, onClose, loading, data, onCopy, onRefre
         )}
       </DialogContent>
       <DialogActions>
-        <Button onClick={() => { if (onRefresh) onRefresh(); window.dispatchEvent(new CustomEvent("pix-paid-click")); }} variant="outlined" color="success">Já paguei</Button>
+        <Button
+          onClick={() => {
+            if (onRefresh) onRefresh();
+            window.dispatchEvent(new CustomEvent('pix-paid-click'));
+          }}
+          variant="outlined"
+          color="success"
+          disabled={loading || !data?.paymentId}  // <- evita clique sem paymentId e durante loading
+        >
+          Já paguei
+        </Button>
         <Button onClick={onClose} variant="text">Cancelar</Button>
       </DialogActions>
     </Dialog>
