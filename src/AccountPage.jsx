@@ -375,14 +375,12 @@ export default function AccountPage() {
                 <Stack spacing={0.8} flex={1} minWidth={0}>
                   <Box>
                     <Typography variant="caption" sx={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace', letterSpacing: 1, opacity: 0.85, display: 'block' }}>
-                      PRÊMIO: VOUCHER DE X EM COMPRAS NO SITE
+                      PRÊMIO: VOUCHER DE R$ 5000,00 EM COMPRAS NO SITE
                     </Typography>
                     <Typography variant="caption" sx={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace', letterSpacing: 1, opacity: 0.85, display: 'block' }}>
                       CARTÃO PRESENTE
                     </Typography>
-                    <Typography variant="caption" sx={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace', letterSpacing: 1, opacity: 0.85, display: 'block' }}>
-                      POSIÇÕES: {posicoes.join(', ')}
-                    </Typography>
+                    
                   </Box>
 
                   <Stack direction="row" spacing={1} alignItems="center" sx={{ mt: 'auto' }}>
