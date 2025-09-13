@@ -10,32 +10,94 @@ import ArrowBackIosNewRoundedIcon from "@mui/icons-material/ArrowBackIosNewRound
 import AccountCircleRoundedIcon from "@mui/icons-material/AccountCircleRounded";
 import logoNewStore from "./Logo-branca-sem-fundo-768x132.png";
 import { useAuth } from "./authContext";
-import { getDrawNumbers } from "./services/numbers";
 
 const theme = createTheme({
   palette: { mode: "dark", background: { default: "#0E0E0E", paper: "#121212" } },
 });
 
-const pad3 = (n) => n.toString().padStart(3, "0");
+const API_BASE = (process.env.REACT_APP_API_BASE_URL || "/api").replace(/\/+$/, "");
+const pad3 = (n) => n != null ? String(n).padStart(3, "0") : "--";
+const fmtDate = (v) => {
+  if (!v) return "-";
+  const d = new Date(v);
+  if (Number.isNaN(d.getTime())) return "-";
+  return d.toLocaleDateString("pt-BR");
+};
+const daysBetween = (start, end) => {
+  const a = new Date(start), b = new Date(end || Date.now());
+  if (Number.isNaN(a) || Number.isNaN(b)) return "-";
+  const ms = Math.max(0, b - a);
+  return Math.round(ms / (1000 * 60 * 60 * 24));
+};
 
-const data = [
-  { n: 98, abertura: "04/02/2024", fechamento: "10/02/2024", dias: 10, realizacao: "10/02/2024", vencedor: "Amanda" },
-  { n: 97, abertura: "10/02/2024", fechamento: "10/02/2024", dias: 10, realizacao: "19/02/2024", vencedor: "Mateus" },
-  { n: 96, abertura: "26/02/2024", fechamento: "26/02/2024", dias: 9,  realizacao: "17/02/2024", vencedor: "Julia" },
-  { n: 95, abertura: "23/02/2024", fechamento: "24/02/2024", dias: 8,  realizacao: "12/02/2024", vencedor: "Diego" },
-  { n: 94, abertura: "20/02/2024", fechamento: "27/12/2023", dias: 8,  realizacao: "19/02/2024", vencedor: "Caio" },
-  { n: 93, abertura: "19/11/2023", fechamento: "27/12/2023", dias: 7,  realizacao: "12/02/2024", vencedor: "Fernanda" },
-  { n: 92, abertura: "17/11/2023", fechamento: "26/12/2023", dias: 8,  realizacao: "19/11/2023", vencedor: "Emilly" },
-  { n: 91, abertura: "16/10/2023", fechamento: "26/12/2023", dias: 9,  realizacao: "18/10/2023", vencedor: "Gustavo" },
-  { n: 90, abertura: "15/10/2023", fechamento: "23/12/2023", dias: 6,  realizacao: "17/11/2023", vencedor: "Maria" },
-  { n: 89, abertura: "20/12/2023", fechamento: "27/12/2023", dias: 10, realizacao: "27/12/2023", vencedor: "Ana" },
-];
+const authHeaders = () => {
+  const tk =
+    localStorage.getItem("token") ||
+    localStorage.getItem("access_token") ||
+    sessionStorage.getItem("token");
+  return tk ? { Authorization: `Bearer ${tk}` } : {};
+};
+
+async function getJSON(path) {
+  const url = `${API_BASE}${path.startsWith("/") ? path : `/${path}`}`;
+  const r = await fetch(url, {
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    credentials: "include",
+  });
+  if (!r.ok) throw new Error(`${r.status}`);
+  return r.json();
+}
+
+async function getFirst(paths) {
+  for (const p of paths) {
+    try { return await getJSON(p); } catch { /* tenta próximo */ }
+  }
+  return null;
+}
+
+/** Normaliza o payload da API em linhas para a tabela */
+function buildRows(payload) {
+  const arr = Array.isArray(payload)
+    ? payload
+    : payload?.history || payload?.draws || payload?.items || [];
+
+  return (arr || [])
+    .map((it) => {
+      const id = it.id ?? it.draw_id ?? it.numero ?? it.n ?? null;
+      const opened = it.opened_at ?? it.created_at ?? it.abertura ?? null;
+      const closed = it.closed_at ?? it.fechado_em ?? it.fechamento ?? null;
+      const realized =
+        it.realized_at ?? it.raffled_at ?? it.data_realizacao ?? it.realizacao ?? null;
+
+      const winner =
+        it.winner_name ??
+        it.vencedor_nome ??
+        it.winner_user_name ??
+        it.winner?.name ??
+        it.usuario_vencedor ??
+        "-";
+
+      // calcula dias aberto quando possível
+      const dias =
+        it.days_open ??
+        it.dias_aberto ??
+        (opened ? daysBetween(opened, closed) : "-");
+
+      return {
+        n: id,
+        abertura: fmtDate(opened),
+        fechamento: fmtDate(closed),
+        dias,
+        realizacao: fmtDate(realized),
+        vencedor: winner || "-",
+      };
+    })
+    // ordena do mais recente para o mais antigo
+    .sort((a, b) => Number(b.n || 0) - Number(a.n || 0));
+}
 
 export default function AdminSorteios() {
-    const DRAW_ID = process.env.REACT_APP_DRAW_ID || '1';
-  const [nums, setNums] = React.useState([]);
-  React.useEffect(() => { (async () => { try { const list = await getDrawNumbers(DRAW_ID); setNums(list);} catch(e){ console.error(e);} })(); }, [DRAW_ID]);
-const navigate = useNavigate();
+  const navigate = useNavigate();
   const { logout } = useAuth();
 
   const [menuEl, setMenuEl] = React.useState(null);
@@ -45,6 +107,32 @@ const navigate = useNavigate();
   const goPainel = () => { closeMenu(); navigate("/admin"); };
   const doLogout = () => { closeMenu(); logout(); navigate("/"); };
 
+  const [rows, setRows] = React.useState([]);
+  const [loading, setLoading] = React.useState(true);
+
+  React.useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        // Tenta alguns endpoints prováveis. Ajuste no backend para servir um destes.
+        const payload = await getFirst([
+          "/admin/draws/history",  // preferencial
+          "/draws/history",
+          "/admin/draws?status=closed",
+          "/draws?status=closed",
+          "/draws"                 // fallback
+        ]);
+        if (alive && payload) setRows(buildRows(payload));
+      } catch (e) {
+        console.error("[admin/draws] fetch error:", e);
+        if (alive) setRows([]);
+      } finally {
+        if (alive) setLoading(false);
+      }
+    })();
+    return () => { alive = false; };
+  }, []);
+
   return (
     <ThemeProvider theme={theme}>
       <CssBaseline />
@@ -53,15 +141,23 @@ const navigate = useNavigate();
           <IconButton edge="start" color="inherit" onClick={() => navigate("/admin")} aria-label="Voltar">
             <ArrowBackIosNewRoundedIcon />
           </IconButton>
-          <Box component={RouterLink} to="/admin" sx={{ position: "absolute", left: "50%", top: "50%", transform: "translate(-50%, -50%)" }}>
+          <Box
+            component={RouterLink}
+            to="/admin"
+            sx={{ position: "absolute", left: "50%", top: "50%", transform: "translate(-50%, -50%)" }}
+          >
             <Box component="img" src={logoNewStore} alt="NEW STORE" sx={{ height: 40 }} />
           </Box>
           <IconButton color="inherit" sx={{ ml: "auto" }} onClick={openMenu}>
             <AccountCircleRoundedIcon />
           </IconButton>
-          <Menu anchorEl={menuEl} open={open} onClose={closeMenu}
+          <Menu
+            anchorEl={menuEl}
+            open={open}
+            onClose={closeMenu}
             anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
-            transformOrigin={{ vertical: "top", horizontal: "right" }}>
+            transformOrigin={{ vertical: "top", horizontal: "right" }}
+          >
             <MenuItem onClick={goPainel}>Painel (Admin)</MenuItem>
             <Divider />
             <MenuItem onClick={doLogout}>Sair</MenuItem>
@@ -88,14 +184,20 @@ const navigate = useNavigate();
                   <TableCell sx={{ fontWeight: 800 }}>USUÁRIO VENCEDOR</TableCell>
                 </TableRow>
               </TableHead>
-              <TableBody>{nums.map((x) => (
-            <TableRow key={x.n}>
-              <TableCell>{x.n}</TableCell>
-              <TableCell>{x.status}</TableCell>
-            </TableRow>
-          ))}
-          
-                {data.map((d) => (
+              <TableBody>
+                {loading && (
+                  <TableRow>
+                    <TableCell colSpan={6}>Carregando…</TableCell>
+                  </TableRow>
+                )}
+                {!loading && rows.length === 0 && (
+                  <TableRow>
+                    <TableCell colSpan={6} sx={{ color: "#bbb" }}>
+                      Nenhum sorteio encontrado.
+                    </TableCell>
+                  </TableRow>
+                )}
+                {rows.map((d) => (
                   <TableRow key={d.n} hover>
                     <TableCell>{pad3(d.n)}</TableCell>
                     <TableCell>{d.abertura}</TableCell>
