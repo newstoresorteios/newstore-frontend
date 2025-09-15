@@ -141,18 +141,21 @@ export default function NewStorePage({
 
     async function load() {
       try {
-        const res = await fetch(`${API_BASE}/api/numbers`, {
+         const res = await fetch(`${API_BASE}/api/numbers`, {
           headers: { 'Content-Type': 'application/json' },
           credentials: 'include',
+          cache: 'no-store',            // evita 304 do cache do navegador
         });
         if (!res.ok) return;
         const j = await res.json();
         const reserv = [];
         const indis  = [];
         for (const it of j?.numbers || []) {
-          if (String(it.status) === 'reserved') reserv.push(Number(it.n));
-          if (String(it.status) === 'sold')     indis.push(Number(it.n));
-        }
+           const st = String(it.status || '').toLowerCase();
+           if (st === 'reserved') reserv.push(Number(it.n));
+           // back usa "taken" p/ números já pagos/aprovados (indisponíveis)
+           if (st === 'taken' || st === 'sold') indis.push(Number(it.n));
+         }
         if (!alive) return;
         setSrvReservados(Array.from(new Set(reserv)));
         setSrvIndisponiveis(Array.from(new Set(indis)));
