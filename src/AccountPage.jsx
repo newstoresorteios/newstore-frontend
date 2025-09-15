@@ -38,14 +38,26 @@ const apiJoin = (path) => {
   return `${API_BASE}${p}`;
 };
 
-// 🔐 token opcional + cookies
+// 🔐 token opcional + cookies (alinha com todas as chaves usadas no app)
 const authHeaders = () => {
   const tk =
+    localStorage.getItem('ns_auth_token') ||
+    sessionStorage.getItem('ns_auth_token') ||
     localStorage.getItem('token') ||
     localStorage.getItem('access_token') ||
     sessionStorage.getItem('token');
   return tk ? { Authorization: `Bearer ${tk}` } : {};
 };
+
+// ⚠️ só chamamos /me quando houver algum indício de sessão para evitar 401 “ruído”
+const hasAnyToken = () =>
+  Boolean(
+    localStorage.getItem('ns_auth_token') ||
+    sessionStorage.getItem('ns_auth_token') ||
+    localStorage.getItem('token') ||
+    localStorage.getItem('access_token') ||
+    sessionStorage.getItem('token')
+  );
 
 async function getJSON(fullUrlOrPath) {
   const url = /^https?:\/\//.test(fullUrlOrPath) ? fullUrlOrPath : apiJoin(fullUrlOrPath);
@@ -150,10 +162,14 @@ export default function AccountPage() {
     (async () => {
       try {
         let me = ctxUser || storedMe || null;
-        try {
-          const meResp = await getJSON('/api/me');
-          me = meResp?.user || meResp || me;
-        } catch {}
+
+        // ✅ evita /api/me quando não há sessão — some o 401 “ruído”
+        if (hasAnyToken()) {
+          try {
+            const meResp = await getJSON('/api/me');
+            me = meResp?.user || meResp || me;
+          } catch {}
+        }
 
         if (alive) {
           setUser(me || null);
@@ -248,7 +264,7 @@ export default function AccountPage() {
           >
             {isAuthenticated && (
               <>
-                {/* ✅ ADICIONADO: link do Painel Admin quando o usuário é admin */}
+                {/* ✅ link do Painel Admin quando o usuário é admin */}
                 {isAdminUser && (
                   <MenuItem onClick={() => { handleCloseMenu(); navigate('/admin'); }}>
                     Painel Admin

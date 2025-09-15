@@ -19,19 +19,20 @@ const theme = createTheme({
 });
 
 const ADMIN_EMAIL = "admin@newstore.com.br";
-//const API_BASE = (process.env.REACT_APP_API_BASE_URL || "/api").replace(/\/+$/, "");
 const RAW_API = process.env.REACT_APP_API_BASE_URL || "/api";
 const API_BASE = (
   RAW_API.endsWith("/api") ? RAW_API : `${RAW_API.replace(/\/+$/, "")}/api`
 ).replace(/\/+$/, "");
 
-const authHeaders = () => {
-  const tk =
+// ⚠️ só tenta /me se existir qualquer token salvo (evita 401 “ruído”)
+const hasAnyToken = () =>
+  Boolean(
+    localStorage.getItem("ns_auth_token") ||
+    sessionStorage.getItem("ns_auth_token") ||
     localStorage.getItem("token") ||
     localStorage.getItem("access_token") ||
-    sessionStorage.getItem("token");
-  return tk ? { Authorization: `Bearer ${tk}` } : {};
-};
+    sessionStorage.getItem("token")
+  );
 
 export default function LoginPage() {
   const { login } = useAuth();
@@ -47,61 +48,66 @@ export default function LoginPage() {
   const [loading, setLoading] = React.useState(false);
 
   // dentro de src/LoginPage.jsx
-const handleSubmit = async (e) => {
-  e.preventDefault();
-  setError("");
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setError("");
 
-  if (!/\S+@\S+\.\S+/.test(email)) { setError("Informe um e-mail válido."); return; }
-  if (password.length < 6)        { setError("A senha deve ter pelo menos 6 caracteres."); return; }
+    if (!/\S+@\S+\.\S+/.test(email)) { setError("Informe um e-mail válido."); return; }
+    if (password.length < 6)        { setError("A senha deve ter pelo menos 6 caracteres."); return; }
 
-  try {
-    setLoading(true);
-
-    // faz login (hook grava token/cookie)
-    await login({ email, password, remember });
-
-    // tenta obter o "me"
-    let user = null;
     try {
-      const r = await fetch(`${API_BASE}/me`, {
-        method: "GET",
-        headers: { "Content-Type": "application/json" }, // cookies já bastam
-        credentials: "include",
-      });
-      if (r.ok) {
-        const body = await r.json();
-        user = body?.user || body || null;
-        if (user) localStorage.setItem("me", JSON.stringify(user));
+      setLoading(true);
+
+      // faz login (hook grava token/cookie)
+      await login({ email, password, remember });
+
+      // tenta obter o "me" — somente se houver token
+      let user = null;
+      if (hasAnyToken()) {
+        try {
+          const r = await fetch(`${API_BASE}/me`, {
+            method: "GET",
+            headers: { "Content-Type": "application/json" },
+            credentials: "include",
+          });
+          if (r.ok) {
+            const body = await r.json();
+            user = body?.user || body || null;
+            if (user) localStorage.setItem("me", JSON.stringify(user));
+          } else {
+            const lower = email.trim().toLowerCase();
+            if (lower === ADMIN_EMAIL) {
+              const minimalAdmin = { email: lower, is_admin: true, name: "Admin" };
+              try { localStorage.setItem("me", JSON.stringify(minimalAdmin)); } catch {}
+            }
+          }
+        } catch {
+          const lower = email.trim().toLowerCase();
+          if (lower === ADMIN_EMAIL) {
+            const minimalAdmin = { email: lower, is_admin: true, name: "Admin" };
+            try { localStorage.setItem("me", JSON.stringify(minimalAdmin)); } catch {}
+          }
+        }
       } else {
-        // fallback: se for o admin e /me falhar, guarda um "me" mínimo
+        // sem token: mantém fallback para admin (não-admin vai para /conta)
         const lower = email.trim().toLowerCase();
         if (lower === ADMIN_EMAIL) {
           const minimalAdmin = { email: lower, is_admin: true, name: "Admin" };
           try { localStorage.setItem("me", JSON.stringify(minimalAdmin)); } catch {}
         }
       }
-    } catch {
-      // mesmo fallback se deu erro de rede
-      const lower = email.trim().toLowerCase();
-      if (lower === ADMIN_EMAIL) {
-        const minimalAdmin = { email: lower, is_admin: true, name: "Admin" };
-        try { localStorage.setItem("me", JSON.stringify(minimalAdmin)); } catch {}
-      }
+
+      // decide o destino
+      const isAdmin =
+        !!user?.is_admin || (user?.email || email).trim().toLowerCase() === ADMIN_EMAIL;
+
+      navigate(isAdmin ? "/admin" : from, { replace: true });
+    } catch (err) {
+      setError(err.message || "Falha ao entrar.");
+    } finally {
+      setLoading(false);
     }
-
-    // decide o destino
-    const isAdmin =
-      !!user?.is_admin || (user?.email || email).trim().toLowerCase() === ADMIN_EMAIL;
-
-    navigate(isAdmin ? "/admin" : from, { replace: true });
-  } catch (err) {
-    setError(err.message || "Falha ao entrar.");
-  } finally {
-    setLoading(false);
-  }
-};
-
-
+  };
 
   return (
     <ThemeProvider theme={theme}>
