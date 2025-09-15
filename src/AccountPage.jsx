@@ -12,7 +12,6 @@ import {
 import ArrowBackIosNewRoundedIcon from '@mui/icons-material/ArrowBackIosNewRounded';
 import AccountCircleRoundedIcon from '@mui/icons-material/AccountCircleRounded';
 
-
 const theme = createTheme({
   palette: {
     mode: 'dark',
@@ -27,58 +26,9 @@ const theme = createTheme({
   typography: { fontFamily: ['Inter','system-ui','Segoe UI','Roboto','Arial'].join(',') },
 });
 
-
-const [syncing, setSyncing] = React.useState(false);
-
-const { user } = useAuth();
-const coupon = user?.coupon_code || 'CUPOMAQUI';
-
-// Sempre que o valor acumulado mudar, garantimos que o cupom reflita esse valor.
-// 1) lê o cupom atual; 2) se não existir ou divergir do valor, sincroniza (recria) na Tray.
-React.useEffect(() => {
-  let alive = true;
-
-  async function ensureCouponFor(valueBRL) {
-    try {
-      setSyncing(true);
-      // tenta ler o cupom atual
-      const r = await fetch(`${API_BASE}/api/coupons/mine`, { credentials: 'include' });
-      const mine = await r.json().catch(() => ({}));
-      if (!alive) return;
-
-      const uiCents = Math.round((Number(valueBRL) || 0) * 100);
-      const srvCents = Number(mine?.cents ?? 0);
-
-      // sem cupom ou valor divergente -> sincroniza
-      if (!mine?.code || srvCents !== uiCents) {
-        const s = await fetch(`${API_BASE}/api/coupons/sync`, {
-          method: 'POST',
-          credentials: 'include',
-          headers: { 'Content-Type': 'application/json' },
-        });
-        const synced = await s.json().catch(() => mine);
-        if (!alive) return;
-        setCoupon(synced?.code ? synced : mine);
-      } else {
-        setCoupon(mine);
-      }
-    } catch {
-      // não travar a UI
-    } finally {
-      if (alive) setSyncing(false);
-    }
-  }
-
-  // chama usando o valor que você já calcula na página:
-  ensureCouponFor(valorAcumulado);
-
-  return () => { alive = false; };
-}, [valorAcumulado]);
-
-
+// ---------- helpers ----------
 const pad2 = (n) => n.toString().padStart(2, '0');
 
-// 🔧 base de API normalizada
 const RAW_BASE = process.env.REACT_APP_API_BASE_URL || '/api';
 const API_BASE = RAW_BASE.replace(/\/+$/, '');
 const apiJoin = (path) => {
@@ -88,7 +38,6 @@ const apiJoin = (path) => {
   return `${API_BASE}${p}`;
 };
 
-// 🔐 token opcional + cookies (alinha com todas as chaves usadas no app)
 const authHeaders = () => {
   const tk =
     localStorage.getItem('ns_auth_token') ||
@@ -99,7 +48,6 @@ const authHeaders = () => {
   return tk ? { Authorization: `Bearer ${tk}` } : {};
 };
 
-// ⚠️ só chamamos /me quando houver algum indício de sessão para evitar 401 “ruído”
 const hasAnyToken = () =>
   Boolean(
     localStorage.getItem('ns_auth_token') ||
@@ -119,7 +67,7 @@ async function getJSON(fullUrlOrPath) {
   return res.json();
 }
 
-// ---------------------- Chips (inalterado) ----------------------
+// ---------- chips ----------
 const PayChip = ({ status }) => {
   const st = String(status || '').toLowerCase();
   if (st === 'approved' || st === 'paid' || st === 'pago') {
@@ -142,7 +90,7 @@ const ResultChip = ({ result }) => {
   return <Chip label="ABERTO" sx={{ bgcolor: 'primary.main', color: '#0E0E0E', fontWeight: 800, borderRadius: 999, px: 1.5 }} />;
 };
 
-// -------------------- Tabela (inalterado) -----------------------
+// ---------- tabela ----------
 function buildRows(payPayload, drawsMap, availableSet) {
   const list = Array.isArray(payPayload)
     ? payPayload
@@ -180,8 +128,8 @@ function buildRows(payPayload, drawsMap, availableSet) {
   });
 }
 
-// ------------------------------- COMPONENTE ---------------------------------
-const ADMIN_EMAIL = 'admin@newstore.com.br'; // ✅ usado para detectar admin
+// ---------- componente ----------
+const ADMIN_EMAIL = 'admin@newstore.com.br';
 
 export default function AccountPage() {
   const navigate = useNavigate();
@@ -200,12 +148,14 @@ export default function AccountPage() {
   const [valorAcumulado, setValorAcumulado] = React.useState(0);
   const [cupom, setCupom] = React.useState('CUPOMAQUI');
   const [validade, setValidade] = React.useState('28/10/25');
+  const [syncing, setSyncing] = React.useState(false);
 
   const storedMe = React.useMemo(() => {
     try { return JSON.parse(localStorage.getItem('me') || 'null'); }
     catch { return null; }
   }, []);
 
+  // carrega usuário e pagamentos
   React.useEffect(() => {
     let alive = true;
 
@@ -213,7 +163,6 @@ export default function AccountPage() {
       try {
         let me = ctxUser || storedMe || null;
 
-        // ✅ evita /api/me quando não há sessão — some o 401 “ruído”
         if (hasAnyToken()) {
           try {
             const meResp = await getJSON('/api/me');
@@ -258,14 +207,6 @@ export default function AccountPage() {
             }, 0);
             setValorAcumulado((cents || 0) / 100);
           }
-
-          const maybeCoupon = pay.coupon || pay.cupom || pay.discountCode || pay.codigo;
-          const maybeDue = pay.validity || pay.validade || pay.expiresAt || pay.expiraEm || null;
-          if (maybeCoupon) setCupom(String(maybeCoupon).toUpperCase());
-          if (maybeDue) {
-            const d = new Date(maybeDue);
-            if (!isNaN(d)) setValidade(d.toLocaleDateString('pt-BR'));
-          }
         }
       } finally {
         if (alive) setLoading(false);
@@ -275,15 +216,56 @@ export default function AccountPage() {
     return () => { alive = false; };
   }, [ctxUser, storedMe]);
 
+  // sincroniza cupom quando o valor muda
+  React.useEffect(() => {
+    if (!isAuthenticated) return;
+    let alive = true;
+
+    (async () => {
+      try {
+        setSyncing(true);
+
+        const r = await fetch(apiJoin('/api/coupons/mine'), {
+          credentials: 'include',
+          headers: { ...authHeaders() }
+        });
+        const mine = r.ok ? await r.json() : null;
+
+        const uiCents = Math.round((Number(valorAcumulado) || 0) * 100);
+        const srvCents = Number(mine?.cents || 0);
+
+        if (!mine?.code || uiCents !== srvCents) {
+          const s = await fetch(apiJoin('/api/coupons/sync'), {
+            method: 'POST',
+            credentials: 'include',
+            headers: { 'Content-Type': 'application/json', ...authHeaders() },
+            body: JSON.stringify({}),
+          });
+          const synced = s.ok ? await s.json() : null;
+          if (alive && synced?.code) setCupom(synced.code);
+          else if (alive && mine?.code) setCupom(mine.code);
+        } else {
+          if (alive && mine?.code) setCupom(mine.code);
+        }
+      } catch {
+        // ignora falhas
+      } finally {
+        if (alive) setSyncing(false);
+      }
+    })();
+
+    return () => { alive = false; };
+  }, [valorAcumulado, isAuthenticated]);
+
   const u = user || {};
   const headingName =
     u.name || u.fullName || u.nome || u.displayName || u.username || u.email || 'NOME DO CLIENTE';
   const cardEmail = u.email || (u.username?.includes?.('@') ? u.username : headingName);
+  const couponCode = u?.coupon_code || cupom || 'CUPOMAQUI';
 
   const posicoes = (selecionados?.length ? selecionados : ['05','12','27','33','44','59'])
     .slice(0, 6).map(pad2);
 
-  // ✅ DETECÇÃO DE ADMIN (para exibir link de dashboard)
   const isAdminUser = !!(
     u?.is_admin === true ||
     u?.role === 'admin' ||
@@ -314,14 +296,12 @@ export default function AccountPage() {
           >
             {isAuthenticated && (
               <>
-                {/* ✅ link do Painel Admin quando o usuário é admin */}
                 {isAdminUser && (
                   <MenuItem onClick={() => { handleCloseMenu(); navigate('/admin'); }}>
                     Painel Admin
                   </MenuItem>
                 )}
                 {isAdminUser && <Divider />}
-
                 <MenuItem onClick={() => { handleCloseMenu(); navigate('/conta'); }}>
                   Área do cliente
                 </MenuItem>
@@ -343,7 +323,7 @@ export default function AccountPage() {
             {headingName}
           </Typography>
 
-          {/* Cartão visual */}
+          {/* Cartão */}
           <Box sx={{ width: '100%', display: 'flex', justifyContent: 'center' }}>
             <Paper elevation={0} sx={{
               width: { xs: 'min(92vw, 420px)', sm: 'min(88vw, 500px)', md: '560px' },
@@ -365,12 +345,9 @@ export default function AccountPage() {
 
               <Stack direction="row" justifyContent="space-between" alignItems="flex-start" gap={1} sx={{ position: 'relative', height: '100%' }}>
                 <Stack spacing={0.8} flex={1} minWidth={0}>
-                  <Box>
-                   
-                    <Typography variant="caption" sx={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace', letterSpacing: 1, opacity: 0.85, display: 'block' }}>
-                      CARTÃO PRESENTE
-                    </Typography>
-                  </Box>
+                  <Typography variant="caption" sx={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace', letterSpacing: 1, opacity: 0.85, display: 'block' }}>
+                    CARTÃO PRESENTE
+                  </Typography>
 
                   <Stack direction="row" spacing={1} alignItems="center" sx={{ mt: 'auto' }}>
                     <Box component="img" src={logoNewStore} alt="NS" sx={{ height: 18, opacity: 0.9 }} />
@@ -393,11 +370,8 @@ export default function AccountPage() {
                   <Typography variant="caption" sx={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace', letterSpacing: 1, opacity: 0.85 }}>
                     CÓDIGO DE DESCONTO:
                   </Typography>
-                 <Typography
-                    variant="h6"
-                    sx={{ fontWeight: 900, letterSpacing: 2, whiteSpace: 'nowrap' }}
-                  >
-                    {coupon}
+                  <Typography variant="h6" sx={{ fontWeight: 900, letterSpacing: 2, whiteSpace: 'nowrap' }}>
+                    {couponCode}
                   </Typography>
                   <Typography variant="caption" sx={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace', letterSpacing: 1, opacity: 0.9, color: '#9AE6B4', textAlign: 'right' }}>
                     VALOR ACUMULADO:
