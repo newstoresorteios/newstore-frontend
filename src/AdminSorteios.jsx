@@ -15,24 +15,22 @@ const theme = createTheme({
   palette: { mode: "dark", background: { default: "#0E0E0E", paper: "#121212" } },
 });
 
-// ---------- API base normalizada ----------
-const RAW_API_BASE =
+/* ---------- API base normalizada (mesma lógica do AccountPage) ---------- */
+const RAW_BASE =
   process.env.REACT_APP_API_BASE_URL ||
   process.env.REACT_APP_API_BASE ||
   "/api";
 
-function normalizeApiBase(b) {
-  if (!b) return "/api";
-  let base = String(b).replace(/\/+$/, "");
-  // Se for http(s) e não terminar com /api, acrescenta /api
-  if (/^https?:\/\//i.test(base) && !/\/api$/i.test(base)) {
-    base += "/api";
-  }
-  return base;
-}
-const API_BASE = normalizeApiBase(RAW_API_BASE);
+const API_BASE = String(RAW_BASE).replace(/\/+$/, "");
+const apiJoin = (path) => {
+  let p = path;
+  if (!p.startsWith("/")) p = `/${p}`;
+  // evita .../api + /api/...
+  if (API_BASE.endsWith("/api") && p.startsWith("/api/")) p = p.slice(4);
+  return `${API_BASE}${p}`;
+};
 
-// ---------- helpers ----------
+/* ---------- helpers ---------- */
 const pad3 = (n) => (n != null ? String(n).padStart(3, "0") : "--");
 const fmtDate = (v) => {
   if (!v) return "-";
@@ -49,14 +47,16 @@ const daysBetween = (start, end) => {
 
 const authHeaders = () => {
   const tk =
+    localStorage.getItem("ns_auth_token") ||
+    sessionStorage.getItem("ns_auth_token") ||
     localStorage.getItem("token") ||
     localStorage.getItem("access_token") ||
     sessionStorage.getItem("token");
   return tk ? { Authorization: `Bearer ${tk}` } : {};
 };
 
-async function getJSON(path) {
-  const url = `${API_BASE}${path.startsWith("/") ? path : `/${path}`}`;
+async function getJSON(pathOrUrl) {
+  const url = /^https?:\/\//i.test(pathOrUrl) ? pathOrUrl : apiJoin(pathOrUrl);
   const r = await fetch(url, {
     headers: { "Content-Type": "application/json", ...authHeaders() },
     credentials: "include",
@@ -67,7 +67,11 @@ async function getJSON(path) {
 
 async function getFirst(paths) {
   for (const p of paths) {
-    try { return await getJSON(p); } catch { /* tenta o próximo */ }
+    try {
+      return await getJSON(p);
+    } catch {
+      // tenta o próximo
+    }
   }
   return null;
 }
@@ -89,7 +93,7 @@ function buildRows(payload) {
       const winner =
         it.winner_name ??
         it.vencedor_nome ??
-        it.winner_user_name ??
+        it.winner_name ??
         it.winner?.name ??
         it.usuario_vencedor ??
         "-";
@@ -108,6 +112,7 @@ function buildRows(payload) {
         vencedor: winner || "-",
       };
     })
+    .filter((r) => r.n != null) // garante linhas válidas
     .sort((a, b) => Number(b.n || 0) - Number(a.n || 0));
 }
 
@@ -129,12 +134,13 @@ export default function AdminSorteios() {
     let alive = true;
     (async () => {
       try {
+        // tenta os fechados, depois lista geral
         const payload = await getFirst([
-          "/admin/draws/history",   // preferencial (backend novo)
-          "/draws/history",
-          "/admin/draws?status=closed",
           "/draws?status=closed",
-          "/draws"                  // fallback
+          "/admin/draws?status=closed",
+          "/draws/history",
+          "/admin/draws/history",
+          "/draws",
         ]);
         if (alive && payload) setRows(buildRows(payload));
       } catch (e) {
