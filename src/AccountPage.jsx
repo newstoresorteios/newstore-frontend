@@ -28,22 +28,17 @@ const theme = createTheme({
 
 const pad2 = (n) => n.toString().padStart(2, '0');
 
-// --------- 🔧 NORMALIZAÇÃO DE BASE DA API (EVITA 404 EM /users/me) ----------
-/*
-   Se REACT_APP_API_BASE_URL = "https://.../api", evitamos duplicar /api.
-   Se REACT_APP_API_BASE_URL = "https://..." (sem /api) ou "/api" (relativo), também funciona.
-*/
+// 🔧 base de API normalizada
 const RAW_BASE = process.env.REACT_APP_API_BASE_URL || '/api';
 const API_BASE = RAW_BASE.replace(/\/+$/, '');
 const apiJoin = (path) => {
   let p = path;
   if (!p.startsWith('/')) p = `/${p}`;
-  // Se a base já termina com /api e o path começa com /api, removemos um /api
   if (API_BASE.endsWith('/api') && p.startsWith('/api/')) p = p.slice(4);
   return `${API_BASE}${p}`;
 };
 
-// Token salvo pelo login (opcional — cookie também é aceito pelo backend)
+// 🔐 token opcional + cookies
 const authHeaders = () => {
   const tk =
     localStorage.getItem('token') ||
@@ -52,7 +47,6 @@ const authHeaders = () => {
   return tk ? { Authorization: `Bearer ${tk}` } : {};
 };
 
-// Fetch padrão com credenciais para mandar o cookie ns_auth
 async function getJSON(fullUrlOrPath) {
   const url = /^https?:\/\//.test(fullUrlOrPath) ? fullUrlOrPath : apiJoin(fullUrlOrPath);
   const res = await fetch(url, {
@@ -63,7 +57,7 @@ async function getJSON(fullUrlOrPath) {
   return res.json();
 }
 
-// ---------------------- Chips de status (sem mudanças) ----------------------
+// ---------------------- Chips (inalterado) ----------------------
 const PayChip = ({ status }) => {
   const st = String(status || '').toLowerCase();
   if (st === 'approved' || st === 'paid' || st === 'pago') {
@@ -86,7 +80,7 @@ const ResultChip = ({ result }) => {
   return <Chip label="ABERTO" sx={{ bgcolor: 'primary.main', color: '#0E0E0E', fontWeight: 800, borderRadius: 999, px: 1.5 }} />;
 };
 
-// -------------------- Montagem das linhas da tabela (sem mudanças) ----------
+// -------------------- Tabela (inalterado) -----------------------
 function buildRows(payPayload, drawsMap, availableSet) {
   const list = Array.isArray(payPayload)
     ? payPayload
@@ -125,6 +119,8 @@ function buildRows(payPayload, drawsMap, availableSet) {
 }
 
 // ------------------------------- COMPONENTE ---------------------------------
+const ADMIN_EMAIL = 'admin@newstore.com.br'; // ✅ usado para detectar admin
+
 export default function AccountPage() {
   const navigate = useNavigate();
   const { selecionados } = React.useContext(SelectionContext);
@@ -143,7 +139,6 @@ export default function AccountPage() {
   const [cupom, setCupom] = React.useState('CUPOMAQUI');
   const [validade, setValidade] = React.useState('28/10/25');
 
-  // Fallback de usuário salvo pelo login
   const storedMe = React.useMemo(() => {
     try { return JSON.parse(localStorage.getItem('me') || 'null'); }
     catch { return null; }
@@ -154,24 +149,19 @@ export default function AccountPage() {
 
     (async () => {
       try {
-        // 1) PERFIL — usa ctx, depois storage, depois backend em **/api/me**
         let me = ctxUser || storedMe || null;
         try {
-          const meResp = await getJSON('/api/me'); // <- FIXA A ROTA CORRETA
+          const meResp = await getJSON('/api/me');
           me = meResp?.user || meResp || me;
-        } catch {
-          // se falhar, fica com o que tiver (ctx/storage)
-        }
+        } catch {}
 
         if (alive) {
           setUser(me || null);
           try { if (me) localStorage.setItem('me', JSON.stringify(me)); } catch {}
         }
 
-        // 2) PAGAMENTOS (rota oficial)
         const pay = await getJSON('/api/payments/me');
 
-        // 3) SORTEIOS (tenta /api/draws; se quiser, pode tentar /api/draws-ext se precisar de status externos)
         let drawsMap = new Map();
         try {
           const draws = await getJSON('/api/draws');
@@ -179,7 +169,6 @@ export default function AccountPage() {
           drawsMap = new Map(arr.map(d => [Number(d.id ?? d.draw_id), { status: d.status ?? d.result ?? '' }]));
         } catch {}
 
-        // 4) NÚMEROS ATUAIS
         let availableSet = new Set();
         try {
           const nums = await getJSON('/api/numbers');
@@ -188,7 +177,6 @@ export default function AccountPage() {
           }
         } catch {}
 
-        // 5) MONTA TABELA + TOTAL/CUPOM/VALIDADE
         if (alive && pay) {
           const tableRows = buildRows(pay, drawsMap, availableSet);
           setRows(tableRows);
@@ -226,7 +214,15 @@ export default function AccountPage() {
     u.name || u.fullName || u.nome || u.displayName || u.username || u.email || 'NOME DO CLIENTE';
   const cardEmail = u.email || (u.username?.includes?.('@') ? u.username : headingName);
 
-  const posicoes = (selecionados?.length ? selecionados : ['05','12','27','33','44','59']).slice(0, 6).map(pad2);
+  const posicoes = (selecionados?.length ? selecionados : ['05','12','27','33','44','59'])
+    .slice(0, 6).map(pad2);
+
+  // ✅ DETECÇÃO DE ADMIN (para exibir link de dashboard)
+  const isAdminUser = !!(
+    u?.is_admin === true ||
+    u?.role === 'admin' ||
+    (u?.email && String(u.email).toLowerCase() === ADMIN_EMAIL)
+  );
 
   return (
     <ThemeProvider theme={theme}>
@@ -243,12 +239,26 @@ export default function AccountPage() {
           <IconButton color="inherit" sx={{ ml: 'auto' }} onClick={handleOpenMenu}>
             <AccountCircleRoundedIcon />
           </IconButton>
-          <Menu anchorEl={menuEl} open={menuOpen} onClose={handleCloseMenu}
+          <Menu
+            anchorEl={menuEl}
+            open={menuOpen}
+            onClose={handleCloseMenu}
             anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
-            transformOrigin={{ vertical: 'top', horizontal: 'right' }}>
+            transformOrigin={{ vertical: 'top', horizontal: 'right' }}
+          >
             {isAuthenticated && (
               <>
-                <MenuItem onClick={() => { handleCloseMenu(); navigate('/conta'); }}>Área do cliente</MenuItem>
+                {/* ✅ ADICIONADO: link do Painel Admin quando o usuário é admin */}
+                {isAdminUser && (
+                  <MenuItem onClick={() => { handleCloseMenu(); navigate('/admin'); }}>
+                    Painel Admin
+                  </MenuItem>
+                )}
+                {isAdminUser && <Divider />}
+
+                <MenuItem onClick={() => { handleCloseMenu(); navigate('/conta'); }}>
+                  Área do cliente
+                </MenuItem>
                 <Divider />
                 <MenuItem onClick={doLogout}>Sair</MenuItem>
               </>
@@ -259,8 +269,11 @@ export default function AccountPage() {
 
       <Container maxWidth="lg" sx={{ py: { xs: 3, md: 5 } }}>
         <Stack spacing={3}>
-          <Typography variant="h4" sx={{ fontWeight: 900, letterSpacing: 1, textTransform: 'uppercase',
-            display: { xs: 'none', md: 'block' }, opacity: 0.9 }}>
+          <Typography
+            variant="h4"
+            sx={{ fontWeight: 900, letterSpacing: 1, textTransform: 'uppercase',
+              display: { xs: 'none', md: 'block' }, opacity: 0.9 }}
+          >
             {headingName}
           </Typography>
 
