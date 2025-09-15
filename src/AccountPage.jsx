@@ -50,8 +50,10 @@ const theme = createTheme({
 
 const pad2 = (n) => n.toString().padStart(2, '0');
 
+// Base da API (sem barra no final). No Vercel, defina REACT_APP_API_BASE_URL.
 const API_BASE = (process.env.REACT_APP_API_BASE_URL || '/api').replace(/\/+$/, '');
 
+// Lê token salvo pelo login (bearer ou cookie com credentials: 'include')
 const authHeaders = () => {
   const tk =
     localStorage.getItem('token') ||
@@ -60,6 +62,7 @@ const authHeaders = () => {
   return tk ? { Authorization: `Bearer ${tk}` } : {};
 };
 
+// Fetch com cabeçalhos e credenciais (cookies)
 async function getJSON(path) {
   const res = await fetch(`${API_BASE}${path}`, {
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
@@ -69,6 +72,7 @@ async function getJSON(path) {
   return res.json();
 }
 
+// Tenta uma lista de caminhos e retorna o primeiro que funcionar
 async function getFirst(paths) {
   for (const p of paths) {
     try {
@@ -79,7 +83,7 @@ async function getFirst(paths) {
   return null;
 }
 
-/** Chips */
+/** Chips visuais de status */
 const PayChip = ({ status }) => {
   const st = String(status || '').toLowerCase();
   if (st === 'approved' || st === 'paid' || st === 'pago') {
@@ -133,9 +137,9 @@ const ResultChip = ({ result }) => {
 };
 
 /**
- * Constrói linhas a partir de /payments/me + /draws
- * availableSet: Set com números atualmente "available" no /api/numbers (reserva expirada/liberada)
- *                → se pagamento estiver pendente e o número estiver em availableSet, não mostra a linha.
+ * Monta linhas da tabela a partir de /payments/me + /draws.
+ * availableSet = números com status "available" no /api/numbers (reserva liberada);
+ * se pagamento ainda não for "approved", escondemos esses números.
  */
 function buildRows(payPayload, drawsMap, availableSet) {
   const list = Array.isArray(payPayload)
@@ -154,7 +158,6 @@ function buildRows(payPayload, drawsMap, availableSet) {
     if (!result) result = 'aberto';
 
     for (const n of numbers) {
-      // remove da lista números com reserva expirada (voltaram a "available") quando pagamento ainda não foi aprovado
       if (
         availableSet &&
         availableSet.has(Number(n)) &&
@@ -172,6 +175,7 @@ function buildRows(payPayload, drawsMap, availableSet) {
     }
   }
 
+  // Pendentes primeiro
   return rows.sort((a, b) => {
     const ap = String(a.pagamento).toLowerCase() === 'pending';
     const bp = String(b.pagamento).toLowerCase() === 'pending';
@@ -181,9 +185,10 @@ function buildRows(payPayload, drawsMap, availableSet) {
   });
 }
 
+// ---- Componente -------------------------------------------------------------
 export default function AccountPage() {
   const navigate = useNavigate();
-  const { selecionados, limparSelecao } = React.useContext(SelectionContext);
+  const { selecionados } = React.useContext(SelectionContext);
   const { logout, isAuthenticated, user: ctxUser } = useAuth();
 
   const [menuEl, setMenuEl] = React.useState(null);
@@ -203,44 +208,57 @@ export default function AccountPage() {
   const [cupom, setCupom] = React.useState('CUPOMAQUI');
   const [validade, setValidade] = React.useState('28/10/25');
 
-  
+  // Lê "me" do storage (fallback quando /api/me não responder)
+  const storedMe = React.useMemo(() => {
+    try { return JSON.parse(localStorage.getItem('me') || 'null'); }
+    catch { return null; }
+  }, []);
 
   React.useEffect(() => {
     let alive = true;
+
     (async () => {
       try {
-        // Perfil
-        let me = ctxUser;
+        // 1) PERFIL: tenta contexto -> /api/me -> /users/me
+        let me = ctxUser || null;
+
         if (!me) {
-          const meData = await getFirst(['/me', '/auth/me', '/users/me', '/account/me', '/api/me']);
+          const meData = await getFirst(['/api/me', '/me', '/auth/me', '/users/me', '/account/me']);
           if (meData) me = meData.user || meData;
-        } 
+        }
 
         if (me && !me.name) {
           try {
-            const u = await getFirst(['/users/me', '/api/users/me']);
+            const u = await getFirst(['/api/users/me', '/users/me']);
             if (u?.name) me = { ...me, name: u.name };
           } catch {}
         }
-        setUser(me || null);
 
-        if (alive) setUser(me || null);
+        // Se conseguiu alguém, salva e usa; senão, cai pro storedMe
+        if (me) {
+          if (alive) setUser(me);
+          try { localStorage.setItem('me', JSON.stringify(me)); } catch {}
+        } else if (storedMe) {
+          if (alive) setUser(storedMe);
+        } else {
+          if (alive) setUser(null);
+        }
 
-        // Pagamentos do usuário
-        const pay = await getFirst(['/payments/me', '/api/payments/me']);
+        // 2) PAGAMENTOS DO USUÁRIO
+        const pay = await getFirst(['/api/payments/me', '/payments/me']);
 
-        // Status dos sorteios
+        // 3) STATUS DOS SORTEIOS
         let drawsMap = new Map();
         try {
-          const draws = await getFirst(['/draws', '/api/draws', '/draws-ext', '/api/draws-ext']);
+          const draws = await getFirst(['/api/draws', '/draws', '/api/draws-ext', '/draws-ext']);
           const arr = Array.isArray(draws) ? draws : (draws?.draws || draws?.items || []);
           drawsMap = new Map(arr.map(d => [Number(d.id ?? d.draw_id), { status: d.status ?? d.result ?? '' }]));
         } catch {}
 
-        // Números atuais (para saber quais estão "available" = reserva expirada/liberada)
+        // 4) NÚMEROS ATUAIS (para esconder reservas liberadas quando pagamento é pendente)
         let availableSet = new Set();
         try {
-          const nums = await getFirst(['/numbers', '/api/numbers']);
+          const nums = await getFirst(['/api/numbers', '/numbers']);
           for (const it of nums?.numbers || []) {
             if (String(it.status).toLowerCase() === 'available') {
               availableSet.add(Number(it.n));
@@ -248,11 +266,11 @@ export default function AccountPage() {
           }
         } catch {}
 
+        // 5) MONTA TABELA + VALOR/CUPOM/VALIDADE
         if (alive && pay) {
           const tableRows = buildRows(pay, drawsMap, availableSet);
           setRows(tableRows);
 
-          // total acumulado
           const backendTotal =
             pay.total || pay.valor || pay.amount || (Array.isArray(pay) ? null : pay?.summary?.total);
           if (backendTotal != null) {
@@ -274,36 +292,34 @@ export default function AccountPage() {
           }
         }
       } catch (_) {
+        // silencioso — caímos nos fallbacks
       } finally {
         if (alive) setLoading(false);
       }
     })();
+
     return () => { alive = false; };
-  }, [ctxUser]);
+  }, [ctxUser, storedMe]);
 
-  const storedMe = React.useMemo(() => {
-  try { return JSON.parse(localStorage.getItem("me") || "{}"); }
-  catch { return {}; }
-}, []);
-
+  // Usa o usuário carregado OU o do storage como fallback
+  const u = (user && Object.keys(user).length ? user : storedMe) || {};
 
   // Nome no título grande
   const headingName =
-  user?.name ||
-  user?.fullName ||
-  user?.nome ||
-  user?.displayName ||
-  user?.username ||
-  user?.email ||             // << fallback com o e-mail
-  'NOME DO CLIENTE';
+    u.name ||
+    u.fullName ||
+    u.nome ||
+    u.displayName ||
+    u.username ||
+    u.email ||
+    'NOME DO CLIENTE';
 
-  // E-mail no cartão
+  // E-mail no cartão (ou o próprio heading se não houver @)
   const cardEmail =
-    user?.email || (user?.username?.includes?.('@') ? user.username : headingName);
+    u.email || (u.username?.includes?.('@') ? u.username : headingName);
 
-  const posicoes = selecionados.length
-    ? selecionados.slice(0, 6).map(pad2)
-    : ['05', '12', '27', '33', '44', '59'];
+  const { selecionados: sel } = React.useContext(SelectionContext);
+  const posicoes = sel?.length ? sel.slice(0, 6).map(pad2) : ['05', '12', '27', '33', '44', '59'];
 
   return (
     <ThemeProvider theme={theme}>
@@ -484,17 +500,16 @@ export default function AccountPage() {
             )}
 
             <Stack direction="row" justifyContent="flex-end" gap={1.5} sx={{ mt: 2 }}>
-              
-             <Button
-              component="a"
-              href="http://newstorerj.com.br/"
-              target="_blank"
-              rel="noopener"
-              variant="contained"
-              color="success"
-            >
-              Resgatar cupom
-            </Button>
+              <Button
+                component="a"
+                href="http://newstorerj.com.br/"
+                target="_blank"
+                rel="noopener"
+                variant="contained"
+                color="success"
+              >
+                Resgatar cupom
+              </Button>
 
               <Button variant="text" onClick={doLogout}>
                 Sair
