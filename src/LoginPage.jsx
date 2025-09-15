@@ -19,7 +19,11 @@ const theme = createTheme({
 });
 
 const ADMIN_EMAIL = "admin@newstore.com.br";
-const API_BASE = (process.env.REACT_APP_API_BASE_URL || "/api").replace(/\/+$/, "");
+//const API_BASE = (process.env.REACT_APP_API_BASE_URL || "/api").replace(/\/+$/, "");
+const RAW_API = process.env.REACT_APP_API_BASE_URL || "/api";
+const API_BASE = (
+  RAW_API.endsWith("/api") ? RAW_API : `${RAW_API.replace(/\/+$/, "")}/api`
+).replace(/\/+$/, "");
 
 const authHeaders = () => {
   const tk =
@@ -72,10 +76,9 @@ const handleSubmit = async (e) => {
     } catch {}
 
     const isAdmin =
-      !!user?.is_admin || email.trim().toLowerCase() === ADMIN_EMAIL;
+  !!user?.is_admin || (user?.email || email).trim().toLowerCase() === ADMIN_EMAIL;
 
-    // se admin -> painel; senão volta para a rota de origem (/conta por padrão)
-    navigate(isAdmin ? "/admin" : from, { replace: true });
+navigate(isAdmin ? "/admin" : from, { replace: true });
   } catch (err) {
     setError(err.message || "Falha ao entrar.");
   } finally {
