@@ -12,6 +12,7 @@ import {
 import ArrowBackIosNewRoundedIcon from '@mui/icons-material/ArrowBackIosNewRounded';
 import AccountCircleRoundedIcon from '@mui/icons-material/AccountCircleRounded';
 
+
 const theme = createTheme({
   palette: {
     mode: 'dark',
@@ -26,8 +27,11 @@ const theme = createTheme({
   typography: { fontFamily: ['Inter','system-ui','Segoe UI','Roboto','Arial'].join(',') },
 });
 
-const [coupon, setCoupon] = React.useState(null);
+
 const [syncing, setSyncing] = React.useState(false);
+
+const { user } = useAuth();
+const coupon = user?.coupon_code || 'CUPOMAQUI';
 
 // Sempre que o valor acumulado mudar, garantimos que o cupom reflita esse valor.
 // 1) lê o cupom atual; 2) se não existir ou divergir do valor, sincroniza (recria) na Tray.
@@ -389,8 +393,11 @@ export default function AccountPage() {
                   <Typography variant="caption" sx={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace', letterSpacing: 1, opacity: 0.85 }}>
                     CÓDIGO DE DESCONTO:
                   </Typography>
-                  <Typography variant="h5" sx={{ fontWeight: 900 }}>
-                    {coupon?.code || '---'}
+                 <Typography
+                    variant="h6"
+                    sx={{ fontWeight: 900, letterSpacing: 2, whiteSpace: 'nowrap' }}
+                  >
+                    {coupon}
                   </Typography>
                   <Typography variant="caption" sx={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace', letterSpacing: 1, opacity: 0.9, color: '#9AE6B4', textAlign: 'right' }}>
                     VALOR ACUMULADO:
