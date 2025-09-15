@@ -26,6 +26,52 @@ const theme = createTheme({
   typography: { fontFamily: ['Inter','system-ui','Segoe UI','Roboto','Arial'].join(',') },
 });
 
+const [coupon, setCoupon] = React.useState(null);
+const [syncing, setSyncing] = React.useState(false);
+
+// Sempre que o valor acumulado mudar, garantimos que o cupom reflita esse valor.
+// 1) lê o cupom atual; 2) se não existir ou divergir do valor, sincroniza (recria) na Tray.
+React.useEffect(() => {
+  let alive = true;
+
+  async function ensureCouponFor(valueBRL) {
+    try {
+      setSyncing(true);
+      // tenta ler o cupom atual
+      const r = await fetch(`${API_BASE}/api/coupons/mine`, { credentials: 'include' });
+      const mine = await r.json().catch(() => ({}));
+      if (!alive) return;
+
+      const uiCents = Math.round((Number(valueBRL) || 0) * 100);
+      const srvCents = Number(mine?.cents ?? 0);
+
+      // sem cupom ou valor divergente -> sincroniza
+      if (!mine?.code || srvCents !== uiCents) {
+        const s = await fetch(`${API_BASE}/api/coupons/sync`, {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+        });
+        const synced = await s.json().catch(() => mine);
+        if (!alive) return;
+        setCoupon(synced?.code ? synced : mine);
+      } else {
+        setCoupon(mine);
+      }
+    } catch {
+      // não travar a UI
+    } finally {
+      if (alive) setSyncing(false);
+    }
+  }
+
+  // chama usando o valor que você já calcula na página:
+  ensureCouponFor(valorAcumulado);
+
+  return () => { alive = false; };
+}, [valorAcumulado]);
+
+
 const pad2 = (n) => n.toString().padStart(2, '0');
 
 // 🔧 base de API normalizada
@@ -343,8 +389,8 @@ export default function AccountPage() {
                   <Typography variant="caption" sx={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace', letterSpacing: 1, opacity: 0.85 }}>
                     CÓDIGO DE DESCONTO:
                   </Typography>
-                  <Typography variant="subtitle1" sx={{ fontWeight: 900, letterSpacing: 2, lineHeight: 1 }}>
-                    {cupom}
+                  <Typography variant="h5" sx={{ fontWeight: 900 }}>
+                    {coupon?.code || '---'}
                   </Typography>
                   <Typography variant="caption" sx={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace', letterSpacing: 1, opacity: 0.9, color: '#9AE6B4', textAlign: 'right' }}>
                     VALOR ACUMULADO:
@@ -352,6 +398,11 @@ export default function AccountPage() {
                   <Typography sx={{ fontWeight: 900, color: '#9AE6B4' }}>
                     {valorAcumulado.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
                   </Typography>
+                  {syncing && (
+                    <Typography variant="caption" sx={{ opacity: 0.7 }}>
+                      atualizando cupom…
+                    </Typography>
+                  )}
                 </Stack>
               </Stack>
             </Paper>
