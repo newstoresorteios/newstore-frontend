@@ -17,6 +17,7 @@ import AdminSorteios from "./AdminSorteios";
 import AdminClientes from "./AdminClientes";
 import AdminVencedores from "./AdminVencedores";
 import RegisterPage from './RegisterPage';
+import RequireAdmin from "./RequireAdmin";
 
 export default function App() {
   const [selecionados, setSelecionados] = React.useState([]);
@@ -56,9 +57,9 @@ export default function App() {
             <Route
               path="/admin"
               element={
-                <AdminRoute>
+                <RequireAdmin>
                   <AdminDashboard />
-                </AdminRoute>
+                </RequireAdmin>
               }
             />
             <Route
