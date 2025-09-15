@@ -6,24 +6,13 @@ import { useAuth } from "./authContext";
 
 const ADMIN_EMAIL = "admin@newstore.com.br";
 
-// garante base SEMPRE válida (nunca string vazia)
-function getApiBase() {
-  const raw = process.env.REACT_APP_API_BASE_URL;
-  const base = (!raw || raw === "/") ? "/api" : raw;
-  return base.replace(/\/+$/, ""); // sem barra final
-}
-const API_BASE = getApiBase();
+// Garante /api no fim mesmo se REACT_APP_API_BASE_URL vier sem /api
+const RAW_API = process.env.REACT_APP_API_BASE_URL || "/api";
+const API_BASE = (
+  RAW_API.endsWith("/api") ? RAW_API : `${RAW_API.replace(/\/+$/, "")}/api`
+).replace(/\/+$/, "");
 
-// Authorization a partir do storage (fallback ao cookie via credentials)
-function authHeaders() {
-  const tk =
-    localStorage.getItem("token") ||
-    localStorage.getItem("access_token") ||
-    sessionStorage.getItem("token");
-  return tk ? { Authorization: `Bearer ${tk}` } : {};
-}
-
-// tem token salvo?
+// Lê token salvo pelo login (o hook já grava isso)
 function hasToken() {
   return Boolean(
     localStorage.getItem("token") ||
@@ -32,27 +21,31 @@ function hasToken() {
   );
 }
 
+// Header Authorization (além de cookies) — o backend aceita ambos
+const authHeaders = () => {
+  const tk =
+    localStorage.getItem("token") ||
+    localStorage.getItem("access_token") ||
+    sessionStorage.getItem("token");
+  return tk ? { Authorization: `Bearer ${tk}` } : {};
+};
+
 export default function RequireAdmin({ children }) {
-  const { user, isAuthenticated, setUser } = useAuth(); // use direto
+  const { user, isAuthenticated, setUser } = useAuth?.() || {};
   const location = useLocation();
 
   const [loading, setLoading] = React.useState(false);
   const [me, setMe] = React.useState(user || null);
 
-  const storedMe = React.useMemo(() => {
-    try { return JSON.parse(localStorage.getItem("me") || "null"); }
-    catch { return null; }
-  }, []);
-
-  // se já temos usuário no contexto, sincroniza
+  // já tem user no contexto?
   React.useEffect(() => {
     if (user) setMe(user);
   }, [user]);
 
-  // se não temos user ainda mas temos token, tenta buscar /api/me UMA vez
+  // se tem token e ainda não temos "me", busca uma vez
   React.useEffect(() => {
     let alive = true;
-    (async () => {
+    async function fetchMe() {
       if (me || !hasToken()) return;
       setLoading(true);
       try {
@@ -64,19 +57,22 @@ export default function RequireAdmin({ children }) {
         if (r.ok) {
           const body = await r.json();
           const u = body?.user || body || null;
-          if (alive && u) {
+          if (alive) {
             setMe(u);
-            if (setUser) setUser(u);
+            if (setUser) setUser(u); // propaga para o contexto
             try { localStorage.setItem("me", JSON.stringify(u)); } catch {}
           }
         }
       } catch {}
-      finally { if (alive) setLoading(false); }
-    })();
+      finally {
+        if (alive) setLoading(false);
+      }
+    }
+    fetchMe();
     return () => { alive = false; };
   }, [me, setUser]);
 
-  // enquanto tem token e ainda estamos confirmando /me, mostra spinner
+  // Enquanto confirmado logado mas sem "me", mostra spinner (evita redirect errado)
   if (hasToken() && !me && (loading || isAuthenticated)) {
     return (
       <Box sx={{ minHeight: "50vh", display: "grid", placeItems: "center" }}>
@@ -85,15 +81,13 @@ export default function RequireAdmin({ children }) {
     );
   }
 
-  // não logado → login
+  // Não logado → login
   if (!hasToken()) {
     return <Navigate to="/login" state={{ from: location }} replace />;
   }
 
-  // decide admin com base em me OR storedMe OR e-mail
-  const ref = me || storedMe || {};
-  const isAdmin =
-    !!ref?.is_admin || ref?.email?.toLowerCase() === ADMIN_EMAIL;
+  // É admin?
+  const isAdmin = !!me?.is_admin || me?.email?.toLowerCase() === ADMIN_EMAIL;
 
   return isAdmin ? children : <Navigate to="/conta" replace />;
 }

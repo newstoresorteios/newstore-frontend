@@ -19,8 +19,10 @@ const theme = createTheme({
 });
 
 const ADMIN_EMAIL = "admin@newstore.com.br";
-const RAW_BASE = process.env.REACT_APP_API_BASE_URL;
-const API_BASE = ((RAW_BASE && RAW_BASE !== "/") ? RAW_BASE : "/api").replace(/\/+$/, "");
+const RAW_API = process.env.REACT_APP_API_BASE_URL || '/api';
+const API_BASE = (
+  RAW_API.endsWith('/api') ? RAW_API : `${RAW_API.replace(/\/+$/, '')}/api`
+).replace(/\/+$/, '');
 
 const authHeaders = () => {
   const tk =
