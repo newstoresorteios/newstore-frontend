@@ -125,7 +125,7 @@ export default function NewStorePage({
   reservados = MOCK_RESERVADOS,
   indisponiveis = MOCK_INDISPONIVEIS,
   onIrParaPagamento,
-  groupUrl = 'https://chat.whatsapp.com/LoHdJ8887Ku4RTsHgFQ102',
+  groupUrl = 'https://chat.whatsapp.com/GdosYmyW2Jj1mDXNDTFt6F',
 }) {
   const navigate = useNavigate();
   const { selecionados, setSelecionados, limparSelecao } = React.useContext(SelectionContext);
