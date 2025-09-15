@@ -42,47 +42,41 @@ export default function LoginPage() {
   const [error, setError] = React.useState("");
   const [loading, setLoading] = React.useState(false);
 
-  // dentro de src/LoginPage.jsx
-const handleSubmit = async (e) => {
-  e.preventDefault();
-  setError("");
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setError("");
+    if (!/\S+@\S+\.\S+/.test(email)) { setError("Informe um e-mail válido."); return; }
+    if (password.length < 6) { setError("A senha deve ter pelo menos 6 caracteres."); return; }
 
-  if (!/\S+@\S+\.\S+/.test(email)) { setError("Informe um e-mail válido."); return; }
-  if (password.length < 6)        { setError("A senha deve ter pelo menos 6 caracteres."); return; }
-
-  try {
-    setLoading(true);
-
-    // faz login (seu hook já grava token/cookie)
-    await login({ email, password, remember });
-
-    // tenta descobrir quem é o usuário logado
-    let user = null;
     try {
-      const r = await fetch(`${API_BASE}/me`, {
-        method: "GET",
-        headers: { "Content-Type": "application/json", ...authHeaders() },
-        credentials: "include",
-      });
-      if (r.ok) {
-        const body = await r.json();
-        user = body?.user || body || null;
-        if (user) localStorage.setItem("me", JSON.stringify(user)); // <- fallback para outras telas
-      }
-    } catch {}
+      setLoading(true);
+      await login({ email, password, remember });
 
-    const isAdmin =
-      !!user?.is_admin || email.trim().toLowerCase() === ADMIN_EMAIL;
+      // Confirma com o backend quem é o usuário
+      let user = null;
+      try {
+        const r = await fetch(`${API_BASE}/me`, {
+          method: "GET",
+          headers: { "Content-Type": "application/json", ...authHeaders() },
+          credentials: "include",
+        });
+        if (r.ok) {
+          const body = await r.json();
+          user = body?.user || body || null;
+          // guarda um fallback local para outras telas (AccountPage)
+          if (user) localStorage.setItem("me", JSON.stringify(user));
+        }
+      } catch { /* ignora */ }
 
-    // se admin -> painel; senão volta para a rota de origem (/conta por padrão)
-    navigate(isAdmin ? "/admin" : from, { replace: true });
-  } catch (err) {
-    setError(err.message || "Falha ao entrar.");
-  } finally {
-    setLoading(false);
-  }
-};
-
+      // Decide o destino
+      const isAdmin = !!user?.is_admin || email.trim().toLowerCase() === ADMIN_EMAIL;
+      navigate(isAdmin ? "/admin" : from, { replace: true });
+    } catch (err) {
+      setError(err.message || "Falha ao entrar.");
+    } finally {
+      setLoading(false);
+    }
+  };
 
   return (
     <ThemeProvider theme={theme}>
