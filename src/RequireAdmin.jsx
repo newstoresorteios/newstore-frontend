@@ -6,127 +6,67 @@ import { useAuth } from "./authContext";
 
 const ADMIN_EMAIL = "admin@newstore.com.br";
 
-// Garante /api no fim mesmo se REACT_APP_API_BASE_URL vier sem /api
+// Garante que tenha /api no final mesmo se REACT_APP_API_BASE_URL vier sem /api
 const RAW_API = process.env.REACT_APP_API_BASE_URL || "/api";
 const API_BASE = (
   RAW_API.endsWith("/api") ? RAW_API : `${RAW_API.replace(/\/+$/, "")}/api`
 ).replace(/\/+$/, "");
 
-// --- helpers de auth/token ---------------------------------------------------
-function getToken() {
-  return (
+// Header Authorization (opcional — se existir token salvo, enviamos também)
+const authHeaders = () => {
+  const tk =
     localStorage.getItem("token") ||
     localStorage.getItem("access_token") ||
-    sessionStorage.getItem("token") ||
-    ""
-  );
-}
-function hasToken() {
-  return !!getToken();
-}
-function authHeaders() {
-  const tk = getToken();
+    sessionStorage.getItem("token");
   return tk ? { Authorization: `Bearer ${tk}` } : {};
-}
-function safeParseJSON(s) {
-  try { return JSON.parse(s); } catch { return null; }
-}
-function safeDecodeJWT(token) {
-  // decodifica payload do JWT (sem validar assinatura) só para ler email/role
-  try {
-    const [, payload] = token.split(".");
-    if (!payload) return null;
-    const json = atob(payload.replace(/-/g, "+").replace(/_/g, "/"));
-    return JSON.parse(json);
-  } catch {
-    return null;
-  }
-}
-function isAdminUser(u) {
-  if (!u) return false;
-  if (u.is_admin === true) return true;
-  const email = (u.email || u.user?.email || "").toLowerCase();
-  return email === ADMIN_EMAIL;
-}
-// -----------------------------------------------------------------------------
+};
 
 export default function RequireAdmin({ children }) {
-  const { user, isAuthenticated, setUser } = useAuth?.() || {};
+  const { user, setUser } = useAuth?.() || {};
   const location = useLocation();
 
-  const [me, setMe] = React.useState(user || null);
-  const [loading, setLoading] = React.useState(false);
+  // me === undefined => ainda não verificamos
+  // me === null      => verificado e NÃO logado
+  // me === objeto    => verificado e logado
+  const [me, setMe] = React.useState(user ?? undefined);
 
-  // 1) Semente de usuário: contexto -> localStorage("me") -> payload do JWT
-  const seededUser = React.useMemo(() => {
-    if (user) return user;
-
-    const stored = safeParseJSON(localStorage.getItem("me") || "null");
-    if (stored) return stored;
-
-    const payload = safeDecodeJWT(getToken());
-    if (payload?.email || payload?.user?.email) {
-      return { email: payload.email || payload.user?.email, is_admin: !!payload.is_admin };
-    }
-    return null;
-  }, [user]);
-
-  // propaga semente para estado/ctx
+  // Se já tem user no contexto, usa imediatamente
   React.useEffect(() => {
-    if (seededUser && !me) {
-      setMe(seededUser);
-      if (setUser) setUser(seededUser);
-    }
-  }, [seededUser, me, setUser]);
+    if (user && me === undefined) setMe(user);
+  }, [user, me]);
 
-  // 2) Busca /api/me apenas se ainda não conseguimos decidir com a semente
+  // Sempre tenta descobrir o "me" via backend (cookie ou token)
   React.useEffect(() => {
+    if (me !== undefined) return; // já sabemos algo (null ou objeto)
     let alive = true;
-
-    async function fetchMe() {
-      if (!hasToken()) return;                 // sem token -> login
-      if (isAdminUser(me || seededUser)) return; // já sabemos que é admin
-      if (loading) return;                     // evita chamadas repetidas
-
-      setLoading(true);
+    (async () => {
       try {
         const r = await fetch(`${API_BASE}/me`, {
           method: "GET",
           headers: { "Content-Type": "application/json", ...authHeaders() },
-          credentials: "include",
+          credentials: "include", // importantíssimo: envia cookie httpOnly
         });
         if (r.ok) {
           const body = await r.json();
           const u = body?.user || body || null;
-          if (alive && u) {
-            setMe(u);
-            if (setUser) setUser(u);
-            try { localStorage.setItem("me", JSON.stringify(u)); } catch {}
-          }
+          if (!alive) return;
+          setMe(u);
+          if (u && setUser) setUser(u); // propaga para o contexto
+          try { localStorage.setItem("me", JSON.stringify(u)); } catch {}
+        } else {
+          if (!alive) return;
+          setMe(null); // não autenticado
         }
       } catch {
-        // silencioso — deixamos a decisão cair nos fallbacks abaixo
-      } finally {
-        if (alive) setLoading(false);
+        if (!alive) return;
+        setMe(null); // erro na chamada => trata como não autenticado
       }
-    }
-
-    fetchMe();
+    })();
     return () => { alive = false; };
-  }, [me, seededUser, setUser, loading]);
+  }, [me, setUser]);
 
-  // --- decisões de render ----------------------------------------------------
-  if (!hasToken()) {
-    return <Navigate to="/login" state={{ from: location }} replace />;
-  }
-
-  // Se qualquer fonte já comprova admin, libera imediatamente
-  if (isAdminUser(me || seededUser)) {
-    return children;
-  }
-
-  // Temos token, não conseguimos afirmar admin ainda -> aguarda /me
-  if (isAuthenticated || loading) {
+  // Enquanto não sabemos (carregando), mostra spinner e evita piscada/redirect errado
+  if (me === undefined) {
     return (
       <Box sx={{ minHeight: "50vh", display: "grid", placeItems: "center" }}>
         <CircularProgress />
@@ -134,6 +74,13 @@ export default function RequireAdmin({ children }) {
     );
   }
 
-  // Não é admin → manda para a área do cliente
-  return <Navigate to="/conta" replace />;
+  // Não logado => manda para login
+  if (!me) {
+    return <Navigate to="/login" state={{ from: location }} replace />;
+  }
+
+  // Checagem de admin
+  const isAdmin = !!me.is_admin || me.email?.toLowerCase() === ADMIN_EMAIL;
+
+  return isAdmin ? children : <Navigate to="/conta" replace />;
 }
