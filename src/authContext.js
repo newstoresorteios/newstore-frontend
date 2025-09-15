@@ -20,35 +20,32 @@ const AuthContext = createContext({
 });
 
 export function AuthProvider({ children }) {
-  const [user, setUser]     = useState(null);
+  const [user, setUser]       = useState(null);
   const [loading, setLoading] = useState(true);
 
-  // Tenta recuperar sessão no mount usando o cookie httpOnly (se houver)
+  // Restaura sessão no mount:
+  // 1) usa storage imediatamente (evita "logout visual")
+  // 2) tenta confirmar via /api/me (com cookie). Se falhar/401, mantém o que já tinha.
   useEffect(() => {
     (async () => {
+      // 1) Sobe rápido com usuário salvo
       try {
-        // tenta storage primeiro (renderiza mais rápido)
         const stored = localStorage.getItem(KEY_USER) ?? sessionStorage.getItem(KEY_USER);
         if (stored) setUser(JSON.parse(stored));
       } catch {}
 
+      // 2) Confirma sessão no backend (não derruba em 401)
       try {
         const r = await fetch(`${API_BASE}/api/me`, {
           credentials: "include",
+          cache: "no-store",
         });
         if (r.ok) {
           const me = await r.json();
-          // persiste o user para manter após refresh
           localStorage.setItem(KEY_USER, JSON.stringify(me));
           setUser(me);
-        } else if (r.status === 401) {
-          // sessão inválida → limpa qualquer resto de storage
-          localStorage.removeItem(KEY_TOKEN);
-          localStorage.removeItem(KEY_USER);
-          sessionStorage.removeItem(KEY_TOKEN);
-          sessionStorage.removeItem(KEY_USER);
-          setUser(null);
         }
+        // Se 401/erro, apenas mantemos o usuário já carregado do storage
       } catch {
         // offline / backend down: mantém o que já tinha
       } finally {
@@ -81,9 +78,9 @@ export function AuthProvider({ children }) {
     store.setItem(KEY_USER, JSON.stringify(userObj));
     setUser(userObj);
 
-    // (opcional) confirma sessão via /api/me usando o cookie recém-setado
+    // Confirma sessão via /api/me usando o cookie recém-setado (não derruba em falha)
     try {
-      const rm = await fetch(`${API_BASE}/api/me`, { credentials: "include" });
+      const rm = await fetch(`${API_BASE}/api/me`, { credentials: "include", cache: "no-store" });
       if (rm.ok) {
         const me = await rm.json();
         store.setItem(KEY_USER, JSON.stringify(me));
