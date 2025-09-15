@@ -4,7 +4,7 @@ import { useLocation, useNavigate, Link as RouterLink } from "react-router-dom";
 import {
   AppBar, Box, Button, Checkbox, Container, CssBaseline, FormControlLabel,
   IconButton, InputAdornment, Paper, Stack, TextField, ThemeProvider, Toolbar,
-  Typography, createTheme, Link, Alert
+  Typography, createTheme, Link, Alert, Dialog, DialogTitle, DialogContent, DialogActions
 } from "@mui/material";
 import Visibility from "@mui/icons-material/Visibility";
 import VisibilityOff from "@mui/icons-material/VisibilityOff";
@@ -19,20 +19,28 @@ const theme = createTheme({
 });
 
 const ADMIN_EMAIL = "admin@newstore.com.br";
+// Base URL robusta (aceita vir com/sem /api)
 const RAW_API = process.env.REACT_APP_API_BASE_URL || "/api";
 const API_BASE = (
   RAW_API.endsWith("/api") ? RAW_API : `${RAW_API.replace(/\/+$/, "")}/api`
 ).replace(/\/+$/, "");
 
-// ⚠️ só tenta /me se existir qualquer token salvo (evita 401 “ruído”)
-const hasAnyToken = () =>
-  Boolean(
-    localStorage.getItem("ns_auth_token") ||
-    sessionStorage.getItem("ns_auth_token") ||
+// Token -> Authorization (fallback)
+const authHeaders = () => {
+  const tk =
     localStorage.getItem("token") ||
     localStorage.getItem("access_token") ||
-    sessionStorage.getItem("token")
-  );
+    sessionStorage.getItem("token");
+  return tk ? { Authorization: `Bearer ${tk}` } : {};
+};
+
+// Gera senha aleatória (6 chars: letras e números)
+function genPass(len = 6) {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
+  let out = "";
+  for (let i = 0; i < len; i++) out += chars[Math.floor(Math.random() * chars.length)];
+  return out;
+}
 
 export default function LoginPage() {
   const { login } = useAuth();
@@ -47,7 +55,77 @@ export default function LoginPage() {
   const [error, setError] = React.useState("");
   const [loading, setLoading] = React.useState(false);
 
-  // dentro de src/LoginPage.jsx
+  // ----- ESQUECI MINHA SENHA (modal) -----
+  const [forgotOpen, setForgotOpen] = React.useState(false);
+  const [forgotEmail, setForgotEmail] = React.useState("");
+  const [forgotLoading, setForgotLoading] = React.useState(false);
+  const [forgotError, setForgotError] = React.useState("");
+  const [forgotSent, setForgotSent] = React.useState(false);
+  const [sentTo, setSentTo] = React.useState("");
+
+  const openForgot = () => {
+    setForgotError("");
+    setForgotSent(false);
+    setSentTo("");
+    setForgotEmail(email || "");
+    setForgotOpen(true);
+  };
+  const closeForgot = () => {
+    if (forgotLoading) return;
+    setForgotOpen(false);
+  };
+
+  async function handleResetPassword() {
+    setForgotError("");
+    const e = (forgotEmail || "").trim();
+    if (!/\S+@\S+\.\S+/.test(e)) {
+      setForgotError("Informe um e-mail válido.");
+      return;
+    }
+    setForgotLoading(true);
+    try {
+      const newPassword = genPass(6);
+      // Tentamos alguns caminhos comuns — para imediatamente no primeiro 2xx
+      const candidates = [
+        `${API_BASE.replace(/\/api$/, "")}/auth/reset-password`,
+        `${API_BASE}/auth/reset-password`,
+        `${API_BASE.replace(/\/api$/, "")}/auth/forgot`,
+        `${API_BASE}/auth/forgot`,
+      ];
+
+      let ok = false;
+      for (const url of candidates) {
+        try {
+          const r = await fetch(url, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", ...authHeaders() },
+            credentials: "include",
+            body: JSON.stringify({
+              email: e,
+              newPassword,
+              from: "administracao@newstoresorteios.com.br",
+              subject: "Reset de senha - New Store Sorteios",
+              message: `Sua senha foi resetada.\n\nNova Senha: ${newPassword}\n\nSe você não solicitou, ignore este e-mail.`
+            }),
+          });
+          if (r.ok) { ok = true; break; }
+        } catch { /* tenta o próximo caminho */ }
+      }
+
+      if (!ok) {
+        setForgotError("Não foi possível solicitar o reset agora. Tente novamente em instantes.");
+        return;
+      }
+
+      setSentTo(e);
+      setForgotSent(true);
+    } finally {
+      setForgotLoading(false);
+    }
+  }
+  // ----------------------------------------
+
+  // LOGIN
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError("");
@@ -58,46 +136,24 @@ export default function LoginPage() {
     try {
       setLoading(true);
 
-      // faz login (hook grava token/cookie)
+      // faz login (o hook grava cookie e storage)
       await login({ email, password, remember });
 
-      // tenta obter o "me" — somente se houver token
+      // tenta descobrir quem é o usuário logado
       let user = null;
-      if (hasAnyToken()) {
-        try {
-          const r = await fetch(`${API_BASE}/me`, {
-            method: "GET",
-            headers: { "Content-Type": "application/json" },
-            credentials: "include",
-          });
-          if (r.ok) {
-            const body = await r.json();
-            user = body?.user || body || null;
-            if (user) localStorage.setItem("me", JSON.stringify(user));
-          } else {
-            const lower = email.trim().toLowerCase();
-            if (lower === ADMIN_EMAIL) {
-              const minimalAdmin = { email: lower, is_admin: true, name: "Admin" };
-              try { localStorage.setItem("me", JSON.stringify(minimalAdmin)); } catch {}
-            }
-          }
-        } catch {
-          const lower = email.trim().toLowerCase();
-          if (lower === ADMIN_EMAIL) {
-            const minimalAdmin = { email: lower, is_admin: true, name: "Admin" };
-            try { localStorage.setItem("me", JSON.stringify(minimalAdmin)); } catch {}
-          }
+      try {
+        const r = await fetch(`${API_BASE}/me`, {
+          method: "GET",
+          headers: { "Content-Type": "application/json", ...authHeaders() },
+          credentials: "include",
+        });
+        if (r.ok) {
+          const body = await r.json();
+          user = body?.user || body || null;
+          if (user) localStorage.setItem("me", JSON.stringify(user));
         }
-      } else {
-        // sem token: mantém fallback para admin (não-admin vai para /conta)
-        const lower = email.trim().toLowerCase();
-        if (lower === ADMIN_EMAIL) {
-          const minimalAdmin = { email: lower, is_admin: true, name: "Admin" };
-          try { localStorage.setItem("me", JSON.stringify(minimalAdmin)); } catch {}
-        }
-      }
+      } catch {}
 
-      // decide o destino
       const isAdmin =
         !!user?.is_admin || (user?.email || email).trim().toLowerCase() === ADMIN_EMAIL;
 
@@ -170,7 +226,7 @@ export default function LoginPage() {
                 control={<Checkbox checked={remember} onChange={(e) => setRemember(e.target.checked)} />}
                 label="Manter-me conectado"
               />
-              <Link href="#" underline="hover" sx={{ fontSize: 14, opacity: 0.9 }}>
+              <Link component="button" type="button" onClick={openForgot} underline="hover" sx={{ fontSize: 14, opacity: 0.9 }}>
                 Esqueci minha senha
               </Link>
             </Stack>
@@ -190,6 +246,51 @@ export default function LoginPage() {
           </Stack>
         </Paper>
       </Container>
+
+      {/* Modal: Esqueci minha senha */}
+      <Dialog open={forgotOpen} onClose={closeForgot} maxWidth="xs" fullWidth PaperProps={{ sx: { borderRadius: 3 } }}>
+        <DialogTitle sx={{ fontWeight: 900 }}>
+          {forgotSent ? "E-mail enviado" : "Resetar senha"}
+        </DialogTitle>
+
+        <DialogContent sx={{ pt: 1 }}>
+          {!forgotSent ? (
+            <>
+              {forgotError && <Alert severity="error" sx={{ mb: 2 }}>{forgotError}</Alert>}
+              <TextField
+                label="Informe seu e-mail"
+                type="email"
+                fullWidth
+                autoFocus
+                value={forgotEmail}
+                onChange={(e) => setForgotEmail(e.target.value)}
+              />
+            </>
+          ) : (
+            <Alert severity="success">
+              E-mail enviado para <strong>{sentTo}</strong>.
+            </Alert>
+          )}
+        </DialogContent>
+
+        <DialogActions sx={{ px: 3, pb: 2 }}>
+          {!forgotSent ? (
+            <>
+              <Button onClick={closeForgot} disabled={forgotLoading}>Cancelar</Button>
+              <Button
+                onClick={handleResetPassword}
+                variant="contained"
+                color="primary"
+                disabled={forgotLoading}
+              >
+                {forgotLoading ? "Enviando..." : "Resetar senha"}
+              </Button>
+            </>
+          ) : (
+            <Button onClick={closeForgot} variant="contained" color="success">OK</Button>
+          )}
+        </DialogActions>
+      </Dialog>
     </ThemeProvider>
   );
 }
