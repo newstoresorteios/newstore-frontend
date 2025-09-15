@@ -23,36 +23,27 @@ const theme = createTheme({
     warning: { main: '#B58900' },
   },
   shape: { borderRadius: 12 },
-  typography: { fontFamily: ['Inter', 'system-ui', 'Segoe UI', 'Roboto', 'Arial'].join(',') },
+  typography: { fontFamily: ['Inter','system-ui','Segoe UI','Roboto','Arial'].join(',') },
 });
 
 const pad2 = (n) => n.toString().padStart(2, '0');
 
-/** ********************************************************************
- * BASE DA API
- * - Se REACT_APP_API_BASE_URL = 'https://.../api', removemos o /api final
- * - Depois, apiUrl('me') => 'https://.../api/me'
- * - Se você passar 'api/me' ou '/api/me', também normaliza para 1 só /api
- ********************************************************************* */
+// --------- 🔧 NORMALIZAÇÃO DE BASE DA API (EVITA 404 EM /users/me) ----------
+/*
+   Se REACT_APP_API_BASE_URL = "https://.../api", evitamos duplicar /api.
+   Se REACT_APP_API_BASE_URL = "https://..." (sem /api) ou "/api" (relativo), também funciona.
+*/
 const RAW_BASE = process.env.REACT_APP_API_BASE_URL || '/api';
-const BASE_NO_TRAIL = RAW_BASE.replace(/\/+$/, '');    // remove barra final
-const BASE_ROOT = BASE_NO_TRAIL.replace(/\/api$/i, ''); // remove '/api' terminal, se houver
+const API_BASE = RAW_BASE.replace(/\/+$/, '');
+const apiJoin = (path) => {
+  let p = path;
+  if (!p.startsWith('/')) p = `/${p}`;
+  // Se a base já termina com /api e o path começa com /api, removemos um /api
+  if (API_BASE.endsWith('/api') && p.startsWith('/api/')) p = p.slice(4);
+  return `${API_BASE}${p}`;
+};
 
-function apiUrl(path = '') {
-  // normaliza o caminho informado para NÃO começar com '/api'
-  let p = String(path).trim();
-  if (p.startsWith('http')) {
-    // se por engano vier URL completa, usa só o pathname
-    try { p = new URL(p).pathname; } catch { /* ignore */ }
-  }
-  p = p.replace(/^\/+/, '');          // remove barras iniciais
-  p = p.replace(/^api\/+/i, '');      // remove 'api/' inicial, se houver
-  return `${BASE_ROOT}/api/${p}`.replace(/\/+/g, '/').replace(':/', '://');
-}
-
-/** ********************************************************************
- * Auth header (opcional) – cookie ns_auth também é enviado via credentials
- ********************************************************************* */
+// Token salvo pelo login (opcional — cookie também é aceito pelo backend)
 const authHeaders = () => {
   const tk =
     localStorage.getItem('token') ||
@@ -61,25 +52,18 @@ const authHeaders = () => {
   return tk ? { Authorization: `Bearer ${tk}` } : {};
 };
 
-/** fetch JSON com headers e cookies */
-async function getJSON(path) {
-  const res = await fetch(apiUrl(path), {
+// Fetch padrão com credenciais para mandar o cookie ns_auth
+async function getJSON(fullUrlOrPath) {
+  const url = /^https?:\/\//.test(fullUrlOrPath) ? fullUrlOrPath : apiJoin(fullUrlOrPath);
+  const res = await fetch(url, {
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
     credentials: 'include',
   });
-  if (!res.ok) throw new Error(`${res.status}`);
+  if (!res.ok) throw new Error(String(res.status));
   return res.json();
 }
 
-/** tenta vários caminhos e retorna o 1º que responder ok */
-async function getFirst(paths) {
-  for (const p of paths) {
-    try { return await getJSON(p); } catch { /* tenta o próximo */ }
-  }
-  return null;
-}
-
-/** Chips de status visual */
+// ---------------------- Chips de status (sem mudanças) ----------------------
 const PayChip = ({ status }) => {
   const st = String(status || '').toLowerCase();
   if (st === 'approved' || st === 'paid' || st === 'pago') {
@@ -102,7 +86,7 @@ const ResultChip = ({ result }) => {
   return <Chip label="ABERTO" sx={{ bgcolor: 'primary.main', color: '#0E0E0E', fontWeight: 800, borderRadius: 999, px: 1.5 }} />;
 };
 
-/** monta as linhas da tabela a partir de /payments/me + /draws */
+// -------------------- Montagem das linhas da tabela (sem mudanças) ----------
 function buildRows(payPayload, drawsMap, availableSet) {
   const list = Array.isArray(payPayload)
     ? payPayload
@@ -120,10 +104,7 @@ function buildRows(payPayload, drawsMap, availableSet) {
     if (!result) result = 'aberto';
 
     for (const n of numbers) {
-      // se pagamento pendente e número voltou a "available", não mostramos
-      if (availableSet && availableSet.has(Number(n)) && String(payStatus).toLowerCase() !== 'approved') {
-        continue;
-      }
+      if (availableSet && availableSet.has(Number(n)) && String(payStatus).toLowerCase() !== 'approved') continue;
       rows.push({
         sorteio: drawId != null ? String(drawId) : '--',
         numero: Number(n),
@@ -134,7 +115,6 @@ function buildRows(payPayload, drawsMap, availableSet) {
     }
   }
 
-  // pendentes primeiro
   return rows.sort((a, b) => {
     const ap = String(a.pagamento).toLowerCase() === 'pending';
     const bp = String(b.pagamento).toLowerCase() === 'pending';
@@ -144,8 +124,7 @@ function buildRows(payPayload, drawsMap, availableSet) {
   });
 }
 
-// ---------------------------------------------------------------------------
-
+// ------------------------------- COMPONENTE ---------------------------------
 export default function AccountPage() {
   const navigate = useNavigate();
   const { selecionados } = React.useContext(SelectionContext);
@@ -164,7 +143,7 @@ export default function AccountPage() {
   const [cupom, setCupom] = React.useState('CUPOMAQUI');
   const [validade, setValidade] = React.useState('28/10/25');
 
-  // fallback do perfil guardado no login
+  // Fallback de usuário salvo pelo login
   const storedMe = React.useMemo(() => {
     try { return JSON.parse(localStorage.getItem('me') || 'null'); }
     catch { return null; }
@@ -175,54 +154,41 @@ export default function AccountPage() {
 
     (async () => {
       try {
-        // 1) PERFIL: contexto -> /api/me -> /users/me
-        let me = ctxUser || null;
-
-        if (!me) {
-          // **IMPORTANTE**: passamos caminhos sem '/api' e o apiUrl normaliza
-          const meData = await getFirst(['me', 'auth/me', 'users/me', 'account/me']);
-          if (meData) me = meData.user || meData;
+        // 1) PERFIL — usa ctx, depois storage, depois backend em **/api/me**
+        let me = ctxUser || storedMe || null;
+        try {
+          const meResp = await getJSON('/api/me'); // <- FIXA A ROTA CORRETA
+          me = meResp?.user || meResp || me;
+        } catch {
+          // se falhar, fica com o que tiver (ctx/storage)
         }
 
-        if (me && !me.name) {
-          try {
-            const u = await getFirst(['users/me']); // rota opcional se existir
-            if (u?.name) me = { ...me, name: u.name };
-          } catch {}
+        if (alive) {
+          setUser(me || null);
+          try { if (me) localStorage.setItem('me', JSON.stringify(me)); } catch {}
         }
 
-        if (me) {
-          if (alive) setUser(me);
-          try { localStorage.setItem('me', JSON.stringify(me)); } catch {}
-        } else if (storedMe) {
-          if (alive) setUser(storedMe);
-        } else {
-          if (alive) setUser(null);
-        }
+        // 2) PAGAMENTOS (rota oficial)
+        const pay = await getJSON('/api/payments/me');
 
-        // 2) PAGAMENTOS
-        const pay = await getFirst(['payments/me']);
-
-        // 3) STATUS DOS SORTEIOS
+        // 3) SORTEIOS (tenta /api/draws; se quiser, pode tentar /api/draws-ext se precisar de status externos)
         let drawsMap = new Map();
         try {
-          const draws = await getFirst(['draws', 'draws-ext']);
+          const draws = await getJSON('/api/draws');
           const arr = Array.isArray(draws) ? draws : (draws?.draws || draws?.items || []);
           drawsMap = new Map(arr.map(d => [Number(d.id ?? d.draw_id), { status: d.status ?? d.result ?? '' }]));
         } catch {}
 
-        // 4) NÚMEROS DISPONÍVEIS (pra ocultar reservas liberadas com pagamento pendente)
+        // 4) NÚMEROS ATUAIS
         let availableSet = new Set();
         try {
-          const nums = await getFirst(['numbers']);
+          const nums = await getJSON('/api/numbers');
           for (const it of nums?.numbers || []) {
-            if (String(it.status).toLowerCase() === 'available') {
-              availableSet.add(Number(it.n));
-            }
+            if (String(it.status).toLowerCase() === 'available') availableSet.add(Number(it.n));
           }
         } catch {}
 
-        // 5) MONTA TABELA + valores no cartão
+        // 5) MONTA TABELA + TOTAL/CUPOM/VALIDADE
         if (alive && pay) {
           const tableRows = buildRows(pay, drawsMap, availableSet);
           setRows(tableRows);
@@ -247,8 +213,6 @@ export default function AccountPage() {
             if (!isNaN(d)) setValidade(d.toLocaleDateString('pt-BR'));
           }
         }
-      } catch {
-        // silencioso – caímos nos fallbacks
       } finally {
         if (alive) setLoading(false);
       }
@@ -257,46 +221,31 @@ export default function AccountPage() {
     return () => { alive = false; };
   }, [ctxUser, storedMe]);
 
-  // usa o usuário carregado OU o do storage
-  const u = (user && Object.keys(user).length ? user : storedMe) || {};
-
-  // título grande
+  const u = user || {};
   const headingName =
     u.name || u.fullName || u.nome || u.displayName || u.username || u.email || 'NOME DO CLIENTE';
-
-  // e-mail no cartão
   const cardEmail = u.email || (u.username?.includes?.('@') ? u.username : headingName);
 
-  // (mantive a leitura de selecionados caso você use em outro lugar)
-  const posicoes = selecionados?.length ? selecionados.slice(0, 6).map(pad2) : ['05', '12', '27', '33', '44', '59'];
+  const posicoes = (selecionados?.length ? selecionados : ['05','12','27','33','44','59']).slice(0, 6).map(pad2);
 
   return (
     <ThemeProvider theme={theme}>
       <CssBaseline />
-
       <AppBar position="sticky" elevation={0} sx={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
         <Toolbar sx={{ position: 'relative', minHeight: 64 }}>
           <IconButton edge="start" color="inherit" onClick={() => navigate(-1)} aria-label="Voltar">
             <ArrowBackIosNewRoundedIcon />
           </IconButton>
-          <Box
-            component={RouterLink}
-            to="/"
-            sx={{ position: 'absolute', left: '50%', top: '50%', transform: 'translate(-50%, -50%)', display: 'flex', alignItems: 'center' }}
-          >
+          <Box component={RouterLink} to="/"
+            sx={{ position: 'absolute', left: '50%', top: '50%', transform: 'translate(-50%, -50%)', display: 'flex', alignItems: 'center' }}>
             <Box component="img" src={logoNewStore} alt="NEW STORE" sx={{ height: 40, objectFit: 'contain' }} />
           </Box>
-
           <IconButton color="inherit" sx={{ ml: 'auto' }} onClick={handleOpenMenu}>
             <AccountCircleRoundedIcon />
           </IconButton>
-          <Menu
-            anchorEl={menuEl}
-            open={menuOpen}
-            onClose={handleCloseMenu}
+          <Menu anchorEl={menuEl} open={menuOpen} onClose={handleCloseMenu}
             anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
-            transformOrigin={{ vertical: 'top', horizontal: 'right' }}
-          >
+            transformOrigin={{ vertical: 'top', horizontal: 'right' }}>
             {isAuthenticated && (
               <>
                 <MenuItem onClick={() => { handleCloseMenu(); navigate('/conta'); }}>Área do cliente</MenuItem>
@@ -310,43 +259,30 @@ export default function AccountPage() {
 
       <Container maxWidth="lg" sx={{ py: { xs: 3, md: 5 } }}>
         <Stack spacing={3}>
-          <Typography variant="h4" sx={{ fontWeight: 900, letterSpacing: 1, textTransform: 'uppercase', display: { xs: 'none', md: 'block' }, opacity: 0.9 }}>
+          <Typography variant="h4" sx={{ fontWeight: 900, letterSpacing: 1, textTransform: 'uppercase',
+            display: { xs: 'none', md: 'block' }, opacity: 0.9 }}>
             {headingName}
           </Typography>
 
           {/* Cartão visual */}
           <Box sx={{ width: '100%', display: 'flex', justifyContent: 'center' }}>
-            <Paper
-              elevation={0}
-              sx={{
-                width: { xs: 'min(92vw, 420px)', sm: 'min(88vw, 500px)', md: '560px' },
-                aspectRatio: '1.586 / 1',
-                borderRadius: 5,
-                position: 'relative',
-                overflow: 'hidden',
-                p: { xs: 1.5, sm: 2, md: 2.2 },
-                bgcolor: '#181818',
-                border: '1px solid rgba(255,255,255,0.08)',
-                backgroundImage: `
-                  radial-gradient(70% 120% at 35% 65%, rgba(255,255,255,0.20), transparent 60%),
-                  radial-gradient(60% 120% at 80% 20%, rgba(255,255,255,0.10), transparent 60%),
-                  radial-gradient(100% 140% at -10% 120%, rgba(0,0,0,0.45), transparent 60%)
-                `,
-                backgroundBlendMode: 'screen, lighten, normal',
-              }}
-            >
-              <Box
-                sx={{
-                  pointerEvents: 'none',
-                  position: 'absolute',
-                  inset: 0,
-                  opacity: 0.08,
-                  backgroundImage:
-                    'radial-gradient(rgba(255,255,255,0.5) 1px, transparent 1px), radial-gradient(rgba(255,255,255,0.35) 1px, transparent 1px)',
-                  backgroundSize: '3px 3px, 5px 5px',
-                  backgroundPosition: '0 0, 10px 5px',
-                }}
-              />
+            <Paper elevation={0} sx={{
+              width: { xs: 'min(92vw, 420px)', sm: 'min(88vw, 500px)', md: '560px' },
+              aspectRatio: '1.586 / 1', borderRadius: 5, position: 'relative', overflow: 'hidden',
+              p: { xs: 1.5, sm: 2, md: 2.2 }, bgcolor: '#181818', border: '1px solid rgba(255,255,255,0.08)',
+              backgroundImage: `
+                radial-gradient(70% 120% at 35% 65%, rgba(255,255,255,0.20), transparent 60%),
+                radial-gradient(60% 120% at 80% 20%, rgba(255,255,255,0.10), transparent 60%),
+                radial-gradient(100% 140% at -10% 120%, rgba(0,0,0,0.45), transparent 60%)
+              `,
+              backgroundBlendMode: 'screen, lighten, normal',
+            }}>
+              <Box sx={{
+                pointerEvents: 'none', position: 'absolute', inset: 0, opacity: 0.08,
+                backgroundImage:
+                  'radial-gradient(rgba(255,255,255,0.5) 1px, transparent 1px), radial-gradient(rgba(255,255,255,0.35) 1px, transparent 1px)',
+                backgroundSize: '3px 3px, 5px 5px', backgroundPosition: '0 0, 10px 5px',
+              }} />
 
               <Stack direction="row" justifyContent="space-between" alignItems="flex-start" gap={1} sx={{ position: 'relative', height: '100%' }}>
                 <Stack spacing={0.8} flex={1} minWidth={0}>
@@ -397,9 +333,7 @@ export default function AccountPage() {
           {/* Tabela */}
           <Paper variant="outlined" sx={{ p: { xs: 1, md: 2 } }}>
             {loading ? (
-              <Box sx={{ px: 2, py: 1 }}>
-                <LinearProgress />
-              </Box>
+              <Box sx={{ px: 2, py: 1 }}><LinearProgress /></Box>
             ) : (
               <TableContainer>
                 <Table size="medium" sx={{ minWidth: 560 }}>
@@ -414,11 +348,7 @@ export default function AccountPage() {
                   </TableHead>
                   <TableBody>
                     {rows.length === 0 && (
-                      <TableRow>
-                        <TableCell colSpan={5} sx={{ color: '#bbb' }}>
-                          Nenhuma participação encontrada.
-                        </TableCell>
-                      </TableRow>
+                      <TableRow><TableCell colSpan={5} sx={{ color: '#bbb' }}>Nenhuma participação encontrada.</TableCell></TableRow>
                     )}
                     {rows.map((row, idx) => (
                       <TableRow key={`${row.sorteio}-${row.numero}-${idx}`} hover>
@@ -435,20 +365,10 @@ export default function AccountPage() {
             )}
 
             <Stack direction="row" justifyContent="flex-end" gap={1.5} sx={{ mt: 2 }}>
-              <Button
-                component="a"
-                href="http://newstorerj.com.br/"
-                target="_blank"
-                rel="noopener"
-                variant="contained"
-                color="success"
-              >
+              <Button component="a" href="http://newstorerj.com.br/" target="_blank" rel="noopener" variant="contained" color="success">
                 Resgatar cupom
               </Button>
-
-              <Button variant="text" onClick={doLogout}>
-                Sair
-              </Button>
+              <Button variant="text" onClick={doLogout}>Sair</Button>
             </Stack>
           </Paper>
         </Stack>
