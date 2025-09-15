@@ -1,54 +1,23 @@
 // src/NonAdminRoute.jsx
-import * as React from "react";
-import { Navigate, useLocation } from "react-router-dom";
+import React from "react";
+import { Navigate } from "react-router-dom";
 import { useAuth } from "./authContext";
 
 const ADMIN_EMAIL = "admin@newstore.com.br";
 
-const getToken = () =>
-  localStorage.getItem("token") ||
-  localStorage.getItem("access_token") ||
-  sessionStorage.getItem("token") ||
-  "";
-
-function decodeJWT(tk) {
-  try {
-    const [, payload] = tk.split(".");
-    if (!payload) return null;
-    const json = atob(payload.replace(/-/g, "+").replace(/_/g, "/"));
-    return JSON.parse(json);
-  } catch {
-    return null;
-  }
-}
-
-function isAdmin(u) {
-  if (!u) return false;
-  if (u.is_admin === true) return true;
-  const email = (u.email || u.user?.email || "").toLowerCase();
-  return email === ADMIN_EMAIL;
-}
-
+/**
+ * Se for admin, redireciona para /admin; caso contrário, renderiza os filhos.
+ * Importante: enquanto o auth ainda está carregando, NÃO bloqueie a página.
+ */
 export default function NonAdminRoute({ children }) {
-  const { user } = useAuth?.() || {};
-  const location = useLocation();
+  const { user, loading } = useAuth?.() || {};
 
-  // semente: contexto -> localStorage("me") -> payload do JWT
-  let candidate = user || null;
-  if (!candidate) {
-    try { candidate = JSON.parse(localStorage.getItem("me") || "null"); } catch {}
-  }
-  if (!candidate) {
-    const p = decodeJWT(getToken());
-    if (p?.email || p?.user?.email) {
-      candidate = { email: p.email || p.user?.email, is_admin: !!p.is_admin };
-    }
-  }
+  // Enquanto o estado de auth está carregando, não bloqueie a página.
+  // Isso evita a tela branca em / e /conta.
+  if (loading) return children;
 
-  // Admin não deve ficar aqui -> manda pro painel
-  if (isAdmin(candidate)) {
-    return <Navigate to="/admin" state={{ from: location }} replace />;
-  }
+  const email = (user?.email || "").toLowerCase();
+  const isAdmin = !!user?.is_admin || email === ADMIN_EMAIL;
 
-  return children;
+  return isAdmin ? <Navigate to="/admin" replace /> : children;
 }
