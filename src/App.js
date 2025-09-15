@@ -42,16 +42,16 @@ export default function App() {
             <Route path="/login" element={<LoginPage />} />
 
             {/* CONTA só para usuário autenticado, e nunca admin */}
-            <Route
-              path="/conta"
-              element={
-                <ProtectedRoute>
-                  <NonAdminRoute>
-                    <AccountPage />
-                  </NonAdminRoute>
-                </ProtectedRoute>
-              }
-            />
+           <Route
+                path="/conta"
+                element={
+                  <ProtectedRoute>
+                    <NonAdminRoute>
+                      <AccountPage />
+                    </NonAdminRoute>
+                  </ProtectedRoute>
+                }
+              />
 
             {/* ROTAS ADMIN (apenas admin) */}
             <Route
