@@ -5,29 +5,9 @@ import logoNewStore from './Logo-branca-sem-fundo-768x132.png';
 import { SelectionContext } from './selectionContext';
 import { useAuth } from './authContext';
 import {
-  AppBar,
-  Box,
-  Button,
-  Chip,
-  Container,
-  CssBaseline,
-  IconButton,
-  Menu,
-  MenuItem,
-  Divider,
-  Paper,
-  Stack,
-  ThemeProvider,
-  Toolbar,
-  Typography,
-  createTheme,
-  Table,
-  TableBody,
-  TableCell,
-  TableContainer,
-  TableHead,
-  TableRow,
-  LinearProgress,
+  AppBar, Box, Button, Chip, Container, CssBaseline, IconButton, Menu, MenuItem,
+  Divider, Paper, Stack, ThemeProvider, Toolbar, Typography, createTheme,
+  Table, TableBody, TableCell, TableContainer, TableHead, TableRow, LinearProgress,
 } from '@mui/material';
 import ArrowBackIosNewRoundedIcon from '@mui/icons-material/ArrowBackIosNewRounded';
 import AccountCircleRoundedIcon from '@mui/icons-material/AccountCircleRounded';
@@ -43,17 +23,36 @@ const theme = createTheme({
     warning: { main: '#B58900' },
   },
   shape: { borderRadius: 12 },
-  typography: {
-    fontFamily: ['Inter', 'system-ui', 'Segoe UI', 'Roboto', 'Arial'].join(','),
-  },
+  typography: { fontFamily: ['Inter', 'system-ui', 'Segoe UI', 'Roboto', 'Arial'].join(',') },
 });
 
 const pad2 = (n) => n.toString().padStart(2, '0');
 
-// Base da API (sem barra no final). No Vercel, defina REACT_APP_API_BASE_URL.
-const API_BASE = (process.env.REACT_APP_API_BASE_URL || '/api').replace(/\/+$/, '');
+/** ********************************************************************
+ * BASE DA API
+ * - Se REACT_APP_API_BASE_URL = 'https://.../api', removemos o /api final
+ * - Depois, apiUrl('me') => 'https://.../api/me'
+ * - Se você passar 'api/me' ou '/api/me', também normaliza para 1 só /api
+ ********************************************************************* */
+const RAW_BASE = process.env.REACT_APP_API_BASE_URL || '/api';
+const BASE_NO_TRAIL = RAW_BASE.replace(/\/+$/, '');    // remove barra final
+const BASE_ROOT = BASE_NO_TRAIL.replace(/\/api$/i, ''); // remove '/api' terminal, se houver
 
-// Lê token salvo pelo login (bearer ou cookie com credentials: 'include')
+function apiUrl(path = '') {
+  // normaliza o caminho informado para NÃO começar com '/api'
+  let p = String(path).trim();
+  if (p.startsWith('http')) {
+    // se por engano vier URL completa, usa só o pathname
+    try { p = new URL(p).pathname; } catch { /* ignore */ }
+  }
+  p = p.replace(/^\/+/, '');          // remove barras iniciais
+  p = p.replace(/^api\/+/i, '');      // remove 'api/' inicial, se houver
+  return `${BASE_ROOT}/api/${p}`.replace(/\/+/g, '/').replace(':/', '://');
+}
+
+/** ********************************************************************
+ * Auth header (opcional) – cookie ns_auth também é enviado via credentials
+ ********************************************************************* */
 const authHeaders = () => {
   const tk =
     localStorage.getItem('token') ||
@@ -62,9 +61,9 @@ const authHeaders = () => {
   return tk ? { Authorization: `Bearer ${tk}` } : {};
 };
 
-// Fetch com cabeçalhos e credenciais (cookies)
+/** fetch JSON com headers e cookies */
 async function getJSON(path) {
-  const res = await fetch(`${API_BASE}${path}`, {
+  const res = await fetch(apiUrl(path), {
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
     credentials: 'include',
   });
@@ -72,75 +71,38 @@ async function getJSON(path) {
   return res.json();
 }
 
-// Tenta uma lista de caminhos e retorna o primeiro que funcionar
+/** tenta vários caminhos e retorna o 1º que responder ok */
 async function getFirst(paths) {
   for (const p of paths) {
-    try {
-      const data = await getJSON(p);
-      return data;
-    } catch (_) {}
+    try { return await getJSON(p); } catch { /* tenta o próximo */ }
   }
   return null;
 }
 
-/** Chips visuais de status */
+/** Chips de status visual */
 const PayChip = ({ status }) => {
   const st = String(status || '').toLowerCase();
   if (st === 'approved' || st === 'paid' || st === 'pago') {
-    return (
-      <Chip
-        label="PAGO"
-        sx={{ bgcolor: 'success.main', color: '#fff', fontWeight: 800, borderRadius: 999, px: 1.5 }}
-      />
-    );
+    return <Chip label="PAGO" sx={{ bgcolor: 'success.main', color: '#fff', fontWeight: 800, borderRadius: 999, px: 1.5 }} />;
   }
-  return (
-    <Chip
-      label="PENDENTE"
-      sx={{ bgcolor: 'warning.main', color: '#000', fontWeight: 800, borderRadius: 999, px: 1.5 }}
-    />
-  );
+  return <Chip label="PENDENTE" sx={{ bgcolor: 'warning.main', color: '#000', fontWeight: 800, borderRadius: 999, px: 1.5 }} />;
 };
 
 const ResultChip = ({ result }) => {
   const r = String(result || '').toLowerCase();
   if (r.includes('contempla') || r.includes('win')) {
-    return (
-      <Chip
-        label="CONTEMPLADO"
-        sx={{ bgcolor: 'success.main', color: '#fff', fontWeight: 800, borderRadius: 999, px: 1.5 }}
-      />
-    );
+    return <Chip label="CONTEMPLADO" sx={{ bgcolor: 'success.main', color: '#fff', fontWeight: 800, borderRadius: 999, px: 1.5 }} />;
   }
   if (r.includes('nao') || r.includes('não') || r.includes('n_contempla')) {
-    return (
-      <Chip
-        label="NÃO CONTEMPLADO"
-        sx={{ bgcolor: 'error.main', color: '#fff', fontWeight: 800, borderRadius: 999, px: 1.5 }}
-      />
-    );
+    return <Chip label="NÃO CONTEMPLADO" sx={{ bgcolor: 'error.main', color: '#fff', fontWeight: 800, borderRadius: 999, px: 1.5 }} />;
   }
   if (r.includes('closed') || r.includes('fechado')) {
-    return (
-      <Chip
-        label="FECHADO"
-        sx={{ bgcolor: 'secondary.main', color: '#000', fontWeight: 800, borderRadius: 999, px: 1.5 }}
-      />
-    );
+    return <Chip label="FECHADO" sx={{ bgcolor: 'secondary.main', color: '#000', fontWeight: 800, borderRadius: 999, px: 1.5 }} />;
   }
-  return (
-    <Chip
-      label="ABERTO"
-      sx={{ bgcolor: 'primary.main', color: '#0E0E0E', fontWeight: 800, borderRadius: 999, px: 1.5 }}
-    />
-  );
+  return <Chip label="ABERTO" sx={{ bgcolor: 'primary.main', color: '#0E0E0E', fontWeight: 800, borderRadius: 999, px: 1.5 }} />;
 };
 
-/**
- * Monta linhas da tabela a partir de /payments/me + /draws.
- * availableSet = números com status "available" no /api/numbers (reserva liberada);
- * se pagamento ainda não for "approved", escondemos esses números.
- */
+/** monta as linhas da tabela a partir de /payments/me + /draws */
 function buildRows(payPayload, drawsMap, availableSet) {
   const list = Array.isArray(payPayload)
     ? payPayload
@@ -158,11 +120,8 @@ function buildRows(payPayload, drawsMap, availableSet) {
     if (!result) result = 'aberto';
 
     for (const n of numbers) {
-      if (
-        availableSet &&
-        availableSet.has(Number(n)) &&
-        String(payStatus).toLowerCase() !== 'approved'
-      ) {
+      // se pagamento pendente e número voltou a "available", não mostramos
+      if (availableSet && availableSet.has(Number(n)) && String(payStatus).toLowerCase() !== 'approved') {
         continue;
       }
       rows.push({
@@ -175,7 +134,7 @@ function buildRows(payPayload, drawsMap, availableSet) {
     }
   }
 
-  // Pendentes primeiro
+  // pendentes primeiro
   return rows.sort((a, b) => {
     const ap = String(a.pagamento).toLowerCase() === 'pending';
     const bp = String(b.pagamento).toLowerCase() === 'pending';
@@ -185,7 +144,8 @@ function buildRows(payPayload, drawsMap, availableSet) {
   });
 }
 
-// ---- Componente -------------------------------------------------------------
+// ---------------------------------------------------------------------------
+
 export default function AccountPage() {
   const navigate = useNavigate();
   const { selecionados } = React.useContext(SelectionContext);
@@ -195,11 +155,7 @@ export default function AccountPage() {
   const menuOpen = Boolean(menuEl);
   const handleOpenMenu = (e) => setMenuEl(e.currentTarget);
   const handleCloseMenu = () => setMenuEl(null);
-  const doLogout = () => {
-    handleCloseMenu();
-    logout();
-    navigate('/');
-  };
+  const doLogout = () => { handleCloseMenu(); logout(); navigate('/'); };
 
   const [loading, setLoading] = React.useState(true);
   const [user, setUser] = React.useState(ctxUser || null);
@@ -208,7 +164,7 @@ export default function AccountPage() {
   const [cupom, setCupom] = React.useState('CUPOMAQUI');
   const [validade, setValidade] = React.useState('28/10/25');
 
-  // Lê "me" do storage (fallback quando /api/me não responder)
+  // fallback do perfil guardado no login
   const storedMe = React.useMemo(() => {
     try { return JSON.parse(localStorage.getItem('me') || 'null'); }
     catch { return null; }
@@ -219,22 +175,22 @@ export default function AccountPage() {
 
     (async () => {
       try {
-        // 1) PERFIL: tenta contexto -> /api/me -> /users/me
+        // 1) PERFIL: contexto -> /api/me -> /users/me
         let me = ctxUser || null;
 
         if (!me) {
-          const meData = await getFirst(['/api/me', '/me', '/auth/me', '/users/me', '/account/me']);
+          // **IMPORTANTE**: passamos caminhos sem '/api' e o apiUrl normaliza
+          const meData = await getFirst(['me', 'auth/me', 'users/me', 'account/me']);
           if (meData) me = meData.user || meData;
         }
 
         if (me && !me.name) {
           try {
-            const u = await getFirst(['/api/users/me', '/users/me']);
+            const u = await getFirst(['users/me']); // rota opcional se existir
             if (u?.name) me = { ...me, name: u.name };
           } catch {}
         }
 
-        // Se conseguiu alguém, salva e usa; senão, cai pro storedMe
         if (me) {
           if (alive) setUser(me);
           try { localStorage.setItem('me', JSON.stringify(me)); } catch {}
@@ -244,21 +200,21 @@ export default function AccountPage() {
           if (alive) setUser(null);
         }
 
-        // 2) PAGAMENTOS DO USUÁRIO
-        const pay = await getFirst(['/api/payments/me', '/payments/me']);
+        // 2) PAGAMENTOS
+        const pay = await getFirst(['payments/me']);
 
         // 3) STATUS DOS SORTEIOS
         let drawsMap = new Map();
         try {
-          const draws = await getFirst(['/api/draws', '/draws', '/api/draws-ext', '/draws-ext']);
+          const draws = await getFirst(['draws', 'draws-ext']);
           const arr = Array.isArray(draws) ? draws : (draws?.draws || draws?.items || []);
           drawsMap = new Map(arr.map(d => [Number(d.id ?? d.draw_id), { status: d.status ?? d.result ?? '' }]));
         } catch {}
 
-        // 4) NÚMEROS ATUAIS (para esconder reservas liberadas quando pagamento é pendente)
+        // 4) NÚMEROS DISPONÍVEIS (pra ocultar reservas liberadas com pagamento pendente)
         let availableSet = new Set();
         try {
-          const nums = await getFirst(['/api/numbers', '/numbers']);
+          const nums = await getFirst(['numbers']);
           for (const it of nums?.numbers || []) {
             if (String(it.status).toLowerCase() === 'available') {
               availableSet.add(Number(it.n));
@@ -266,7 +222,7 @@ export default function AccountPage() {
           }
         } catch {}
 
-        // 5) MONTA TABELA + VALOR/CUPOM/VALIDADE
+        // 5) MONTA TABELA + valores no cartão
         if (alive && pay) {
           const tableRows = buildRows(pay, drawsMap, availableSet);
           setRows(tableRows);
@@ -291,8 +247,8 @@ export default function AccountPage() {
             if (!isNaN(d)) setValidade(d.toLocaleDateString('pt-BR'));
           }
         }
-      } catch (_) {
-        // silencioso — caímos nos fallbacks
+      } catch {
+        // silencioso – caímos nos fallbacks
       } finally {
         if (alive) setLoading(false);
       }
@@ -301,25 +257,18 @@ export default function AccountPage() {
     return () => { alive = false; };
   }, [ctxUser, storedMe]);
 
-  // Usa o usuário carregado OU o do storage como fallback
+  // usa o usuário carregado OU o do storage
   const u = (user && Object.keys(user).length ? user : storedMe) || {};
 
-  // Nome no título grande
+  // título grande
   const headingName =
-    u.name ||
-    u.fullName ||
-    u.nome ||
-    u.displayName ||
-    u.username ||
-    u.email ||
-    'NOME DO CLIENTE';
+    u.name || u.fullName || u.nome || u.displayName || u.username || u.email || 'NOME DO CLIENTE';
 
-  // E-mail no cartão (ou o próprio heading se não houver @)
-  const cardEmail =
-    u.email || (u.username?.includes?.('@') ? u.username : headingName);
+  // e-mail no cartão
+  const cardEmail = u.email || (u.username?.includes?.('@') ? u.username : headingName);
 
-  const { selecionados: sel } = React.useContext(SelectionContext);
-  const posicoes = sel?.length ? sel.slice(0, 6).map(pad2) : ['05', '12', '27', '33', '44', '59'];
+  // (mantive a leitura de selecionados caso você use em outro lugar)
+  const posicoes = selecionados?.length ? selecionados.slice(0, 6).map(pad2) : ['05', '12', '27', '33', '44', '59'];
 
   return (
     <ThemeProvider theme={theme}>
@@ -333,14 +282,7 @@ export default function AccountPage() {
           <Box
             component={RouterLink}
             to="/"
-            sx={{
-              position: 'absolute',
-              left: '50%',
-              top: '50%',
-              transform: 'translate(-50%, -50%)',
-              display: 'flex',
-              alignItems: 'center',
-            }}
+            sx={{ position: 'absolute', left: '50%', top: '50%', transform: 'translate(-50%, -50%)', display: 'flex', alignItems: 'center' }}
           >
             <Box component="img" src={logoNewStore} alt="NEW STORE" sx={{ height: 40, objectFit: 'contain' }} />
           </Box>
@@ -368,10 +310,7 @@ export default function AccountPage() {
 
       <Container maxWidth="lg" sx={{ py: { xs: 3, md: 5 } }}>
         <Stack spacing={3}>
-          <Typography
-            variant="h4"
-            sx={{ fontWeight: 900, letterSpacing: 1, textTransform: 'uppercase', display: { xs: 'none', md: 'block' }, opacity: 0.9 }}
-          >
+          <Typography variant="h4" sx={{ fontWeight: 900, letterSpacing: 1, textTransform: 'uppercase', display: { xs: 'none', md: 'block' }, opacity: 0.9 }}>
             {headingName}
           </Typography>
 
@@ -483,12 +422,8 @@ export default function AccountPage() {
                     )}
                     {rows.map((row, idx) => (
                       <TableRow key={`${row.sorteio}-${row.numero}-${idx}`} hover>
-                        <TableCell sx={{ width: 120, fontWeight: 700 }}>
-                          {String(row.sorteio || '--')}
-                        </TableCell>
-                        <TableCell sx={{ width: 120, fontWeight: 700 }}>
-                          {pad2(row.numero)}
-                        </TableCell>
+                        <TableCell sx={{ width: 120, fontWeight: 700 }}>{String(row.sorteio || '--')}</TableCell>
+                        <TableCell sx={{ width: 120, fontWeight: 700 }}>{pad2(row.numero)}</TableCell>
                         <TableCell sx={{ width: 180 }}>{row.dia}</TableCell>
                         <TableCell><PayChip status={row.pagamento} /></TableCell>
                         <TableCell><ResultChip result={row.resultado} /></TableCell>
