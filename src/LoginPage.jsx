@@ -57,34 +57,50 @@ const handleSubmit = async (e) => {
   try {
     setLoading(true);
 
-    // faz login (seu hook já grava token/cookie)
+    // faz login (hook grava token/cookie)
     await login({ email, password, remember });
 
-    // tenta descobrir quem é o usuário logado
+    // tenta obter o "me"
     let user = null;
     try {
       const r = await fetch(`${API_BASE}/me`, {
         method: "GET",
-        headers: { "Content-Type": "application/json", ...authHeaders() },
+        headers: { "Content-Type": "application/json" }, // cookies já bastam
         credentials: "include",
       });
       if (r.ok) {
         const body = await r.json();
         user = body?.user || body || null;
-        if (user) localStorage.setItem("me", JSON.stringify(user)); // <- fallback para outras telas
+        if (user) localStorage.setItem("me", JSON.stringify(user));
+      } else {
+        // fallback: se for o admin e /me falhar, guarda um "me" mínimo
+        const lower = email.trim().toLowerCase();
+        if (lower === ADMIN_EMAIL) {
+          const minimalAdmin = { email: lower, is_admin: true, name: "Admin" };
+          try { localStorage.setItem("me", JSON.stringify(minimalAdmin)); } catch {}
+        }
       }
-    } catch {}
+    } catch {
+      // mesmo fallback se deu erro de rede
+      const lower = email.trim().toLowerCase();
+      if (lower === ADMIN_EMAIL) {
+        const minimalAdmin = { email: lower, is_admin: true, name: "Admin" };
+        try { localStorage.setItem("me", JSON.stringify(minimalAdmin)); } catch {}
+      }
+    }
 
+    // decide o destino
     const isAdmin =
-  !!user?.is_admin || (user?.email || email).trim().toLowerCase() === ADMIN_EMAIL;
+      !!user?.is_admin || (user?.email || email).trim().toLowerCase() === ADMIN_EMAIL;
 
-navigate(isAdmin ? "/admin" : from, { replace: true });
+    navigate(isAdmin ? "/admin" : from, { replace: true });
   } catch (err) {
     setError(err.message || "Falha ao entrar.");
   } finally {
     setLoading(false);
   }
 };
+
 
 
   return (

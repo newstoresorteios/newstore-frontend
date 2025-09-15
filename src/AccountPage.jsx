@@ -135,7 +135,7 @@ export default function AccountPage() {
   const [loading, setLoading] = React.useState(true);
   const [user, setUser] = React.useState(ctxUser || null);
   const [rows, setRows] = React.useState([]);
-  const [valorAcumulado, setValorAcumulado] = React.useState(65);
+  const [valorAcumulado, setValorAcumulado] = React.useState(0);
   const [cupom, setCupom] = React.useState('CUPOMAQUI');
   const [validade, setValidade] = React.useState('28/10/25');
 
