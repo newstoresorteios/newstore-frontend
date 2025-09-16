@@ -11,21 +11,20 @@ import VisibilityOff from "@mui/icons-material/VisibilityOff";
 import ArrowBackIosNewRoundedIcon from "@mui/icons-material/ArrowBackIosNewRounded";
 import logoNewStore from "./Logo-branca-sem-fundo-768x132.png";
 import { useAuth } from "./authContext";
-import { apiJoin, getJSON, authHeaders } from "./lib/api";
+import { apiJoin } from "./lib/api";
 
 const theme = createTheme({
   palette: { mode: "dark", primary: { main: "#67C23A" }, background: { default: "#0E0E0E", paper: "#121212" } },
   shape: { borderRadius: 12 },
-  typography: { fontFamily: ["Inter", "system-ui", "Segoe UI", "Roboto", "Arial"].join(",") },
+  typography: { fontFamily: ['Inter','system-ui','Segoe UI','Roboto','Arial'].join(',') }
 });
 
 const ADMIN_EMAIL = "admin@newstore.com.br";
 
-// Gera senha aleatória (6 chars: letras e números)
+// helper simples para reset sem depender de cookie/token
 function genPass(len = 6) {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
-  let out = "";
-  for (let i = 0; i < len; i++) out += chars[Math.floor(Math.random() * chars.length)];
+  let out = ""; for (let i = 0; i < len; i++) out += chars[Math.floor(Math.random() * chars.length)];
   return out;
 }
 
@@ -42,7 +41,7 @@ export default function LoginPage() {
   const [error, setError] = React.useState("");
   const [loading, setLoading] = React.useState(false);
 
-  // ----- ESQUECI MINHA SENHA (modal) -----
+  // ----- ESQUECI MINHA SENHA -----
   const [forgotOpen, setForgotOpen] = React.useState(false);
   const [forgotEmail, setForgotEmail] = React.useState("");
   const [forgotLoading, setForgotLoading] = React.useState(false);
@@ -51,53 +50,47 @@ export default function LoginPage() {
   const [sentTo, setSentTo] = React.useState("");
 
   const openForgot = () => {
-    setForgotError("");
-    setForgotSent(false);
-    setSentTo("");
-    setForgotEmail(email || "");
-    setForgotOpen(true);
+    setForgotError(""); setForgotSent(false); setSentTo("");
+    setForgotEmail(email || ""); setForgotOpen(true);
   };
-  const closeForgot = () => {
-    if (forgotLoading) return;
-    setForgotOpen(false);
-  };
+  const closeForgot = () => { if (!forgotLoading) setForgotOpen(false); };
 
   async function handleResetPassword() {
     setForgotError("");
     const e = (forgotEmail || "").trim();
-    if (!/\S+@\S+\.\S+/.test(e)) {
-      setForgotError("Informe um e-mail válido.");
-      return;
-    }
+    if (!/\S+@\S+\.\S+/.test(e)) { setForgotError("Informe um e-mail válido."); return; }
     setForgotLoading(true);
     try {
       const newPassword = genPass(6);
-
-      const r = await fetch(apiJoin("/auth/reset-password"), {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...authHeaders() },
-        credentials: "omit",
-        body: JSON.stringify({
-          email: e,
-          newPassword,
-          from: "administracao@newstoresorteios.com.br",
-          subject: "Reset de senha - New Store Sorteios",
-          message: `Sua senha foi resetada.\n\nNova Senha: ${newPassword}\n\nSe você não solicitou, ignore este e-mail.`,
-        }),
-      });
-
-      if (!r.ok) {
-        setForgotError("Não foi possível solicitar o reset agora. Tente novamente em instantes.");
-        return;
+      const candidates = [
+        apiJoin("/auth/reset-password"),
+        apiJoin("/auth/forgot"),
+      ];
+      let ok = false;
+      for (const url of candidates) {
+        try {
+          const r = await fetch(url, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            credentials: "include",
+            body: JSON.stringify({
+              email: e,
+              newPassword,
+              from: "administracao@newstoresorteios.com.br",
+              subject: "Reset de senha - New Store Sorteios",
+              message: `Sua senha foi resetada.\n\nNova Senha: ${newPassword}\n\nSe você não solicitou, ignore este e-mail.`
+            }),
+          });
+          if (r.ok) { ok = true; break; }
+        } catch {}
       }
-
-      setSentTo(e);
-      setForgotSent(true);
+      if (!ok) { setForgotError("Não foi possível solicitar o reset agora."); return; }
+      setSentTo(e); setForgotSent(true);
     } finally {
       setForgotLoading(false);
     }
   }
-  // ----------------------------------------
+  // --------------------------------
 
   // LOGIN
   const handleSubmit = async (e) => {
@@ -110,23 +103,14 @@ export default function LoginPage() {
     try {
       setLoading(true);
 
-      // faz login (o hook grava ns_auth_token e carrega o user no contexto)
-      await login({ email, password, remember });
+      // Faz login e JÁ retorna o usuário carregado
+      const me = await login({ email, password, remember });
 
-      // busca o usuário logado (agora com Authorization correto via lib/api)
-      let user = null;
-      try {
-        const body = await getJSON("/me");
-        user = body?.user || body || null; // /me retorna o objeto user diretamente
-        if (user) localStorage.setItem("me", JSON.stringify(user));
-      } catch {
-        // se falhar, seguimos só com o e-mail informado
-      }
+      if (!me) { setError("Não foi possível carregar seus dados."); return; }
 
       const isAdmin =
-        !!user?.is_admin ||
-        (user?.role === "admin") ||
-        ((user?.email || email).trim().toLowerCase() === ADMIN_EMAIL);
+        me.role === "admin" || me.is_admin === true ||
+        (me.email || email).trim().toLowerCase() === ADMIN_EMAIL;
 
       navigate(isAdmin ? "/admin" : from, { replace: true });
     } catch (err) {
@@ -144,11 +128,8 @@ export default function LoginPage() {
           <IconButton edge="start" color="inherit" onClick={() => navigate(-1)} aria-label="Voltar">
             <ArrowBackIosNewRoundedIcon />
           </IconButton>
-          <Box
-            component={RouterLink}
-            to="/"
-            sx={{ position: "absolute", left: "50%", top: "50%", transform: "translate(-50%, -50%)", display: "flex", alignItems: "center" }}
-          >
+          <Box component={RouterLink} to="/"
+               sx={{ position: "absolute", left: "50%", top: "50%", transform: "translate(-50%, -50%)", display: "flex", alignItems: "center" }}>
             <Box component="img" src={logoNewStore} alt="NEW STORE" sx={{ height: 40, objectFit: "contain" }} />
           </Box>
         </Toolbar>
@@ -188,7 +169,7 @@ export default function LoginPage() {
                       {showPass ? <VisibilityOff /> : <Visibility />}
                     </IconButton>
                   </InputAdornment>
-                ),
+                )
               }}
             />
 
@@ -211,8 +192,7 @@ export default function LoginPage() {
             </Button>
 
             <Typography variant="caption" sx={{ opacity: 0.7, mt: 1 }}>
-              Dica (mock): qualquer e-mail válido e senha com 6+ caracteres funcionam.
-              Para o admin use: admin@newstore.com.br
+              Dica: agora o login é real (DB). Se não lembrar a senha, use “Esqueci minha senha”.
             </Typography>
           </Stack>
         </Paper>
@@ -239,7 +219,7 @@ export default function LoginPage() {
             </>
           ) : (
             <Alert severity="success">
-              E-mail enviado para <strong>{sentTo}</strong>.
+              Solicitação registrada para <strong>{sentTo}</strong>.
             </Alert>
           )}
         </DialogContent>

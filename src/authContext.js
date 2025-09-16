@@ -5,6 +5,7 @@ import { apiJoin } from "./lib/api";
 const TOKEN_KEY = "ns_auth_token";
 const COMPAT_KEYS = ["token", "access_token"];
 
+/* ---------------- token helpers ---------------- */
 function readToken() {
   const raw =
     localStorage.getItem(TOKEN_KEY) ||
@@ -56,6 +57,11 @@ export function AuthProvider({ children }) {
   const [token, setTokenState] = useState(readToken());
   const [loading, setLoading] = useState(true);
 
+  const getAuthHeaders = () => {
+    const tk = readToken();
+    return tk ? { Authorization: `Bearer ${tk}` } : {};
+  };
+
   async function loadUser() {
     const tk = readToken();
     setTokenState(tk || "");
@@ -66,11 +72,8 @@ export function AuthProvider({ children }) {
     }
     try {
       const r = await fetch(apiJoin("/me"), {
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${tk}`,
-        },
-        credentials: "omit",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${tk}` },
+        credentials: "include", // <— aceita/enviar cookie ns_auth
       });
       if (!r.ok) {
         if (r.status === 401) {
@@ -82,7 +85,7 @@ export function AuthProvider({ children }) {
         return;
       }
       const data = await r.json();
-      setUser(data?.user || null);
+      setUser(data?.user || data || null);
     } catch (e) {
       console.warn("[auth] /me failed:", e);
     } finally {
@@ -95,24 +98,42 @@ export function AuthProvider({ children }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  /**
+   * Faz login, persiste token, BUSCA /me e devolve o user já carregado
+   */
   async function login({ email, password, remember = true }) {
     const r = await fetch(apiJoin("/auth/login"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      credentials: "omit",
+      credentials: "include", // <— garante set-cookie em cross-site
       body: JSON.stringify({ email, password }),
     });
     if (!r.ok) {
       const err = await r.json().catch(() => ({}));
       throw new Error(err?.error || "login_failed");
     }
+
     const data = await r.json();
     const tk = data?.token || data?.access_token || data?.jwt;
     if (!tk) throw new Error("missing_token");
+
     saveToken(tk, remember);
     setTokenState(readToken());
-    await loadUser();
-    return true;
+
+    // Carrega o usuário imediatamente e retorna
+    let me = null;
+    try {
+      const m = await fetch(apiJoin("/me"), {
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${tk}` },
+        credentials: "include",
+      });
+      if (m.ok) {
+        const body = await m.json();
+        me = body?.user || body || null;
+      }
+    } catch {}
+    setUser(me);
+    return me; // <— o chamador já recebe o user
   }
 
   function logout() {
@@ -122,13 +143,7 @@ export function AuthProvider({ children }) {
   }
 
   const value = useMemo(
-    () => ({
-      user,
-      token,
-      loading,
-      login,
-      logout,
-    }),
+    () => ({ user, token, loading, login, logout, getAuthHeaders }),
     [user, token, loading]
   );
 
