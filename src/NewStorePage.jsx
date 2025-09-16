@@ -68,10 +68,6 @@ const MOCK_INDISPONIVEIS = [];
 // PREÇO por número (ENV ou 55)
 //const PRICE = Number(process.env.REACT_APP_PIX_PRICE) || 55;
 
-// PREÇO dinâmico (cai para env ou 55 se não achar no backend)
-const FALLBACK_PRICE = Number(process.env.REACT_APP_PIX_PRICE) || 55;
-const [unitPrice, setUnitPrice] = React.useState(FALLBACK_PRICE);
-
 // Base do backend
 const API_BASE = (
   process.env.REACT_APP_API_BASE_URL ||
@@ -142,6 +138,10 @@ export default function NewStorePage({
   // Estados vindos do backend para pintar reservados/indisponíveis
   const [srvReservados, setSrvReservados] = React.useState([]);
   const [srvIndisponiveis, setSrvIndisponiveis] = React.useState([]);
+
+  // PREÇO dinâmico (cai para env ou 55 se não achar no backend)
+  const FALLBACK_PRICE = Number(process.env.REACT_APP_PIX_PRICE) || 55;
+  const [unitPrice, setUnitPrice] = React.useState(FALLBACK_PRICE);
 
   // Busca o preço atual no backend (várias rotas possíveis) e converte de cents -> R$
 React.useEffect(() => {
