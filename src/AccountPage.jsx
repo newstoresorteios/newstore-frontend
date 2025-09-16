@@ -263,13 +263,19 @@ export default function AccountPage() {
             <ArrowBackIosNewRoundedIcon />
           </IconButton>
           <Box
-            component={RouterLink}
-            to={logoTo}
-            onClick={(e) => { e.preventDefault(); navigate(logoTo); }} // navegação SPA
-            sx={{ position: "absolute", left: "50%", top: "50%", transform: "translate(-50%, -50%)", display: "flex", alignItems: "center" }}
-          >
-            <Box component="img" src={logoNewStore} alt="NEW STORE" sx={{ height: { xs: 28, sm: 36, md: 40 }, objectFit: "contain" }} />
-          </Box>
+              component={RouterLink}
+              to="/"
+              sx={{
+                position: "absolute",
+                left: "50%",
+                top: "50%",
+                transform: "translate(-50%, -50%)",
+                display: "flex",
+                alignItems: "center",
+              }}
+            >
+              <Box component="img" src={logoNewStore} alt="NEW STORE" sx={{ height: { xs: 28, sm: 36, md: 40 }, objectFit: "contain" }} />
+            </Box>
           <IconButton color="inherit" sx={{ ml: "auto" }} onClick={(e) => setMenuEl(e.currentTarget)}>
             <AccountCircleRoundedIcon />
           </IconButton>
