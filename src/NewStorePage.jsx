@@ -129,7 +129,9 @@ export default function NewStorePage({
 }) {
   const navigate = useNavigate();
   const { selecionados, setSelecionados, limparSelecao } = React.useContext(SelectionContext);
-  const { isAuthenticated, logout } = useAuth();
+  //const { isAuthenticated, logout } = useAuth();
+  const { user, token, logout } = useAuth();
+  const isAuthenticated = !!(user?.email || user?.id || token);
 
   // Estados vindos do backend para pintar reservados/indisponíveis
   const [srvReservados, setSrvReservados] = React.useState([]);
@@ -308,17 +310,13 @@ export default function NewStorePage({
             Criar conta
           </Button>
 
+         const logoTo = isAuthenticated ? "/conta" : "/";
+
           <Box
             component={RouterLink}
-            to="/"
-            sx={{
-              position: 'absolute',
-              left: '50%',
-              top: '50%',
-              transform: 'translate(-50%, -50%)',
-              display: 'flex',
-              alignItems: 'center',
-            }}
+            to={logoTo}
+            onClick={(e) => { e.preventDefault(); navigate(logoTo); }} // garante SPA, sem reload
+            sx={{ position:'absolute', left:'50%', top:'50%', transform:'translate(-50%, -50%)', display:'flex', alignItems:'center' }}
           >
             <Box component="img" src={logoNewStore} alt="NEW STORE" sx={{ height: 40, objectFit: 'contain' }} />
           </Box>
