@@ -2,9 +2,9 @@
 import * as React from "react";
 import { useNavigate, Link as RouterLink } from "react-router-dom";
 import {
-  AppBar, Box, ButtonBase, Button, Container, CssBaseline, Divider,
-  IconButton, Menu, MenuItem, Paper, Stack, TextField, ThemeProvider,
-  Toolbar, Typography, createTheme
+  AppBar, Box, Button, Container, CssBaseline, Divider,
+  IconButton, Menu, MenuItem, Paper, Stack,
+  TextField, ThemeProvider, Toolbar, Typography, createTheme
 } from "@mui/material";
 import ArrowBackIosNewRoundedIcon from "@mui/icons-material/ArrowBackIosNewRounded";
 import AccountCircleRoundedIcon from "@mui/icons-material/AccountCircleRounded";
@@ -22,7 +22,7 @@ const theme = createTheme({
   typography: { fontFamily: ["Inter","system-ui","Segoe UI","Roboto","Arial"].join(",") },
 });
 
-/* ---- helpers http ---- */
+/* ---- helpers de API ---- */
 const RAW_BASE =
   process.env.REACT_APP_API_BASE_URL ||
   process.env.REACT_APP_API_BASE ||
@@ -41,119 +41,99 @@ const authHeaders = () => {
     localStorage.getItem("access_token") ||
     sessionStorage.getItem("token");
   return tk
-    ? { Authorization: `Bearer ${String(tk).replace(/^Bearer\s+/i,"").replace(/^["']|["']$/g,"")}` }
+    ? { Authorization: `Bearer ${String(tk).replace(/^Bearer\s+/i, "").replace(/^["']|["']$/g, "")}` }
     : {};
 };
-async function getJSON(pathOrUrl) {
-  const url = /^https?:\/\//i.test(pathOrUrl) ? pathOrUrl : apiJoin(pathOrUrl);
-  const r = await fetch(url, { headers: { "Content-Type": "application/json", ...authHeaders() }, credentials: "include" });
-  if (!r.ok) throw new Error(`${r.status}`);
-  return r.json();
-}
-async function postJSON(path, body) {
-  const url = apiJoin(path);
-  const r = await fetch(url, {
-    method: "POST",
+async function getJSON(path) {
+  const r = await fetch(apiJoin(path), {
     headers: { "Content-Type": "application/json", ...authHeaders() },
     credentials: "include",
-    body: JSON.stringify(body || {})
   });
   if (!r.ok) throw new Error(`${r.status}`);
   return r.json();
 }
-
-/* ---- UI helpers ---- */
-function BigCard({ children, color, outlined = false, onClick }) {
-  return (
-    <ButtonBase onClick={onClick} sx={{ width: "100%" }}>
-      <Paper
-        elevation={0}
-        sx={{
-          width: "100%",
-          p: { xs: 3, md: 4 },
-          borderRadius: 4,
-          bgcolor: outlined ? "transparent" : color,
-          border: outlined ? "1px solid rgba(255,255,255,0.16)" : "none",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          minHeight: { xs: 120, md: 140 },
-          transition: "transform 120ms ease, filter 120ms ease",
-          "&:hover": { transform: "translateY(-2px)", filter: "brightness(1.02)" },
-          textAlign: "center",
-        }}
-      >
-        <Typography
-          sx={{
-            fontWeight: 900,
-            letterSpacing: 2,
-            fontSize: { xs: 18, md: 28 },
-            lineHeight: 1.25,
-            color: outlined ? "rgba(255,255,255,0.85)" : "#fff",
-            textTransform: "uppercase",
-            fontFamily:
-              'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
-          }}
-        >
-          {children}
-        </Typography>
-      </Paper>
-    </ButtonBase>
-  );
+async function postJSON(path, body, method = "POST") {
+  const r = await fetch(apiJoin(path), {
+    method,
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    credentials: "include",
+    body: JSON.stringify(body || {}),
+  });
+  if (!r.ok) throw new Error(`${r.status}`);
+  return r.json().catch(() => ({}));
 }
 
 export default function AdminDashboard() {
   const navigate = useNavigate();
   const { logout } = useAuth();
 
+  // resumo
+  const [drawId, setDrawId] = React.useState(null);
+  const [sold, setSold] = React.useState(0);
+  const [remaining, setRemaining] = React.useState(0);
+  const [price, setPrice] = React.useState("");       // em centavos (string para input)
+  const [loading, setLoading] = React.useState(true);
+  const [saving, setSaving] = React.useState(false);
+  const [creating, setCreating] = React.useState(false);
+
+  const loadSummary = React.useCallback(async () => {
+    setLoading(true);
+    try {
+      const r = await getJSON("/admin/dashboard/summary");
+      setDrawId(r.draw_id ?? null);
+      setSold(r.sold ?? 0);
+      setRemaining(r.remaining ?? 0);
+      setPrice(
+        Number.isFinite(Number(r.price_cents))
+          ? String(Number(r.price_cents))
+          : ""
+      );
+      console.log("[AdminDashboard] GET /summary", r);
+    } catch (e) {
+      console.error("[AdminDashboard] GET /summary failed:", e);
+      setDrawId(null);
+      setSold(0);
+      setRemaining(0);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  React.useEffect(() => { loadSummary(); }, [loadSummary]);
+
+  // ações
+  const onSavePrice = async () => {
+    try {
+      setSaving(true);
+      const n = Math.max(0, Math.floor(Number(price || 0)));
+      await postJSON("/admin/config/ticket-price", { price_cents: n }, "PATCH");
+      await loadSummary();
+    } catch (e) {
+      console.error("[AdminDashboard] PATCH ticket-price failed:", e);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const onNewDraw = async () => {
+    try {
+      setCreating(true);
+      await postJSON("/admin/dashboard/new", {});
+      await loadSummary();
+    } catch (e) {
+      console.error("[AdminDashboard] POST /new failed:", e);
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  // menu
   const [menuEl, setMenuEl] = React.useState(null);
-  const menuOpen = Boolean(menuEl);
+  const open = Boolean(menuEl);
   const openMenu = (e) => setMenuEl(e.currentTarget);
   const closeMenu = () => setMenuEl(null);
   const goPainel = () => { closeMenu(); navigate("/admin"); };
   const doLogout = () => { closeMenu(); logout(); navigate("/"); };
-
-  // resumo
-  const [drawId, setDrawId] = React.useState(0);
-  const [sold, setSold] = React.useState(0);
-  const [remaining, setRemaining] = React.useState(0);
-  const [priceInput, setPriceInput] = React.useState(""); // sempre string p/ evitar NaN
-
-  React.useEffect(() => {
-    let alive = true;
-    (async () => {
-      try {
-        const data = await getJSON("/admin/dashboard/summary");
-        console.log("[AdminDashboard] GET /summary ->", data);
-
-        if (!alive) return;
-        setDrawId(Number(data?.draw_id) || 0);
-        setSold(Number(data?.sold) || 0);
-        setRemaining(Number(data?.remaining) || 0);
-
-        // garante string e evita NaN no <input>
-        const pc =
-          Number.isFinite(Number(data?.price_cents))
-            ? String(Number(data.price_cents))
-            : "";
-        setPriceInput(pc);
-      } catch (e) {
-        console.error("[AdminDashboard] GET /summary failed:", e);
-      }
-    })();
-    return () => { alive = false; };
-  }, []);
-
-  const onUpdatePrice = async () => {
-    const n = Math.max(0, Math.floor(Number(priceInput)));
-    try {
-      const resp = await postJSON("/admin/dashboard/price", { price_cents: n });
-      console.log("[AdminDashboard] POST /price ->", resp);
-      // Se quiser, dá um feedback visual/toast aqui
-    } catch (e) {
-      console.error("[AdminDashboard] POST /price failed:", e);
-    }
-  };
 
   return (
     <ThemeProvider theme={theme}>
@@ -165,24 +145,17 @@ export default function AdminDashboard() {
             <ArrowBackIosNewRoundedIcon />
           </IconButton>
 
-          <Box
-            component={RouterLink}
-            to="/admin"
-            sx={{ position: "absolute", left: "50%", top: "50%", transform: "translate(-50%, -50%)", display: "flex", alignItems: "center" }}
-          >
-            <Box component="img" src={logoNewStore} alt="NEW STORE" sx={{ height: 40, objectFit: "contain" }} />
+          <Box component={RouterLink} to="/admin"
+               sx={{ position: "absolute", left: "50%", top: "50%", transform: "translate(-50%, -50%)" }}>
+            <Box component="img" src={logoNewStore} alt="NEW STORE" sx={{ height: 40 }} />
           </Box>
 
-          <IconButton color="inherit" sx={{ ml: "auto" }} onClick={openMenu} aria-label="Menu do usuário">
+          <IconButton color="inherit" sx={{ ml: "auto" }} onClick={openMenu}>
             <AccountCircleRoundedIcon />
           </IconButton>
-          <Menu
-            anchorEl={menuEl}
-            open={menuOpen}
-            onClose={closeMenu}
-            anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
-            transformOrigin={{ vertical: "top", horizontal: "right" }}
-          >
+          <Menu anchorEl={menuEl} open={open} onClose={closeMenu}
+                anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
+                transformOrigin={{ vertical: "top", horizontal: "right" }}>
             <MenuItem onClick={goPainel}>Painel (Admin)</MenuItem>
             <Divider />
             <MenuItem onClick={doLogout}>Sair</MenuItem>
@@ -197,84 +170,59 @@ export default function AdminDashboard() {
             <br /> dos Sorteios
           </Typography>
 
-          {/* bloco de resumo + preço */}
-          <Paper
-            variant="outlined"
-            sx={{
-              width: "100%",
-              p: { xs: 3, md: 4 },
-              borderRadius: 4,
-              display: "grid",
-              gridTemplateColumns: { xs: "1fr", md: "auto auto auto auto 1fr" },
-              gap: 3,
-              alignItems: "center",
-            }}
-          >
-            <Box>
-              <Typography sx={{ opacity: 0.8 }}>Nº Sorteio Atual</Typography>
-              <Typography sx={{ fontWeight: 900, fontSize: 28 }}>{drawId || "-"}</Typography>
-            </Box>
+          <Paper variant="outlined" sx={{ p: { xs: 3, md: 4 }, borderRadius: 4, width: "100%" }}>
+            <Stack direction="row" spacing={4} alignItems="center" flexWrap="wrap">
+              <Stack>
+                <Typography sx={{ opacity: 0.7, fontWeight: 700 }}>Nº Sorteio Atual</Typography>
+                <Typography variant="h4" sx={{ fontWeight: 900 }}>
+                  {loading ? "…" : drawId ?? "-"}
+                </Typography>
+              </Stack>
 
-            <Box>
-              <Typography sx={{ opacity: 0.8 }}>Nºs Vendidos</Typography>
-              <Typography sx={{ fontWeight: 900, fontSize: 28 }}>{sold}</Typography>
-            </Box>
+              <Stack>
+                <Typography sx={{ opacity: 0.7, fontWeight: 700 }}>Nºs Vendidos</Typography>
+                <Typography variant="h4" sx={{ fontWeight: 900 }}>{loading ? "…" : sold}</Typography>
+              </Stack>
 
-            <Box>
-              <Typography sx={{ opacity: 0.8 }}>Nºs Restantes</Typography>
-              <Typography sx={{ fontWeight: 900, fontSize: 28 }}>{remaining}</Typography>
-            </Box>
+              <Stack>
+                <Typography sx={{ opacity: 0.7, fontWeight: 700 }}>Nºs Restantes</Typography>
+                <Typography variant="h4" sx={{ fontWeight: 900 }}>{loading ? "…" : remaining}</Typography>
+              </Stack>
 
-            <Button
-              variant="outlined"
-              color="success"
-              onClick={() => navigate("/admin/sorteios")}
-              sx={{ height: 44, px: 3, fontWeight: 800 }}
-            >
-              NOVO SORTEIO
-            </Button>
+              <Box sx={{ flex: 1 }} />
 
-            <Box sx={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 2, alignItems: "center" }}>
-              <Typography sx={{ opacity: 0.8, fontWeight: 700 }}>Valor por Ticket</Typography>
-              <Box />
-              <TextField
-                size="small"
-                type="number"
-                inputProps={{ min: 0, step: 1 }}
-                value={priceInput}
-                onChange={(e) => {
-                  const v = e.target.value;
-                  // aceita vazio, ou inteiro >= 0
-                  if (v === "") return setPriceInput("");
-                  const n = Math.max(0, Math.floor(Number(v)));
-                  setPriceInput(String(n));
-                }}
-                placeholder="em centavos (ex.: 100 = R$ 1,00)"
-                sx={{ maxWidth: 240 }}
-              />
-              <Button variant="contained" color="success" onClick={onUpdatePrice} sx={{ height: 40, px: 3 }}>
-                ATUALIZAR
+              <Button
+                onClick={onNewDraw}
+                disabled={creating}
+                variant="outlined"
+                sx={{ borderRadius: 999, px: 3 }}
+              >
+                {creating ? "Criando..." : "NOVO SORTEIO"}
               </Button>
-            </Box>
+            </Stack>
+
+            <Divider sx={{ my: 3 }} />
+
+            <Typography sx={{ opacity: 0.7, fontWeight: 700, mb: 1 }}>Valor por Ticket</Typography>
+            <Stack direction="row" spacing={2} alignItems="center">
+              <TextField
+                value={price}
+                onChange={(e) => setPrice(e.target.value)}
+                placeholder="em centavos (ex.: 100 = R$ 1,00)"
+                inputProps={{ inputMode: "numeric", pattern: "[0-9]*" }}
+                sx={{ maxWidth: 320 }}
+              />
+              <Button
+                onClick={onSavePrice}
+                disabled={saving}
+                variant="contained"
+                color="primary"
+                sx={{ borderRadius: 999, px: 3 }}
+              >
+                {saving ? "Salvando..." : "ATUALIZAR"}
+              </Button>
+            </Stack>
           </Paper>
-
-          {/* cards */}
-          <Stack spacing={3} sx={{ width: "100%" }}>
-            <BigCard outlined onClick={() => navigate("/admin/sorteios")}>
-              LISTA DE SORTEIOS
-              <br /> REALIZADOS
-            </BigCard>
-
-            <BigCard color="primary.main" onClick={() => navigate("/admin/clientes")}>
-              LISTA DE CLIENTES
-              <br /> COM SALDO ATIVO
-            </BigCard>
-
-            <BigCard color="warning.main" onClick={() => navigate("/admin/vencedores")}>
-              LISTA DE VENCEDORES
-              <br /> DOS SORTEIOS
-            </BigCard>
-          </Stack>
         </Stack>
       </Container>
     </ThemeProvider>

@@ -1,111 +1,155 @@
 // src/authContext.js
 import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
 
-const KEY_TOKEN = "ns_auth_token";
-const KEY_USER  = "ns_auth_user";
-
-// Resolve a base da API a partir das ENVs usadas no projeto
-const API_BASE = (
-  process.env.REACT_APP_API_BASE ||
+/* ---------- util base API ---------- */
+const RAW_BASE =
   process.env.REACT_APP_API_BASE_URL ||
-  "https://newstore-backend.onrender.com"
-).replace(/\/+$/,"");
+  process.env.REACT_APP_API_BASE ||
+  "/api";
+const API_BASE = String(RAW_BASE).replace(/\/+$/, "");
+const apiJoin = (path) => {
+  let p = path.startsWith("/") ? path : `/${path}`;
+  if (API_BASE.endsWith("/api") && p.startsWith("/api/")) p = p.slice(4);
+  return `${API_BASE}${p}`;
+};
 
-const AuthContext = createContext({
-  isAuthenticated: false,
-  user: null,
-  login: async (_)=>{},
-  logout: () => {},
-  loading: true,
-});
+/* ---------- storage helpers ---------- */
+const TOKEN_KEY = "ns_auth_token";
+const COMPAT_KEYS = ["token", "access_token"]; // backward-compat
+
+function readToken() {
+  const fromLocal =
+    localStorage.getItem(TOKEN_KEY) ||
+    localStorage.getItem(COMPAT_KEYS[0]) ||
+    localStorage.getItem(COMPAT_KEYS[1]);
+  const fromSession =
+    sessionStorage.getItem(TOKEN_KEY) ||
+    sessionStorage.getItem(COMPAT_KEYS[0]) ||
+    sessionStorage.getItem(COMPAT_KEYS[1]);
+  const raw = fromLocal || fromSession || "";
+  return String(raw).replace(/^Bearer\s+/i, "").replace(/^["']|["']$/g, "");
+}
+
+function saveToken(tk, persist = true) {
+  const clean = String(tk).replace(/^Bearer\s+/i, "");
+  try {
+    if (persist) {
+      localStorage.setItem(TOKEN_KEY, clean);
+      // limpa chaves antigas
+      COMPAT_KEYS.forEach((k) => localStorage.removeItem(k));
+      sessionStorage.removeItem(TOKEN_KEY);
+    } else {
+      sessionStorage.setItem(TOKEN_KEY, clean);
+      localStorage.removeItem(TOKEN_KEY);
+      COMPAT_KEYS.forEach((k) => localStorage.removeItem(k));
+    }
+  } catch {}
+}
+
+function clearToken() {
+  try {
+    localStorage.removeItem(TOKEN_KEY);
+    sessionStorage.removeItem(TOKEN_KEY);
+    COMPAT_KEYS.forEach((k) => {
+      localStorage.removeItem(k);
+      sessionStorage.removeItem(k);
+    });
+  } catch {}
+}
+
+/* ---------- context ---------- */
+const AuthCtx = createContext(null);
 
 export function AuthProvider({ children }) {
-  const [user, setUser]       = useState(null);
+  const [user, setUser] = useState(null);
+  const [token, setTokenState] = useState(readToken());
   const [loading, setLoading] = useState(true);
 
-  // Restaura sessão no mount:
-  // 1) usa storage imediatamente (evita "logout visual")
-  // 2) tenta confirmar via /api/me (com cookie). Se falhar/401, mantém o que já tinha.
-  useEffect(() => {
-    (async () => {
-      // 1) Sobe rápido com usuário salvo
-      try {
-        const stored = localStorage.getItem(KEY_USER) ?? sessionStorage.getItem(KEY_USER);
-        if (stored) setUser(JSON.parse(stored));
-      } catch {}
+  const getAuthHeaders = () =>
+    token ? { Authorization: `Bearer ${token}` } : {};
 
-      // 2) Confirma sessão no backend (não derruba em 401)
-      try {
-        const r = await fetch(`${API_BASE}/api/me`, {
-          credentials: "include",
-          cache: "no-store",
-        });
-        if (r.ok) {
-          const me = await r.json();
-          localStorage.setItem(KEY_USER, JSON.stringify(me));
-          setUser(me);
-        }
-        // Se 401/erro, apenas mantemos o usuário já carregado do storage
-      } catch {
-        // offline / backend down: mantém o que já tinha
-      } finally {
-        setLoading(false);
-      }
-    })();
-  }, []);
-
-  async function login({ email, password, remember }) {
-    const r = await fetch(`${API_BASE}/api/auth/login`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      credentials: "include", // importante p/ cookie httpOnly
-      body: JSON.stringify({ email, password }),
-    });
-
-    if (!r.ok) {
-      const txt = await r.text().catch(()=>"");
-      throw new Error(txt || "Falha no login");
+  async function loadUser() {
+    const tk = readToken();
+    setTokenState(tk || "");
+    if (!tk) {
+      setUser(null);
+      setLoading(false);
+      return;
     }
-
-    const data = await r.json().catch(()=>({}));
-    // Backend pode mandar { token, user } ou só setar cookie e retornar { user }
-    const token = data?.token || "";
-    const userObj = data?.user || { email };
-
-    // Salva token se vier (o pix.js procura por 'ns_auth_token')
-    const store = remember ? localStorage : sessionStorage;
-    if (token) store.setItem(KEY_TOKEN, token);
-    store.setItem(KEY_USER, JSON.stringify(userObj));
-    setUser(userObj);
-
-    // Confirma sessão via /api/me usando o cookie recém-setado (não derruba em falha)
     try {
-      const rm = await fetch(`${API_BASE}/api/me`, { credentials: "include", cache: "no-store" });
-      if (rm.ok) {
-        const me = await rm.json();
-        store.setItem(KEY_USER, JSON.stringify(me));
-        setUser(me);
+      const r = await fetch(apiJoin("/me"), {
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${tk}` },
+        credentials: "include", // ok usar; não atrapalha
+      });
+      if (!r.ok) {
+        // token inválido / expirado
+        if (r.status === 401) {
+          clearToken();
+          setUser(null);
+          setTokenState("");
+        }
+        setLoading(false);
+        return;
       }
-    } catch {}
+      const data = await r.json();
+      setUser(data?.user || null);
+    } catch (e) {
+      console.warn("[auth] /me failed:", e);
+      // não apaga token por erro de rede
+    } finally {
+      setLoading(false);
+    }
   }
 
-  async function logout() {
-    try {
-      await fetch(`${API_BASE}/api/auth/logout`, { method: "POST", credentials: "include" });
-    } catch {}
-    localStorage.removeItem(KEY_TOKEN);
-    localStorage.removeItem(KEY_USER);
-    sessionStorage.removeItem(KEY_TOKEN);
-    sessionStorage.removeItem(KEY_USER);
+  useEffect(() => {
+    loadUser();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  async function login({ email, password, remember = true }) {
+    // ajuste a URL se seu endpoint de login for diferente
+    const r = await fetch(apiJoin("/auth/login"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, password }),
+    });
+    if (!r.ok) {
+      const err = await r.json().catch(() => ({}));
+      throw new Error(err?.error || "login_failed");
+    }
+    const data = await r.json();
+    const tk = data?.token || data?.access_token || data?.jwt;
+    if (!tk) throw new Error("missing_token");
+    saveToken(tk, remember);
+    setTokenState(readToken());
+    await loadUser();
+    return true;
+  }
+
+  function logout() {
+    clearToken();
     setUser(null);
+    setTokenState("");
   }
 
   const value = useMemo(
-    () => ({ isAuthenticated: !!user, user, login, logout, loading }),
-    [user, loading]
+    () => ({
+      user,
+      token,
+      loading,
+      login,
+      logout,
+      getAuthHeaders,
+      apiJoin, // exporta para quem quiser usar o util
+    }),
+    [user, token, loading]
   );
 
-  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+  return <AuthCtx.Provider value={value}>{children}</AuthCtx.Provider>;
 }
 
-export const useAuth = () => useContext(AuthContext);
+export function useAuth() {
+  const ctx = useContext(AuthCtx);
+  if (!ctx) throw new Error("useAuth must be used within AuthProvider");
+  return ctx;
+}
