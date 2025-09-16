@@ -66,7 +66,11 @@ const MOCK_RESERVADOS = [];
 const MOCK_INDISPONIVEIS = [];
 
 // PREÇO por número (ENV ou 55)
-const PRICE = Number(process.env.REACT_APP_PIX_PRICE) || 55;
+//const PRICE = Number(process.env.REACT_APP_PIX_PRICE) || 55;
+
+// PREÇO dinâmico (cai para env ou 55 se não achar no backend)
+const FALLBACK_PRICE = Number(process.env.REACT_APP_PIX_PRICE) || 55;
+const [unitPrice, setUnitPrice] = React.useState(FALLBACK_PRICE);
 
 // Base do backend
 const API_BASE = (
@@ -138,6 +142,59 @@ export default function NewStorePage({
   // Estados vindos do backend para pintar reservados/indisponíveis
   const [srvReservados, setSrvReservados] = React.useState([]);
   const [srvIndisponiveis, setSrvIndisponiveis] = React.useState([]);
+
+  // Busca o preço atual no backend (várias rotas possíveis) e converte de cents -> R$
+React.useEffect(() => {
+  let alive = true;
+
+  async function fetchJSON(path) {
+    const res = await fetch(`${API_BASE}${path.startsWith('/') ? '' : '/'}${path}`, {
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      cache: 'no-store',
+    });
+    if (!res.ok) throw new Error(String(res.status));
+    return res.json();
+  }
+
+  (async () => {
+    const candidates = [
+      '/api/summary',
+      '/summary',
+      '/api/dashboard/summary',
+      '/dashboard/summary',
+      '/api/draws/current',
+      '/draws/current',
+    ];
+
+    for (const p of candidates) {
+      try {
+        const j = await fetchJSON(p);
+
+        // tenta vários formatos comuns
+        const cents =
+          j?.price_cents ??
+          j?.priceCents ??
+          j?.current?.price_cents ??
+          j?.current_draw?.price_cents ??
+          (Array.isArray(j?.draws) ? j.draws[0]?.price_cents : undefined);
+
+        // se vier em reais
+        const reaisRaw = j?.price ?? j?.preco;
+
+        const reais = cents != null ? Number(cents) / 100 : Number(reaisRaw);
+        if (Number.isFinite(reais) && reais > 0) {
+          if (alive) setUnitPrice(reais);
+          return;
+        }
+      } catch {}
+    }
+    // se nada funcionar, fica no fallback
+  })();
+
+  return () => { alive = false; };
+}, []);
+
 
   // Polling leve para /api/numbers
   React.useEffect(() => {
@@ -216,7 +273,8 @@ export default function NewStorePage({
       return;
     }
 
-    const amount = selecionados.length * PRICE;
+    //const amount = selecionados.length * PRICE;
+    const amount = selecionados.length * unitPrice;
     setPixAmount(amount);
     setPixOpen(true);
     setPixLoading(true);
@@ -561,7 +619,7 @@ export default function NewStorePage({
                 {selecionados.slice().sort((a, b) => a - b).map(pad2).join(', ')}
               </Typography>
               <Typography variant="body1" sx={{ mt: 0.5, mb: 1 }}>
-                Total: <strong>R$ {(selecionados.length * PRICE).toFixed(2)}</strong>
+                Total: <strong>R$ {(selecionados.length * unitPrice).toFixed(2)}</strong>
               </Typography>
               <Typography variant="caption" sx={{ opacity: 0.7 }}>
                 Você pode voltar e ajustar a seleção, se quiser.
