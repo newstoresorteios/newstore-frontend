@@ -36,17 +36,26 @@ const theme = createTheme({
   typography: { fontFamily: ["Inter", "system-ui", "Segoe UI", "Roboto", "Arial"].join(",") },
 });
 
-/* ---- helpers de API ---- */
+/* ---------- helpers de API (robusto com /api) ---------- */
 const RAW_BASE =
   process.env.REACT_APP_API_BASE_URL ||
   process.env.REACT_APP_API_BASE ||
   "/api";
 const API_BASE = String(RAW_BASE).replace(/\/+$/, "");
+
 const apiJoin = (path) => {
   let p = path.startsWith("/") ? path : `/${path}`;
-  if (API_BASE.endsWith("/api") && p.startsWith("/api/")) p = p.slice(4);
+  const baseHasApi = /\/api\/?$/.test(API_BASE);
+
+  // se o BASE já termina com /api e o path começa com /api, remove a duplicidade
+  if (baseHasApi && p.startsWith("/api/")) p = p.slice(4);
+
+  // se o BASE NÃO tem /api, garanta que o path tenha
+  if (!baseHasApi && !p.startsWith("/api/")) p = `/api${p}`;
+
   return `${API_BASE}${p}`;
 };
+
 const authHeaders = () => {
   const tk =
     localStorage.getItem("ns_auth_token") ||
@@ -58,26 +67,41 @@ const authHeaders = () => {
     ? { Authorization: `Bearer ${String(tk).replace(/^Bearer\s+/i, "").replace(/^["']|["']$/g, "")}` }
     : {};
 };
+
 async function getJSON(path) {
   const r = await fetch(apiJoin(path), {
     headers: { "Content-Type": "application/json", ...authHeaders() },
-    credentials: "include",
+    credentials: "omit",
   });
-  if (!r.ok) throw new Error(`${r.status}`);
+  if (!r.ok) {
+    let err = `${r.status}`;
+    try {
+      const j = await r.json();
+      if (j?.error) err = j.error;
+    } catch {}
+    throw new Error(err);
+  }
   return r.json();
 }
 async function postJSON(path, body, method = "POST") {
   const r = await fetch(apiJoin(path), {
     method,
     headers: { "Content-Type": "application/json", ...authHeaders() },
-    credentials: "include",
+    credentials: "omit",
     body: JSON.stringify(body || {}),
   });
-  if (!r.ok) throw new Error(`${r.status}`);
+  if (!r.ok) {
+    let err = `${r.status}`;
+    try {
+      const j = await r.json();
+      if (j?.error) err = j.error;
+    } catch {}
+    throw new Error(err);
+  }
   return r.json().catch(() => ({}));
 }
 
-/* ---- card grande clicável (as 3 listas) ---- */
+/* ---------- Card grande clicável (as 3 listas) ---------- */
 function BigCard({ children, color, outlined = false, onClick }) {
   return (
     <ButtonBase onClick={onClick} sx={{ width: "100%" }}>
@@ -137,9 +161,7 @@ export default function AdminDashboard() {
       setDrawId(r.draw_id ?? null);
       setSold(r.sold ?? 0);
       setRemaining(r.remaining ?? 0);
-      setPrice(
-        Number.isFinite(Number(r.price_cents)) ? String(Number(r.price_cents)) : ""
-      );
+      setPrice(Number.isFinite(Number(r.price_cents)) ? String(Number(r.price_cents)) : "");
       console.log("[AdminDashboard] GET /summary", r);
     } catch (e) {
       console.error("[AdminDashboard] GET /summary failed:", e);
@@ -284,7 +306,7 @@ export default function AdminDashboard() {
             </Stack>
           </Paper>
 
-          {/* As 3 listas (cards clicáveis) */}
+          {/* As 3 listas */}
           <Stack spacing={3} sx={{ width: "100%" }}>
             <BigCard outlined onClick={() => navigate("/admin/sorteios")}>
               LISTA DE SORTEIOS
