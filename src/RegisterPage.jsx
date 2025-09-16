@@ -32,17 +32,27 @@ const theme = createTheme({
   },
 });
 
-// ===== helpers de API (mínimo, sem alterar layout) =====
-const API_BASE = (process.env.REACT_APP_API_BASE_URL || '/api').replace(/\/+$/, '');
+/* ===== helpers de API (com fallback para o backend real) ===== */
+const RAW =
+  process.env.REACT_APP_API_BASE ||
+  process.env.REACT_APP_API_BASE_URL ||
+  'https://newstore-backend.onrender.com';
 
-// Se o API_BASE já termina com /api, não adiciona /api de novo
-const withApiPrefix = API_BASE.endsWith('/api') ? '' : '/api';
+const ROOT = String(RAW).replace(/\/+$/, '');
+const API_BASE = /\/api$/i.test(ROOT) ? ROOT : `${ROOT}/api`;
+
+// monta URL garantindo que não duplica /api
+function apiUrl(path) {
+  let p = path.startsWith('/') ? path : `/${path}`;
+  if (API_BASE.endsWith('/api') && p.startsWith('/api/')) p = p.slice(4); // remove "/api" extra
+  return `${API_BASE}${p}`;
+}
 
 async function postJson(path, body) {
-  const res = await fetch(`${API_BASE}${path}`, {
+  const res = await fetch(apiUrl(path), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    credentials: 'include', // suporta cookie HttpOnly se o backend usar
+    credentials: 'include',
     body: JSON.stringify(body),
   });
   const data = await res.json().catch(() => ({}));
@@ -50,7 +60,7 @@ async function postJson(path, body) {
   return data;
 }
 
-// tenta várias rotas comuns de register (prioriza /api/auth/register)
+// tenta rotas comuns de registro (a 1ª deve funcionar)
 async function registerRequest({ name, email, password }) {
   const payload = {
     name: String(name || '').trim() || 'Cliente',
@@ -58,13 +68,7 @@ async function registerRequest({ name, email, password }) {
     password,
   };
 
-  const paths = [
-    `${withApiPrefix}/auth/register`,
-    '/auth/register',
-    '/register',
-    '/users/register',
-  ];
-
+  const paths = ['/auth/register', '/register', '/users/register'];
   let lastErr;
   for (const p of paths) {
     try {
