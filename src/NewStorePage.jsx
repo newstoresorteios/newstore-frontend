@@ -119,21 +119,29 @@ async function reserveNumbers(numbers) {
   return r.json(); // { reservationId, drawId, expiresAt, numbers }
 }
 
-// Checagem simples do purchase_limit no backend (rota única)
+// Checagem do limite no backend (tenta sem header; se 401, re-tenta com Authorization)
 async function checkUserPurchaseLimit({ addCount = 1, drawId } = {}) {
-  const token = getAuthToken();
-  const headers = { 'Content-Type': 'application/json' };
-  if (token) headers.Authorization = `Bearer ${token}`;
-
   const qs = new URLSearchParams();
   qs.set('add', String(addCount));
   if (drawId != null) qs.set('draw_id', String(drawId));
 
-  const res = await fetch(`${API_BASE}/api/purchase-limit/check?${qs}`, {
-    headers,
+  // 1ª tentativa: sem headers (evita preflight)
+  let res = await fetch(`${API_BASE}/api/purchase-limit/check?${qs}`, {
     credentials: 'include',
     cache: 'no-store',
   });
+
+  // 2ª tentativa (se precisar auth por header)
+  if (res.status === 401) {
+    const token = getAuthToken();
+    const headers = token ? { Authorization: `Bearer ${token}` } : undefined;
+    res = await fetch(`${API_BASE}/api/purchase-limit/check?${qs}`, {
+      credentials: 'include',
+      cache: 'no-store',
+      headers,
+    });
+  }
+
   if (res.status === 401) throw new Error('unauthorized');
   if (!res.ok) throw new Error(`limit_check_${res.status}`);
 
@@ -407,12 +415,7 @@ export default function NewStorePage({
         <Toolbar sx={{ position: 'relative', minHeight: 64 }}>
           <IconButton edge="start" color="inherit">{/* espaçamento */}</IconButton>
 
-          <Button
-            component={RouterLink}
-            to="/cadastro"
-            variant="text"
-            sx={{ fontWeight: 700, mt: 1 }}
-          >
+          <Button component={RouterLink} to="/cadastro" variant="text" sx={{ fontWeight: 700, mt: 1 }}>
             Criar conta
           </Button>
 
@@ -466,13 +469,7 @@ export default function NewStorePage({
 
           {/* === CARTELA === */}
           <Paper variant="outlined" sx={{ p: { xs: 1.5, md: 3 }, bgcolor: 'background.paper' }}>
-            <Stack
-              direction={{ xs: 'column', md: 'row' }}
-              spacing={1.5}
-              alignItems="center"
-              justifyContent="space-between"
-              sx={{ mb: 2 }}
-            >
+            <Stack direction={{ xs: 'column', md: 'row' }} spacing={1.5} alignItems="center" justifyContent="space-between" sx={{ mb: 2 }}>
               <Stack direction="row" spacing={1.5} alignItems="center" flexWrap="wrap">
                 <Chip size="small" label="DISPONÍVEL" sx={{ bgcolor: 'primary.main', color: '#0E0E0E', fontWeight: 700 }} />
                 <Chip size="small" label="RESERVADO" sx={{ bgcolor: 'rgba(255,193,7,0.18)', border: '1px solid', borderColor: 'secondary.main', color: 'secondary.main', fontWeight: 700 }} />
@@ -489,31 +486,14 @@ export default function NewStorePage({
                   LIMPAR SELEÇÃO
                 </Button>
                 <Button variant="contained" color="success" disabled={!selecionados.length} onClick={handleAbrirConfirmacao}>
-                    CONTINUAR
+                  CONTINUAR
                 </Button>
               </Stack>
             </Stack>
 
             {/* Grid 10x10 */}
-            <Box
-              sx={{
-                width: { xs: 'calc(100vw - 32px)', sm: 'calc(100vw - 64px)', md: '100%' },
-                maxWidth: 640,
-                aspectRatio: '1 / 1',
-                mx: 'auto',
-              }}
-            >
-              <Box
-                sx={{
-                  display: 'grid',
-                  gridTemplateColumns: 'repeat(10, minmax(0, 1fr))',
-                  gridTemplateRows: 'repeat(10, minmax(0, 1fr))',
-                  gap: { xs: 1, md: 1.2 },
-                  height: '100%',
-                  width: '100%',
-                  boxSizing: 'border-box',
-                }}
-              >
+            <Box sx={{ width: { xs: 'calc(100vw - 32px)', sm: 'calc(100vw - 64px)', md: '100%' }, maxWidth: 640, aspectRatio: '1 / 1', mx: 'auto' }}>
+              <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(10, minmax(0, 1fr))', gridTemplateRows: 'repeat(10, minmax(0, 1fr))', gap: { xs: 1, md: 1.2 }, height: '100%', width: '100%', boxSizing: 'border-box' }}>
                 {Array.from({ length: 100 }).map((_, idx) => (
                   <Box
                     key={idx}
@@ -545,8 +525,7 @@ export default function NewStorePage({
               <Typography sx={{ color: '#ff6b6b', fontWeight: 800, letterSpacing: 0.5 }}>
                 imagem ilustrativa do cartão presente
               </Typography>
-              <Box component="img" src={imgCardExemplo} alt="Cartão presente - exemplo"
-                   sx={{ width: '100%', maxWidth: 800, mx: 'auto', display: 'block', borderRadius: 2 }} />
+              <Box component="img" src={imgCardExemplo} alt="Cartão presente - exemplo" sx={{ width: '100%', maxWidth: 800, mx: 'auto', display: 'block', borderRadius: 2 }} />
               <Typography variant="body2" sx={{ opacity: 0.85 }}>
                 Os cartões são <strong>acumulativos</strong>, permitindo somar até <strong>R$ 4.200</strong> em um único cartão.
               </Typography>
@@ -555,15 +534,10 @@ export default function NewStorePage({
 
           <Paper variant="outlined" sx={{ p: { xs: 2, md: 3 } }}>
             <Stack spacing={1.2}>
-              <Typography variant="h6" fontWeight={800}>
-                Informações do sorteio
-              </Typography>
+              <Typography variant="h6" fontWeight={800}>Informações do sorteio</Typography>
               <Typography variant="body1">• A posição só é considerada <strong>confirmada</strong> após a compensação do pagamento pelo número reservado.</Typography>
               <Typography variant="body1">• O sorteio é realizado <strong>após a venda de todos os cartões</strong>.</Typography>
-              <Typography variant="body1">
-                • O resultado utiliza a <strong>Lotomania</strong> — veja em{' '}
-                <Link href={RESULTADOS_LOTERIAS} target="_blank" rel="noopener">Resultados das loterias</Link>.
-              </Typography>
+              <Typography variant="body1">• O resultado utiliza a <strong>Lotomania</strong> — veja em <Link href={RESULTADOS_LOTERIAS} target="_blank" rel="noopener">Resultados das loterias</Link>.</Typography>
               <Typography variant="body1">• O <strong>ganhador</strong> é aquele que tirar o <strong>último número</strong> sorteado da Lotomania.</Typography>
               <Typography variant="body1">• Custos de entrega por conta do vencedor; envio a partir do RJ.</Typography>
               <Typography variant="body1">• Duração máxima do sorteio: <strong>7 dias</strong>.</Typography>
@@ -573,9 +547,7 @@ export default function NewStorePage({
 
           <Paper variant="outlined" sx={{ p: { xs: 2, md: 3 } }}>
             <Stack spacing={2}>
-              <Typography variant="h5" fontWeight={900}>
-                Regras para utilização dos <Box component="span" sx={{ opacity: 0.85 }}>cartões presente</Box>
-              </Typography>
+              <Typography variant="h5" fontWeight={900}>Regras para utilização dos <Box component="span" sx={{ opacity: 0.85 }}>cartões presente</Box></Typography>
               <Stack component="ul" sx={{ pl: 3, m: 0 }} spacing={1}>
                 <Typography component="li">Uso apenas no site da New Store.</Typography>
                 <Typography component="li">Não é possível comprar outro cartão-presente com cartão-presente.</Typography>
@@ -586,19 +558,14 @@ export default function NewStorePage({
                 <Typography component="li">Considerar o <strong>valor cheio do produto</strong> (tabela abaixo).</Typography>
                 <Typography component="li">Não soma com outros cupons.</Typography>
               </Stack>
-              <Box component="img" src={imgTabelaUtilizacao} alt="Tabela para utilização do cartão presente"
-                   sx={{ width: '100%', maxWidth: 900, mx: 'auto', display: 'block', borderRadius: 2, mt: 1 }} />
-              <Typography align="center" sx={{ mt: 1.5, fontWeight: 700, letterSpacing: 1 }}>
-                CONSIDERAR O VALOR CHEIO DO PRODUTO
-              </Typography>
+              <Box component="img" src={imgTabelaUtilizacao} alt="Tabela para utilização do cartão presente" sx={{ width: '100%', maxWidth: 900, mx: 'auto', display: 'block', borderRadius: 2, mt: 1 }} />
+              <Typography align="center" sx={{ mt: 1.5, fontWeight: 700, letterSpacing: 1 }}>CONSIDERAR O VALOR CHEIO DO PRODUTO</Typography>
             </Stack>
           </Paper>
 
           <Paper variant="outlined" sx={{ p: { xs: 2, md: 3 } }}>
             <Stack spacing={1.5}>
-              <Typography>
-                Dica: ao <strong>juntar cartões</strong>, a validade passa a ser a do cartão <strong>mais recente</strong>.
-              </Typography>
+              <Typography>Dica: ao <strong>juntar cartões</strong>, a validade passa a ser a do cartão <strong>mais recente</strong>.</Typography>
               <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} alignItems="center" sx={{ mt: 1 }}>
                 <Box component="img" src={imgAcumulo1} alt="Exemplo de acúmulo 1" sx={{ width: '100%', maxWidth: 560, borderRadius: 2 }} />
                 <Box component="img" src={imgAcumulo2} alt="Exemplo de acúmulo 2" sx={{ width: '100%', maxWidth: 560, borderRadius: 2 }} />
