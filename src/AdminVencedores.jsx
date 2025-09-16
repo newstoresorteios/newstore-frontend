@@ -20,7 +20,7 @@ const theme = createTheme({
   },
 });
 
-/* ---------- API base ---------- */
+/* ---------- API base util ---------- */
 const RAW_BASE =
   process.env.REACT_APP_API_BASE_URL ||
   process.env.REACT_APP_API_BASE ||
@@ -31,6 +31,21 @@ const apiJoin = (path) => {
   if (API_BASE.endsWith("/api") && p.startsWith("/api/")) p = p.slice(4);
   return `${API_BASE}${p}`;
 };
+const authHeaders = () => {
+  const tk =
+    localStorage.getItem("ns_auth_token") ||
+    sessionStorage.getItem("ns_auth_token") ||
+    localStorage.getItem("token") ||
+    localStorage.getItem("access_token") ||
+    sessionStorage.getItem("token");
+  return tk ? { Authorization: `Bearer ${String(tk).replace(/^Bearer\s+/i,"").replace(/^["']|["']$/g,"")}` } : {};
+};
+async function getJSON(pathOrUrl) {
+  const url = /^https?:\/\//i.test(pathOrUrl) ? pathOrUrl : apiJoin(pathOrUrl);
+  const r = await fetch(url, { headers: { "Content-Type": "application/json", ...authHeaders() }, credentials: "include" });
+  if (!r.ok) throw new Error(`${r.status}`);
+  return r.json();
+}
 
 /* ---------- helpers ---------- */
 const pad3 = (n) => (n != null ? String(n).padStart(3, "0") : "--");
@@ -39,71 +54,6 @@ const fmtDate = (v) => {
   const d = new Date(v);
   return Number.isNaN(d.getTime()) ? "-" : d.toLocaleDateString("pt-BR");
 };
-const daysBetween = (start, end) => {
-  const a = new Date(start), b = new Date(end || Date.now());
-  if (Number.isNaN(a) || Number.isNaN(b)) return "-";
-  return Math.max(0, Math.ceil((b - a) / 86400000));
-};
-
-const authHeaders = () => {
-  const tk =
-    localStorage.getItem("ns_auth_token") ||
-    sessionStorage.getItem("ns_auth_token") ||
-    localStorage.getItem("token") ||
-    localStorage.getItem("access_token") ||
-    sessionStorage.getItem("token");
-  return tk
-    ? { Authorization: `Bearer ${String(tk).replace(/^Bearer\s+/i,"").replace(/^["']|["']$/g,"")}` }
-    : {};
-};
-
-async function getJSON(pathOrUrl) {
-  const url = /^https?:\/\//i.test(pathOrUrl) ? pathOrUrl : apiJoin(pathOrUrl);
-  const r = await fetch(url, {
-    headers: { "Content-Type": "application/json", ...authHeaders() },
-    credentials: "include",
-  });
-  if (!r.ok) throw new Error(`${r.status}`);
-  return r.json();
-}
-
-async function getFirst(paths) {
-  for (const p of paths) {
-    try { return await getJSON(p); } catch { /* tenta próximo */ }
-  }
-  return null;
-}
-
-/** Normaliza payloads em linhas da tabela */
-function buildRows(payload) {
-  const arr = Array.isArray(payload)
-    ? payload
-    : payload?.winners || payload?.history || payload?.draws || payload?.items || [];
-
-  return (arr || [])
-    .map((it) => {
-      const id  = it.id ?? it.draw_id ?? it.numero ?? it.n ?? null;
-      const name =
-        it.winner_name ??
-        it.vencedor_nome ??
-        it.winner?.name ??
-        it.usuario_vencedor ??
-        "-";
-      const realized = it.realized_at ?? it.raffled_at ?? it.data_realizacao ?? null;
-      const closedAt = it.closed_at ?? it.fechado_em ?? null;
-
-      return {
-        id,
-        nome: name || "-",
-        data: fmtDate(realized),
-        status: closedAt ? "RESGATADO" : "NÃO RESGATADO",
-        dias: realized ? daysBetween(new Date(realized), new Date()) : "-",
-        realized_at: realized,
-      };
-    })
-    .filter((r) => r.id != null && r.realized_at) // só com vencedor
-    .sort((a, b) => new Date(b.realized_at) - new Date(a.realized_at));
-}
 
 export default function AdminVencedores() {
   const navigate = useNavigate();
@@ -116,14 +66,20 @@ export default function AdminVencedores() {
     let alive = true;
     (async () => {
       try {
-        // 1) nova rota dedicada
-        const payload =
-          (await getFirst(["/admin/winners"])) ||
-          // 2) fallback: histórico
-          (await getFirst(["/admin/draws/history", "/draws/history"])) ||
-          {};
-        const list = buildRows(payload);
-        if (alive) setRows(list);
+        // Endpoint dedicado
+        const payload = await getJSON("/admin/winners"); // -> { winners: [...] }
+        const list = Array.isArray(payload?.winners) ? payload.winners : [];
+
+        const lines = list.map(w => ({
+          key: `${w.draw_id}-${w.realized_at}`,
+          nome: w.winner_name || "-",
+          numero: w.draw_id,
+          data: fmtDate(w.realized_at),
+          status: w.status || (w.redeemed ? "RESGATADO" : "NÃO RESGATADO"),
+          dias: w.days_since ?? "-",
+        }));
+
+        if (alive) setRows(lines);
       } catch (e) {
         console.error("[AdminVencedores] fetch error:", e);
         if (alive) setRows([]);
@@ -157,13 +113,9 @@ export default function AdminVencedores() {
           <IconButton color="inherit" sx={{ ml: "auto" }} onClick={openMenu}>
             <AccountCircleRoundedIcon />
           </IconButton>
-          <Menu
-            anchorEl={menuEl}
-            open={open}
-            onClose={closeMenu}
-            anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
-            transformOrigin={{ vertical: "top", horizontal: "right" }}
-          >
+          <Menu anchorEl={menuEl} open={open} onClose={closeMenu}
+                anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
+                transformOrigin={{ vertical: "top", horizontal: "right" }}>
             <MenuItem onClick={goPainel}>Painel (Admin)</MenuItem>
             <Divider />
             <MenuItem onClick={doLogout}>Sair</MenuItem>
@@ -197,9 +149,9 @@ export default function AdminVencedores() {
                   <TableRow><TableCell colSpan={5} sx={{ color: "#bbb" }}>Nenhum vencedor encontrado.</TableCell></TableRow>
                 )}
                 {rows.map((w) => (
-                  <TableRow key={w.id} hover>
+                  <TableRow key={w.key} hover>
                     <TableCell>{w.nome}</TableCell>
-                    <TableCell>{pad3(w.id)}</TableCell>
+                    <TableCell>{pad3(w.numero)}</TableCell>
                     <TableCell>{w.data}</TableCell>
                     <TableCell sx={{ color: w.status === "RESGATADO" ? "success.main" : "error.main", fontWeight: 800 }}>
                       {w.status}
