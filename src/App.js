@@ -6,18 +6,19 @@ import { SelectionContext } from "./selectionContext";
 import NewStorePage from "./NewStorePage";
 import AccountPage from "./AccountPage";
 import LoginPage from "./LoginPage";
+import RegisterPage from "./RegisterPage";
 
 import { AuthProvider } from "./authContext";
 import ProtectedRoute from "./ProtectedRoute";
-import AdminRoute from "./AdminRoute";
 import NonAdminRoute from "./NonAdminRoute";
+// ❌ Remova AdminRoute (não vamos usar)
+// import AdminRoute from "./AdminRoute";
+import RequireAdmin from "./RequireAdmin";
 
 import AdminDashboard from "./AdminDashboard";
 import AdminSorteios from "./AdminSorteios";
 import AdminClientes from "./AdminClientes";
 import AdminVencedores from "./AdminVencedores";
-import RegisterPage from './RegisterPage';
-import RequireAdmin from "./RequireAdmin";
 
 export default function App() {
   const [selecionados, setSelecionados] = React.useState([]);
@@ -37,11 +38,11 @@ export default function App() {
                 </NonAdminRoute>
               }
             />
-            
+
             <Route path="/cadastro" element={<RegisterPage />} />
             <Route path="/login" element={<LoginPage />} />
 
-            {/* CONTA só para usuário autenticado, e nunca admin */}
+            {/* CONTA: autenticado e não-admin */}
             <Route
               path="/conta"
               element={
@@ -53,7 +54,7 @@ export default function App() {
               }
             />
 
-            {/* ROTAS ADMIN (apenas admin) */}
+            {/* ADMIN: use SEMPRE RequireAdmin (espera loading terminar) */}
             <Route
               path="/admin"
               element={
@@ -65,25 +66,25 @@ export default function App() {
             <Route
               path="/admin/sorteios"
               element={
-                <AdminRoute>
+                <RequireAdmin>
                   <AdminSorteios />
-                </AdminRoute>
+                </RequireAdmin>
               }
             />
             <Route
               path="/admin/clientes"
               element={
-                <AdminRoute>
+                <RequireAdmin>
                   <AdminClientes />
-                </AdminRoute>
+                </RequireAdmin>
               }
             />
             <Route
               path="/admin/vencedores"
               element={
-                <AdminRoute>
+                <RequireAdmin>
                   <AdminVencedores />
-                </AdminRoute>
+                </RequireAdmin>
               }
             />
           </Routes>
