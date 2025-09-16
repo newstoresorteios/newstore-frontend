@@ -11,28 +11,15 @@ import VisibilityOff from "@mui/icons-material/VisibilityOff";
 import ArrowBackIosNewRoundedIcon from "@mui/icons-material/ArrowBackIosNewRounded";
 import logoNewStore from "./Logo-branca-sem-fundo-768x132.png";
 import { useAuth } from "./authContext";
+import { apiJoin, getJSON, authHeaders } from "./lib/api";
 
 const theme = createTheme({
   palette: { mode: "dark", primary: { main: "#67C23A" }, background: { default: "#0E0E0E", paper: "#121212" } },
   shape: { borderRadius: 12 },
-  typography: { fontFamily: ['Inter','system-ui','Segoe UI','Roboto','Arial'].join(',') }
+  typography: { fontFamily: ["Inter", "system-ui", "Segoe UI", "Roboto", "Arial"].join(",") },
 });
 
 const ADMIN_EMAIL = "admin@newstore.com.br";
-// Base URL robusta (aceita vir com/sem /api)
-const RAW_API = process.env.REACT_APP_API_BASE_URL || "/api";
-const API_BASE = (
-  RAW_API.endsWith("/api") ? RAW_API : `${RAW_API.replace(/\/+$/, "")}/api`
-).replace(/\/+$/, "");
-
-// Token -> Authorization (fallback)
-const authHeaders = () => {
-  const tk =
-    localStorage.getItem("token") ||
-    localStorage.getItem("access_token") ||
-    sessionStorage.getItem("token");
-  return tk ? { Authorization: `Bearer ${tk}` } : {};
-};
 
 // Gera senha aleatória (6 chars: letras e números)
 function genPass(len = 6) {
@@ -85,34 +72,21 @@ export default function LoginPage() {
     setForgotLoading(true);
     try {
       const newPassword = genPass(6);
-      // Tentamos alguns caminhos comuns — para imediatamente no primeiro 2xx
-      const candidates = [
-        `${API_BASE.replace(/\/api$/, "")}/auth/reset-password`,
-        `${API_BASE}/auth/reset-password`,
-        `${API_BASE.replace(/\/api$/, "")}/auth/forgot`,
-        `${API_BASE}/auth/forgot`,
-      ];
 
-      let ok = false;
-      for (const url of candidates) {
-        try {
-          const r = await fetch(url, {
-            method: "POST",
-            headers: { "Content-Type": "application/json", ...authHeaders() },
-            credentials: "include",
-            body: JSON.stringify({
-              email: e,
-              newPassword,
-              from: "administracao@newstoresorteios.com.br",
-              subject: "Reset de senha - New Store Sorteios",
-              message: `Sua senha foi resetada.\n\nNova Senha: ${newPassword}\n\nSe você não solicitou, ignore este e-mail.`
-            }),
-          });
-          if (r.ok) { ok = true; break; }
-        } catch { /* tenta o próximo caminho */ }
-      }
+      const r = await fetch(apiJoin("/auth/reset-password"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeaders() },
+        credentials: "omit",
+        body: JSON.stringify({
+          email: e,
+          newPassword,
+          from: "administracao@newstoresorteios.com.br",
+          subject: "Reset de senha - New Store Sorteios",
+          message: `Sua senha foi resetada.\n\nNova Senha: ${newPassword}\n\nSe você não solicitou, ignore este e-mail.`,
+        }),
+      });
 
-      if (!ok) {
+      if (!r.ok) {
         setForgotError("Não foi possível solicitar o reset agora. Tente novamente em instantes.");
         return;
       }
@@ -136,26 +110,23 @@ export default function LoginPage() {
     try {
       setLoading(true);
 
-      // faz login (o hook grava cookie e storage)
+      // faz login (o hook grava ns_auth_token e carrega o user no contexto)
       await login({ email, password, remember });
 
-      // tenta descobrir quem é o usuário logado
+      // busca o usuário logado (agora com Authorization correto via lib/api)
       let user = null;
       try {
-        const r = await fetch(`${API_BASE}/me`, {
-          method: "GET",
-          headers: { "Content-Type": "application/json", ...authHeaders() },
-          credentials: "include",
-        });
-        if (r.ok) {
-          const body = await r.json();
-          user = body?.user || body || null;
-          if (user) localStorage.setItem("me", JSON.stringify(user));
-        }
-      } catch {}
+        const body = await getJSON("/me");
+        user = body?.user || body || null; // /me retorna o objeto user diretamente
+        if (user) localStorage.setItem("me", JSON.stringify(user));
+      } catch {
+        // se falhar, seguimos só com o e-mail informado
+      }
 
       const isAdmin =
-        !!user?.is_admin || (user?.email || email).trim().toLowerCase() === ADMIN_EMAIL;
+        !!user?.is_admin ||
+        (user?.role === "admin") ||
+        ((user?.email || email).trim().toLowerCase() === ADMIN_EMAIL);
 
       navigate(isAdmin ? "/admin" : from, { replace: true });
     } catch (err) {
@@ -213,11 +184,11 @@ export default function LoginPage() {
               InputProps={{
                 endAdornment: (
                   <InputAdornment position="end">
-                    <IconButton onClick={() => setShowPass(s => !s)} edge="end" aria-label="mostrar/ocultar senha">
+                    <IconButton onClick={() => setShowPass((s) => !s)} edge="end" aria-label="mostrar/ocultar senha">
                       {showPass ? <VisibilityOff /> : <Visibility />}
                     </IconButton>
                   </InputAdornment>
-                )
+                ),
               }}
             />
 
@@ -277,12 +248,7 @@ export default function LoginPage() {
           {!forgotSent ? (
             <>
               <Button onClick={closeForgot} disabled={forgotLoading}>Cancelar</Button>
-              <Button
-                onClick={handleResetPassword}
-                variant="contained"
-                color="primary"
-                disabled={forgotLoading}
-              >
+              <Button onClick={handleResetPassword} variant="contained" color="primary" disabled={forgotLoading}>
                 {forgotLoading ? "Enviando..." : "Resetar senha"}
               </Button>
             </>

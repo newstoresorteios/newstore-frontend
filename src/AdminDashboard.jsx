@@ -179,7 +179,7 @@ export default function AdminDashboard() {
     try {
       setSaving(true);
       const n = Math.max(0, Math.floor(Number(price || 0)));
-      await postJSON("/admin/config/ticket-price", { price_cents: n }, "PATCH");
+      await postJSON("/admin/dashboard/ticket-price", { price_cents: n });
       await loadSummary();
     } catch (e) {
       console.error("[AdminDashboard] PATCH ticket-price failed:", e);

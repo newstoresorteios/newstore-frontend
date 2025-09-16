@@ -1,27 +1,28 @@
-// src/lib/api.js
-// Util de API para o frontend (React) — robusto contra /api duplicado
+// Util de API para o frontend (React)
 
-const RAW_BASE =
-  process.env.REACT_APP_API_BASE_URL ||
+// 1) Leia UMA variável de base. Não use BASE_URL junto.
+const RAW =
   process.env.REACT_APP_API_BASE ||
+  process.env.REACT_APP_API_BASE_URL || // se alguém esquecer de tirar, ainda respeitamos
   "";
 
-// remove barras finais
-const ROOT = String(RAW_BASE || "").replace(/\/+$/, "");
+// 2) Normaliza a raiz (sem barra final)
+const ROOT = String(RAW || "").replace(/\/+$/, "");
 
-// Base final: se informou e já termina com /api, mantém; se informou e NÃO termina, acrescenta /api;
-// se não informou nada, usa '/api' (proxy/local)
-const API_BASE = (() => {
-  if (!ROOT) return "/api";
-  return /\/api$/i.test(ROOT) ? ROOT : `${ROOT}/api`;
-})();
+// 3) Garante que termina com /api exatamente uma vez
+let API_BASE;
+if (!ROOT) {
+  API_BASE = "/api";
+} else if (/\/api$/i.test(ROOT)) {
+  API_BASE = ROOT;           // já tem /api
+} else {
+  API_BASE = ROOT + "/api";  // acrescenta /api
+}
 
-/** Junta caminho com a base, removendo /api duplicado quando necessário */
+// 4) Junta caminho, removendo /api duplicado no início do path
 export const apiJoin = (path) => {
   let p = path.startsWith("/") ? path : `/${path}`;
-  // se a base termina com /api e o path começa com /api/, remove o /api inicial do path
-  if (API_BASE.endsWith("/api") && p.startsWith("/api/")) p = p.slice(4);
-  if (API_BASE.endsWith("/api") && p === "/api") p = ""; // evita .../api/api
+  if (API_BASE.endsWith("/api") && p.startsWith("/api/")) p = p.slice(4); // tira "/api" extra
   return `${API_BASE}${p}`;
 };
 
@@ -56,21 +57,16 @@ async function request(pathOrUrl, opts = {}) {
     headers: {
       "Content-Type": "application/json",
       ...(opts.headers || {}),
-      ...authHeaders(),
+      ...authHeaders(), // sempre tenta mandar o token se existir
     },
     credentials: "omit", // usamos Authorization, não cookie
-    body:
-      opts.body == null
-        ? undefined
-        : typeof opts.body === "string"
-        ? opts.body
-        : JSON.stringify(opts.body),
+    body: opts.body ? (typeof opts.body === "string" ? opts.body : JSON.stringify(opts.body)) : undefined,
   });
   if (!r.ok) {
     let err = `${r.status}`;
     try {
       const j = await r.json();
-      if (j?.error) err = `${j.error}:${r.status}`;
+      err = j?.error ? `${j.error}:${r.status}` : err;
     } catch {}
     throw new Error(err);
   }
