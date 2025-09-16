@@ -2,25 +2,9 @@
 import * as React from "react";
 import { useNavigate, Link as RouterLink } from "react-router-dom";
 import {
-  AppBar,
-  Box,
-  Container,
-  CssBaseline,
-  IconButton,
-  Menu,
-  MenuItem,
-  Divider,
-  Paper,
-  Table,
-  TableBody,
-  TableCell,
-  TableContainer,
-  TableHead,
-  TableRow,
-  ThemeProvider,
-  Toolbar,
-  Typography,
-  createTheme,
+  AppBar, Box, Container, CssBaseline, IconButton, Menu, MenuItem, Divider,
+  Paper, Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
+  ThemeProvider, Toolbar, Typography, createTheme
 } from "@mui/material";
 import ArrowBackIosNewRoundedIcon from "@mui/icons-material/ArrowBackIosNewRounded";
 import AccountCircleRoundedIcon from "@mui/icons-material/AccountCircleRounded";
@@ -36,25 +20,121 @@ const theme = createTheme({
   },
 });
 
-const winners = [
-  { nome: "Ana",      numero: 94, data: "19/02/2024", status: "NÃO RESGATADO", dias: 20 },
-  { nome: "Mateus",   numero: 96, data: "05/03/2024", status: "RESGATADO",     dias: 5  },
-  { nome: "Amanda",   numero: 98, data: "10/02/2024", status: "NÃO RESGATADO", dias: 28 },
-  { nome: "Julia",    numero: 93, data: "21/12/2023", status: "RESGATADO",     dias: 80 },
-  { nome: "Diego",    numero: 96, data: "05/02/2024", status: "RESGATADO",     dias: 34 },
-  { nome: "Maria",    numero: 95, data: "30/12/2023", status: "NÃO RESGATADO", dias: 70 },
-  { nome: "Gustavo",  numero: 97, data: "03/02/2024", status: "RESGATADO",     dias: 35 },
-  { nome: "Caio",     numero: 90, data: "18/12/2023", status: "RESGATADO",     dias: 35 },
-  { nome: "Caio",     numero: 89, data: "17/12/2023", status: "NÃO RESGATADO", dias: 83 },
-  { nome: "Fernanda", numero: 92, data: "31/01/2024", status: "RESGATADO",     dias: 38 },
-];
+/* ---------- API base ---------- */
+const RAW_BASE =
+  process.env.REACT_APP_API_BASE_URL ||
+  process.env.REACT_APP_API_BASE ||
+  "/api";
+const API_BASE = String(RAW_BASE).replace(/\/+$/, "");
+const apiJoin = (path) => {
+  let p = path.startsWith("/") ? path : `/${path}`;
+  if (API_BASE.endsWith("/api") && p.startsWith("/api/")) p = p.slice(4);
+  return `${API_BASE}${p}`;
+};
 
-const pad3 = (n) => n.toString().padStart(3, "0");
+/* ---------- helpers ---------- */
+const pad3 = (n) => (n != null ? String(n).padStart(3, "0") : "--");
+const fmtDate = (v) => {
+  if (!v) return "-";
+  const d = new Date(v);
+  return Number.isNaN(d.getTime()) ? "-" : d.toLocaleDateString("pt-BR");
+};
+const daysBetween = (start, end) => {
+  const a = new Date(start), b = new Date(end || Date.now());
+  if (Number.isNaN(a) || Number.isNaN(b)) return "-";
+  return Math.max(0, Math.ceil((b - a) / 86400000));
+};
+
+const authHeaders = () => {
+  const tk =
+    localStorage.getItem("ns_auth_token") ||
+    sessionStorage.getItem("ns_auth_token") ||
+    localStorage.getItem("token") ||
+    localStorage.getItem("access_token") ||
+    sessionStorage.getItem("token");
+  return tk
+    ? { Authorization: `Bearer ${String(tk).replace(/^Bearer\s+/i,"").replace(/^["']|["']$/g,"")}` }
+    : {};
+};
+
+async function getJSON(pathOrUrl) {
+  const url = /^https?:\/\//i.test(pathOrUrl) ? pathOrUrl : apiJoin(pathOrUrl);
+  const r = await fetch(url, {
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    credentials: "include",
+  });
+  if (!r.ok) throw new Error(`${r.status}`);
+  return r.json();
+}
+
+async function getFirst(paths) {
+  for (const p of paths) {
+    try { return await getJSON(p); } catch { /* tenta próximo */ }
+  }
+  return null;
+}
+
+/** Normaliza payloads em linhas da tabela */
+function buildRows(payload) {
+  const arr = Array.isArray(payload)
+    ? payload
+    : payload?.winners || payload?.history || payload?.draws || payload?.items || [];
+
+  return (arr || [])
+    .map((it) => {
+      const id  = it.id ?? it.draw_id ?? it.numero ?? it.n ?? null;
+      const name =
+        it.winner_name ??
+        it.vencedor_nome ??
+        it.winner?.name ??
+        it.usuario_vencedor ??
+        "-";
+      const realized = it.realized_at ?? it.raffled_at ?? it.data_realizacao ?? null;
+      const closedAt = it.closed_at ?? it.fechado_em ?? null;
+
+      return {
+        id,
+        nome: name || "-",
+        data: fmtDate(realized),
+        status: closedAt ? "RESGATADO" : "NÃO RESGATADO",
+        dias: realized ? daysBetween(new Date(realized), new Date()) : "-",
+        realized_at: realized,
+      };
+    })
+    .filter((r) => r.id != null && r.realized_at) // só com vencedor
+    .sort((a, b) => new Date(b.realized_at) - new Date(a.realized_at));
+}
 
 export default function AdminVencedores() {
   const navigate = useNavigate();
   const { logout } = useAuth();
 
+  const [rows, setRows] = React.useState([]);
+  const [loading, setLoading] = React.useState(true);
+
+  React.useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        // 1) nova rota dedicada
+        const payload =
+          (await getFirst(["/admin/winners"])) ||
+          // 2) fallback: histórico
+          (await getFirst(["/admin/draws/history", "/draws/history"])) ||
+          {};
+        const list = buildRows(payload);
+        if (alive) setRows(list);
+      } catch (e) {
+        console.error("[AdminVencedores] fetch error:", e);
+        if (alive) setRows([]);
+      } finally {
+        if (alive) setLoading(false);
+      }
+    })();
+    return () => { alive = false; };
+  }, []);
+
+  // menu
   const [menuEl, setMenuEl] = React.useState(null);
   const open = Boolean(menuEl);
   const openMenu = (e) => setMenuEl(e.currentTarget);
@@ -70,16 +150,8 @@ export default function AdminVencedores() {
           <IconButton edge="start" color="inherit" onClick={() => navigate("/admin")} aria-label="Voltar">
             <ArrowBackIosNewRoundedIcon />
           </IconButton>
-          <Box
-            component={RouterLink}
-            to="/admin"
-            sx={{
-              position: "absolute",
-              left: "50%",
-              top: "50%",
-              transform: "translate(-50%, -50%)",
-            }}
-          >
+          <Box component={RouterLink} to="/admin"
+               sx={{ position: "absolute", left: "50%", top: "50%", transform: "translate(-50%, -50%)" }}>
             <Box component="img" src={logoNewStore} alt="NEW STORE" sx={{ height: 40 }} />
           </Box>
           <IconButton color="inherit" sx={{ ml: "auto" }} onClick={openMenu}>
@@ -100,18 +172,9 @@ export default function AdminVencedores() {
       </AppBar>
 
       <Container maxWidth="lg" sx={{ py: { xs: 3, md: 6 } }}>
-        <Typography
-          align="center"
-          sx={{
-            fontWeight: 900,
-            lineHeight: 1.1,
-            fontSize: { xs: 26, md: 48 },
-            mb: 3,
-          }}
-        >
+        <Typography align="center" sx={{ fontWeight: 900, lineHeight: 1.1, fontSize: { xs: 26, md: 48 }, mb: 3 }}>
           Lista de Vencedores
-          <br />
-          dos Sorteios
+          <br /> dos Sorteios
         </Typography>
 
         <Paper variant="outlined">
@@ -127,17 +190,18 @@ export default function AdminVencedores() {
                 </TableRow>
               </TableHead>
               <TableBody>
-                {winners.map((w, i) => (
-                  <TableRow key={`${w.nome}-${i}`} hover>
+                {loading && (
+                  <TableRow><TableCell colSpan={5}>Carregando…</TableCell></TableRow>
+                )}
+                {!loading && rows.length === 0 && (
+                  <TableRow><TableCell colSpan={5} sx={{ color: "#bbb" }}>Nenhum vencedor encontrado.</TableCell></TableRow>
+                )}
+                {rows.map((w) => (
+                  <TableRow key={w.id} hover>
                     <TableCell>{w.nome}</TableCell>
-                    <TableCell>{pad3(w.numero)}</TableCell>
+                    <TableCell>{pad3(w.id)}</TableCell>
                     <TableCell>{w.data}</TableCell>
-                    <TableCell
-                      sx={{
-                        color: w.status === "RESGATADO" ? "success.main" : "error.main",
-                        fontWeight: 800,
-                      }}
-                    >
+                    <TableCell sx={{ color: w.status === "RESGATADO" ? "success.main" : "error.main", fontWeight: 800 }}>
                       {w.status}
                     </TableCell>
                     <TableCell>{w.dias}</TableCell>
