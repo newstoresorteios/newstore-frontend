@@ -21,7 +21,15 @@ const RAW_BASE =
   process.env.REACT_APP_API_BASE ||
   "/api";
 
-const API_BASE = String(RAW_BASE).replace(/\/+$/, "");
+function normalizeApiBase(b) {
+  if (!b) return "/api";
+  let base = String(b).replace(/\/+$/, "");
+  // se for http(s) e não terminar com /api, acrescenta /api
+  if (/^https?:\/\//i.test(base) && !/\/api$/i.test(base)) base += "/api";
+  return base;
+}
+const API_BASE = normalizeApiBase(RAW_BASE);
+
 const apiJoin = (path) => {
   let p = path;
   if (!p.startsWith("/")) p = `/${p}`;
@@ -112,7 +120,7 @@ function buildRows(payload) {
         vencedor: winner || "-",
       };
     })
-    .filter((r) => r.n != null) // garante linhas válidas
+    .filter((r) => r.n != null)
     .sort((a, b) => Number(b.n || 0) - Number(a.n || 0));
 }
 
@@ -134,7 +142,7 @@ export default function AdminSorteios() {
     let alive = true;
     (async () => {
       try {
-        // tenta os fechados, depois lista geral
+        // tenta os fechados, depois history, depois lista geral
         const payload = await getFirst([
           "/draws?status=closed",
           "/admin/draws?status=closed",
