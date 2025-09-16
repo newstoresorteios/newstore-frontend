@@ -1,33 +1,42 @@
 // src/lib/api.js
+// Util de API para o frontend (React)
+
 const RAW_BASE =
   process.env.REACT_APP_API_BASE_URL ||
   process.env.REACT_APP_API_BASE ||
-  "/api";
+  ""; // se vazio, caímos no fallback '/api' logo abaixo
 
-// Garante que, se for uma URL absoluta, termine com /api
-function normalizeBase(b) {
-  let s = String(b || "/api").replace(/\/+$/, "");
-  if (/^https?:\/\//i.test(s) && !/\/api$/i.test(s)) s += "/api";
-  return s;
-}
+const ROOT = String(RAW_BASE).replace(/\/+$/, ""); // sem barra final
+// Se não informou nada -> usa '/api' local (proxy)
+// Se informou e NÃO termina com /api -> acrescenta /api
+// Se informou e já termina com /api -> mantém
+const API_BASE =
+  ROOT === ""
+    ? "/api"
+    : /\/api$/i.test(ROOT)
+    ? ROOT
+    : `${ROOT}/api`;
 
-const API_BASE = normalizeBase(RAW_BASE);
-
-// junta a base com o path
-export const apiJoin = (p) => {
-  const path = p.startsWith("/") ? p : `/${p}`;
-  // evita /api/api/...
-  if (API_BASE.endsWith("/api") && path.startsWith("/api/")) {
-    return `${API_BASE}${path.slice(4)}`;
-  }
-  return `${API_BASE}${path}`;
+export const apiJoin = (path) => {
+  const p = path.startsWith("/") ? path : `/${path}`;
+  return `${API_BASE}${p}`;
 };
 
-// token util
+/* ---------- token helpers ---------- */
+const TOKEN_KEY = "ns_auth_token";
+const COMPAT_KEYS = ["token", "access_token"];
+
 export const getStoredToken = () =>
-  (localStorage.getItem("ns_auth_token") ||
-    sessionStorage.getItem("ns_auth_token") ||
-    "")
+  (
+    localStorage.getItem(TOKEN_KEY) ||
+    sessionStorage.getItem(TOKEN_KEY) ||
+    localStorage.getItem(COMPAT_KEYS[0]) ||
+    localStorage.getItem(COMPAT_KEYS[1]) ||
+    sessionStorage.getItem(COMPAT_KEYS[0]) ||
+    sessionStorage.getItem(COMPAT_KEYS[1]) ||
+    ""
+  )
+    .toString()
     .replace(/^Bearer\s+/i, "")
     .replace(/^["']|["']$/g, "");
 
@@ -36,28 +45,32 @@ export const authHeaders = () => {
   return t ? { Authorization: `Bearer ${t}` } : {};
 };
 
-export async function getJSON(pathOrUrl, opts = {}) {
+/* ---------- HTTP helpers ---------- */
+async function request(pathOrUrl, opts = {}) {
   const url = /^https?:\/\//i.test(pathOrUrl) ? pathOrUrl : apiJoin(pathOrUrl);
   const r = await fetch(url, {
-    ...opts,
+    method: opts.method || "GET",
     headers: {
       "Content-Type": "application/json",
       ...(opts.headers || {}),
       ...authHeaders(),
     },
-    credentials: "omit",
+    credentials: "omit", // usamos Authorization, não cookie
+    body: opts.body ? (typeof opts.body === "string" ? opts.body : JSON.stringify(opts.body)) : undefined,
   });
   if (!r.ok) {
-    let err = "request_failed";
+    let err = `${r.status}`;
     try {
       const j = await r.json();
-      err = j?.error || err;
+      err = j?.error ? `${j.error}:${r.status}` : err;
     } catch {}
-    throw new Error(err + ":" + r.status);
+    throw new Error(err);
   }
-  return r.json();
+  const ct = r.headers.get("content-type") || "";
+  return ct.includes("application/json") ? r.json() : r.text();
 }
 
-export async function postJSON(path, body) {
-  return getJSON(path, { method: "POST", body: JSON.stringify(body || {}) });
-}
+export const getJSON = (path, opts = {}) => request(path, { ...opts, method: "GET" });
+export const postJSON = (path, body, opts = {}) => request(path, { ...opts, method: "POST", body });
+export const putJSON = (path, body, opts = {}) => request(path, { ...opts, method: "PUT", body });
+export const delJSON = (path, opts = {}) => request(path, { ...opts, method: "DELETE" });

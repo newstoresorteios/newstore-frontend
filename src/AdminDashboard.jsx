@@ -2,9 +2,23 @@
 import * as React from "react";
 import { useNavigate, Link as RouterLink } from "react-router-dom";
 import {
-  AppBar, Box, Button, Container, CssBaseline, Divider,
-  IconButton, Menu, MenuItem, Paper, Stack,
-  TextField, ThemeProvider, Toolbar, Typography, createTheme
+  AppBar,
+  Box,
+  Button,
+  ButtonBase,
+  Container,
+  CssBaseline,
+  Divider,
+  IconButton,
+  Menu,
+  MenuItem,
+  Paper,
+  Stack,
+  TextField,
+  ThemeProvider,
+  Toolbar,
+  Typography,
+  createTheme,
 } from "@mui/material";
 import ArrowBackIosNewRoundedIcon from "@mui/icons-material/ArrowBackIosNewRounded";
 import AccountCircleRoundedIcon from "@mui/icons-material/AccountCircleRounded";
@@ -19,7 +33,7 @@ const theme = createTheme({
     warning: { main: "#B58900" },
   },
   shape: { borderRadius: 16 },
-  typography: { fontFamily: ["Inter","system-ui","Segoe UI","Roboto","Arial"].join(",") },
+  typography: { fontFamily: ["Inter", "system-ui", "Segoe UI", "Roboto", "Arial"].join(",") },
 });
 
 /* ---- helpers de API ---- */
@@ -63,6 +77,46 @@ async function postJSON(path, body, method = "POST") {
   return r.json().catch(() => ({}));
 }
 
+/* ---- card grande clicável (as 3 listas) ---- */
+function BigCard({ children, color, outlined = false, onClick }) {
+  return (
+    <ButtonBase onClick={onClick} sx={{ width: "100%" }}>
+      <Paper
+        elevation={0}
+        sx={{
+          width: "100%",
+          p: { xs: 3, md: 4 },
+          borderRadius: 4,
+          bgcolor: outlined ? "transparent" : color,
+          border: outlined ? "1px solid rgba(255,255,255,0.16)" : "none",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          minHeight: { xs: 120, md: 140 },
+          transition: "transform 120ms ease, filter 120ms ease",
+          "&:hover": { transform: "translateY(-2px)", filter: "brightness(1.02)" },
+          textAlign: "center",
+        }}
+      >
+        <Typography
+          sx={{
+            fontWeight: 900,
+            letterSpacing: 2,
+            fontSize: { xs: 18, md: 28 },
+            lineHeight: 1.25,
+            color: outlined ? "rgba(255,255,255,0.85)" : "#fff",
+            textTransform: "uppercase",
+            fontFamily:
+              'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
+          }}
+        >
+          {children}
+        </Typography>
+      </Paper>
+    </ButtonBase>
+  );
+}
+
 export default function AdminDashboard() {
   const navigate = useNavigate();
   const { logout } = useAuth();
@@ -71,7 +125,7 @@ export default function AdminDashboard() {
   const [drawId, setDrawId] = React.useState(null);
   const [sold, setSold] = React.useState(0);
   const [remaining, setRemaining] = React.useState(0);
-  const [price, setPrice] = React.useState("");       // em centavos (string para input)
+  const [price, setPrice] = React.useState(""); // em centavos
   const [loading, setLoading] = React.useState(true);
   const [saving, setSaving] = React.useState(false);
   const [creating, setCreating] = React.useState(false);
@@ -84,9 +138,7 @@ export default function AdminDashboard() {
       setSold(r.sold ?? 0);
       setRemaining(r.remaining ?? 0);
       setPrice(
-        Number.isFinite(Number(r.price_cents))
-          ? String(Number(r.price_cents))
-          : ""
+        Number.isFinite(Number(r.price_cents)) ? String(Number(r.price_cents)) : ""
       );
       console.log("[AdminDashboard] GET /summary", r);
     } catch (e) {
@@ -101,7 +153,6 @@ export default function AdminDashboard() {
 
   React.useEffect(() => { loadSummary(); }, [loadSummary]);
 
-  // ações
   const onSavePrice = async () => {
     try {
       setSaving(true);
@@ -153,9 +204,13 @@ export default function AdminDashboard() {
           <IconButton color="inherit" sx={{ ml: "auto" }} onClick={openMenu}>
             <AccountCircleRoundedIcon />
           </IconButton>
-          <Menu anchorEl={menuEl} open={open} onClose={closeMenu}
-                anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
-                transformOrigin={{ vertical: "top", horizontal: "right" }}>
+          <Menu
+            anchorEl={menuEl}
+            open={open}
+            onClose={closeMenu}
+            anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
+            transformOrigin={{ vertical: "top", horizontal: "right" }}
+          >
             <MenuItem onClick={goPainel}>Painel (Admin)</MenuItem>
             <Divider />
             <MenuItem onClick={doLogout}>Sair</MenuItem>
@@ -170,6 +225,7 @@ export default function AdminDashboard() {
             <br /> dos Sorteios
           </Typography>
 
+          {/* Painel (resumo + preço) */}
           <Paper variant="outlined" sx={{ p: { xs: 3, md: 4 }, borderRadius: 4, width: "100%" }}>
             <Stack direction="row" spacing={4} alignItems="center" flexWrap="wrap">
               <Stack>
@@ -181,12 +237,16 @@ export default function AdminDashboard() {
 
               <Stack>
                 <Typography sx={{ opacity: 0.7, fontWeight: 700 }}>Nºs Vendidos</Typography>
-                <Typography variant="h4" sx={{ fontWeight: 900 }}>{loading ? "…" : sold}</Typography>
+                <Typography variant="h4" sx={{ fontWeight: 900 }}>
+                  {loading ? "…" : sold}
+                </Typography>
               </Stack>
 
               <Stack>
                 <Typography sx={{ opacity: 0.7, fontWeight: 700 }}>Nºs Restantes</Typography>
-                <Typography variant="h4" sx={{ fontWeight: 900 }}>{loading ? "…" : remaining}</Typography>
+                <Typography variant="h4" sx={{ fontWeight: 900 }}>
+                  {loading ? "…" : remaining}
+                </Typography>
               </Stack>
 
               <Box sx={{ flex: 1 }} />
@@ -223,6 +283,24 @@ export default function AdminDashboard() {
               </Button>
             </Stack>
           </Paper>
+
+          {/* As 3 listas (cards clicáveis) */}
+          <Stack spacing={3} sx={{ width: "100%" }}>
+            <BigCard outlined onClick={() => navigate("/admin/sorteios")}>
+              LISTA DE SORTEIOS
+              <br /> REALIZADOS
+            </BigCard>
+
+            <BigCard color="primary.main" onClick={() => navigate("/admin/clientes")}>
+              LISTA DE CLIENTES
+              <br /> COM SALDO ATIVO
+            </BigCard>
+
+            <BigCard color="warning.main" onClick={() => navigate("/admin/vencedores")}>
+              LISTA DE VENCEDORES
+              <br /> DOS SORTEIOS
+            </BigCard>
+          </Stack>
         </Stack>
       </Container>
     </ThemeProvider>
