@@ -11,9 +11,7 @@ import RegisterPage from "./RegisterPage";
 import { AuthProvider } from "./authContext";
 import ProtectedRoute from "./ProtectedRoute";
 import NonAdminRoute from "./NonAdminRoute";
-// ❌ Remova AdminRoute (não vamos usar)
-// import AdminRoute from "./AdminRoute";
-import RequireAdmin from "./RequireAdmin";
+import AdminRoute from "./AdminRoute";
 
 import AdminDashboard from "./AdminDashboard";
 import AdminSorteios from "./AdminSorteios";
@@ -54,37 +52,37 @@ export default function App() {
               }
             />
 
-            {/* ADMIN: use SEMPRE RequireAdmin (espera loading terminar) */}
+            {/* ADMIN (somente admin) */}
             <Route
               path="/admin"
               element={
-                <RequireAdmin>
+                <AdminRoute>
                   <AdminDashboard />
-                </RequireAdmin>
+                </AdminRoute>
               }
             />
             <Route
               path="/admin/sorteios"
               element={
-                <RequireAdmin>
+                <AdminRoute>
                   <AdminSorteios />
-                </RequireAdmin>
+                </AdminRoute>
               }
             />
             <Route
               path="/admin/clientes"
               element={
-                <RequireAdmin>
+                <AdminRoute>
                   <AdminClientes />
-                </RequireAdmin>
+                </AdminRoute>
               }
             />
             <Route
               path="/admin/vencedores"
               element={
-                <RequireAdmin>
+                <AdminRoute>
                   <AdminVencedores />
-                </RequireAdmin>
+                </AdminRoute>
               }
             />
           </Routes>
