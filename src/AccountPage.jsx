@@ -32,8 +32,6 @@ const ADMIN_EMAIL = "admin@newstore.com.br";
 // TTL de expiração de reserva (minutos). Ajuste por env: REACT_APP_RESERVATION_TTL_MINUTES
 const TTL_MINUTES = Number(process.env.REACT_APP_RESERVATION_TTL_MINUTES || 15);
 
-const isLoggedIn = !!(user?.email || user?.id);
-const logoTo = isLoggedIn ? "/conta" : "/";
 
 // chips
 const PayChip = ({ status }) => {
@@ -112,6 +110,9 @@ export default function AccountPage() {
   const [cupom, setCupom] = React.useState("CUPOMAQUI");
   const [validade] = React.useState("28/10/25");
   const [syncing, setSyncing] = React.useState(false);
+
+  const isLoggedIn = !!(user?.email || user?.id);
+  const logoTo = isLoggedIn ? "/conta" : "/";
 
   const doLogout = () => { setMenuEl(null); logout(); navigate("/"); };
   const storedMe = React.useMemo(() => {

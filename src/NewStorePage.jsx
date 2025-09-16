@@ -133,6 +133,8 @@ export default function NewStorePage({
   const { user, token, logout } = useAuth();
   const isAuthenticated = !!(user?.email || user?.id || token);
 
+   const logoTo = isAuthenticated ? "/conta" : "/";
+
   // Estados vindos do backend para pintar reservados/indisponíveis
   const [srvReservados, setSrvReservados] = React.useState([]);
   const [srvIndisponiveis, setSrvIndisponiveis] = React.useState([]);
@@ -310,8 +312,7 @@ export default function NewStorePage({
             Criar conta
           </Button>
 
-         const logoTo = isAuthenticated ? "/conta" : "/";
-
+         
           <Box
             component={RouterLink}
             to={logoTo}
