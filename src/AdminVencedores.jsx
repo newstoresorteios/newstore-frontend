@@ -16,7 +16,7 @@ const theme = createTheme({
     mode: "dark",
     background: { default: "#0E0E0E", paper: "#121212" },
     success: { main: "#67C23A" },
-    error: { main: "#D32F2F" },
+    error:   { main: "#D32F2F" },
   },
 });
 
@@ -43,6 +43,8 @@ const authHeaders = () => {
 async function getJSON(pathOrUrl) {
   const url = /^https?:\/\//i.test(pathOrUrl) ? pathOrUrl : apiJoin(pathOrUrl);
   const r = await fetch(url, { headers: { "Content-Type": "application/json", ...authHeaders() }, credentials: "include" });
+  // trata 204 (sem corpo) para não quebrar no r.json()
+  if (r.status === 204) return null;
   if (!r.ok) throw new Error(`${r.status}`);
   return r.json();
 }
@@ -54,6 +56,52 @@ const fmtDate = (v) => {
   const d = new Date(v);
   return Number.isNaN(d.getTime()) ? "-" : d.toLocaleDateString("pt-BR");
 };
+const daysSince = (from) => {
+  const a = new Date(from);
+  if (Number.isNaN(a)) return "-";
+  return Math.max(0, Math.floor((Date.now() - a.getTime()) / 86400000));
+};
+
+// monta linhas a partir do endpoint de winners
+const mapWinners = (list) =>
+  (list || []).map((w) => ({
+    key: `${w.draw_id}-${w.realized_at || ""}`,
+    nome: w.winner_name || "-",
+    numero: w.draw_id,
+    data: fmtDate(w.realized_at),
+    status: w.status || (w.redeemed ? "RESGATADO" : "NÃO RESGATADO"),
+    dias: w.days_since ?? daysSince(w.realized_at),
+  }));
+
+// fallback: monta a partir de /draws history
+function mapFromDraws(payload) {
+  const arr = Array.isArray(payload)
+    ? payload
+    : payload?.history || payload?.draws || payload?.items || [];
+  return arr
+    .filter((d) => d.realized_at || d.realizedAt || d.realizado_em)
+    .map((d) => {
+      const realized =
+        d.realized_at || d.realizedAt || d.realizado_em || d.data_realizacao;
+      const closed   = d.closed_at   || d.closedAt   || d.fechado_em         ;
+      const winner   =
+        d.winner_name ||
+        d.vencedor_nome ||
+        d.winner?.name ||
+        "-";
+      const id = d.id ?? d.draw_id ?? d.numero ?? d.n ?? null;
+
+      return {
+        key: `${id}-${realized || ""}`,
+        nome: winner || "-",
+        numero: id,
+        data: fmtDate(realized),
+        status: closed ? "RESGATADO" : "NÃO RESGATADO",
+        dias: daysSince(realized),
+      };
+    })
+    .sort((a, b) => (b.numero || 0) - (a.numero || 0));
+}
 
 export default function AdminVencedores() {
   const navigate = useNavigate();
@@ -66,18 +114,19 @@ export default function AdminVencedores() {
     let alive = true;
     (async () => {
       try {
-        // Endpoint dedicado
-        const payload = await getJSON("/admin/winners"); // -> { winners: [...] }
+        // 1) tenta o endpoint dedicado
+        const payload = await getJSON("/admin/winners"); // { winners: [...] } ou null
         const list = Array.isArray(payload?.winners) ? payload.winners : [];
+        let lines = mapWinners(list);
 
-        const lines = list.map(w => ({
-          key: `${w.draw_id}-${w.realized_at}`,
-          nome: w.winner_name || "-",
-          numero: w.draw_id,
-          data: fmtDate(w.realized_at),
-          status: w.status || (w.redeemed ? "RESGATADO" : "NÃO RESGATADO"),
-          dias: w.days_since ?? "-",
-        }));
+        // 2) fallback se veio vazio ou null
+        if (!lines.length) {
+          const drawsPayload =
+            (await getJSON("/admin/draws/history")
+              .catch(() => getJSON("/draws/history"))
+            ) || null;
+          lines = mapFromDraws(drawsPayload);
+        }
 
         if (alive) setRows(lines);
       } catch (e) {
