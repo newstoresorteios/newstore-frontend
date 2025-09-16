@@ -15,19 +15,30 @@ const theme = createTheme({
   typography: { fontFamily: ["Inter", "system-ui", "Segoe UI", "Roboto", "Arial"].join(",") },
 });
 
-/* ---------- API base ---------- */
+/* ---------- API base normalizada ---------- */
 const RAW_BASE =
   process.env.REACT_APP_API_BASE_URL ||
   process.env.REACT_APP_API_BASE ||
-  "/api";
+  "";
+
 const API_BASE = String(RAW_BASE).replace(/\/+$/, "");
 const apiJoin = (path) => {
   let p = path.startsWith("/") ? path : `/${path}`;
-  if (API_BASE.endsWith("/api") && p.startsWith("/api/")) p = p.slice(4);
+  const baseEndsApi = API_BASE.endsWith("/api");
+  const pathStartsApi = p.startsWith("/api/");
+
+  // se não tem base (usar relativo), garanta prefixo /api
+  if (!API_BASE) return pathStartsApi ? p : `/api${p}`;
+
+  // evita /api duplicado
+  if (baseEndsApi && pathStartsApi) p = p.slice(4);
+  // insere /api se a base não termina com /api
+  if (!baseEndsApi && !pathStartsApi) p = `/api${p}`;
+
   return `${API_BASE}${p}`;
 };
 
-/* ---------- util ---------- */
+/* ---------- utils ---------- */
 const fmtBRL = (v) =>
   new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" })
     .format(Number.isFinite(Number(v)) ? Number(v) : 0);
@@ -55,7 +66,7 @@ async function getJSON(pathOrUrl) {
   return r.json();
 }
 
-/* ---------- fallback client-side aggregation ---------- */
+/* ---------- fallback (agregação no front) ---------- */
 function normalizeArray(payload, keys) {
   if (Array.isArray(payload)) return payload;
   for (const k of keys) if (Array.isArray(payload?.[k])) return payload[k];
@@ -68,14 +79,16 @@ function pickAmount(row) {
   return Number.isFinite(Number(real)) ? Number(real) : 0;
 }
 function addMonths(d, months) {
-  const dt = new Date(d); if (Number.isNaN(dt)) return null;
-  const day = dt.getDate(); dt.setMonth(dt.getMonth() + months);
+  const dt = new Date(d);
+  if (Number.isNaN(dt.getTime())) return null;
+  const day = dt.getDate();
+  dt.setMonth(dt.getMonth() + months);
   if (dt.getDate() < day) dt.setDate(0);
   return dt;
 }
 function daysDiff(from, to) {
   const a = new Date(from), b = new Date(to);
-  if (Number.isNaN(a) || Number.isNaN(b)) return null;
+  if (Number.isNaN(a.getTime()) || Number.isNaN(b.getTime())) return null;
   return Math.ceil((b - a) / 86400000);
 }
 function buildRowsFallback({ usersPayload, paymentsPayload, drawsPayload }) {
@@ -96,7 +109,7 @@ function buildRowsFallback({ usersPayload, paymentsPayload, drawsPayload }) {
 
   const acc = new Map(); // userId -> { compras, total, last }
   for (const p of pays) {
-    const status = String(p.status || p.state || "").trim().toLowerCase(); // << trim()
+    const status = String(p.status || p.state || "").trim().toLowerCase();
     if (status !== "approved") continue;
     const uid = Number(p.user_id ?? p.uid ?? p.customer_id ?? p.userId);
     if (!Number.isFinite(uid)) continue;
@@ -155,14 +168,14 @@ export default function AdminClientes() {
     let alive = true;
     (async () => {
       try {
-        // 1) tenta endpoint agregado do backend
+        // 1) endpoint agregado do backend
         try {
-          const payload = await getJSON("/admin/clients/active"); // { clients: [...] }
+          const payload = await getJSON("/admin/clients/active"); // apiJoin garante /api
           const list = normalizeArray(payload, ["clients", "items", "list"]);
           if (alive && list.length) {
             setRows(list.map(c => ({
               key: c.user_id,
-              nome: c.name || c.email || "—",
+              nome: (c.name || "").trim() || c.email || "—",
               cadastro: fmtDate(c.created_at),
               compras: c.purchases_count || 0,
               total: c.total_brl || 0,
@@ -172,11 +185,9 @@ export default function AdminClientes() {
             })));
             return;
           }
-        } catch (_) {
-          // cai para o fallback
-        }
+        } catch {}
 
-        // 2) fallback: agrega no front com endpoints antigos
+        // 2) fallback: agrega no front
         const [usersPayload, paymentsPayload, drawsPayload] = await Promise.all([
           getJSON("/admin/users").catch(() => getJSON("/users")),
           getJSON("/admin/payments?status=approved")
