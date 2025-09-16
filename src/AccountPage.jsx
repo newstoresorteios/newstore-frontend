@@ -24,16 +24,12 @@ const theme = createTheme({
     warning: { main: "#B58900" },
   },
   shape: { borderRadius: 12 },
-  typography: {
-    fontFamily: ["Inter","system-ui","Segoe UI","Roboto","Arial"].join(","),
-  },
+  typography: { fontFamily: ["Inter","system-ui","Segoe UI","Roboto","Arial"].join(",") },
 });
 
-// util
 const pad2 = (n) => String(n).padStart(2, "0");
 const ADMIN_EMAIL = "admin@newstore.com.br";
 
-// chips
 const PayChip = ({ status }) => {
   const st = String(status || "").toLowerCase();
   if (["approved","paid","pago"].includes(st)) {
@@ -49,25 +45,19 @@ const ResultChip = ({ result }) => {
   return <Chip label="ABERTO" sx={{ bgcolor: "primary.main", color: "#0E0E0E", fontWeight: 800, borderRadius: 999, px: 1.5 }} />;
 };
 
-// tenta uma lista de endpoints e retorna o primeiro que responder 2xx com JSON
 async function tryManyJson(paths) {
   for (const p of paths) {
     try {
       const data = await getJSON(p);
       return { data, from: p };
-    } catch {
-      // tenta o próximo
-    }
+    } catch {}
   }
   return { data: null, from: null };
 }
 
-// normaliza payloads diferentes para um único formato
 function normalizeToEntries(payPayload, reservationsPayload) {
   if (payPayload) {
-    const list = Array.isArray(payPayload)
-      ? payPayload
-      : payPayload.payments || payPayload.items || [];
+    const list = Array.isArray(payPayload) ? payPayload : payPayload.payments || payPayload.items || [];
     return list.flatMap(p => {
       const drawId = p.draw_id ?? p.drawId ?? p.sorteio_id ?? null;
       const numbers = Array.isArray(p.numbers) ? p.numbers : [];
@@ -76,7 +66,6 @@ function normalizeToEntries(payPayload, reservationsPayload) {
       return numbers.map(n => ({ draw_id: drawId, number: Number(n), status: payStatus, when }));
     });
   }
-
   if (reservationsPayload) {
     const list = reservationsPayload.reservations || reservationsPayload.items || [];
     return list.map(r => ({
@@ -86,7 +75,6 @@ function normalizeToEntries(payPayload, reservationsPayload) {
       when: r.paid_at || r.created_at || r.updated_at || null,
     }));
   }
-
   return [];
 }
 
@@ -105,8 +93,7 @@ export default function AccountPage() {
   const [syncing, setSyncing] = React.useState(false);
 
   const handleOpenMenu = (e) => setMenuEl(e.currentTarget);
-  const handleCloseMenu = () => setMenuEl(null);
-  const doLogout = () => { handleCloseMenu(); logout(); navigate("/"); };
+  const doLogout = () => { setMenuEl(null); logout(); navigate("/"); };
 
   const storedMe = React.useMemo(() => {
     try { return JSON.parse(localStorage.getItem("me") || "null"); } catch { return null; }
@@ -114,10 +101,8 @@ export default function AccountPage() {
 
   React.useEffect(() => {
     let alive = true;
-
     (async () => {
       try {
-        // 1) carrega /me
         let me = ctxUser || storedMe || null;
         try {
           const meResp = await getJSON("/me");
@@ -128,10 +113,7 @@ export default function AccountPage() {
           try { if (me) localStorage.setItem("me", JSON.stringify(me)); } catch {}
         }
 
-        // 2) pagamentos OU reservas (fallback)
         const { data: pay, from } = await tryManyJson(["/payments/me", "/me/reservations", "/reservations/me"]);
-
-        // 3) draws (map status)
         let drawsMap = new Map();
         try {
           const draws = await getJSON("/draws");
@@ -139,13 +121,8 @@ export default function AccountPage() {
           drawsMap = new Map(arr.map(d => [Number(d.id ?? d.draw_id), (d.status ?? d.result ?? "")]));
         } catch {}
 
-        // 4) normaliza tabela
         if (alive && pay) {
-          const entries = normalizeToEntries(
-            from === "/payments/me" ? pay : null,
-            from !== "/payments/me" ? pay : null
-          );
-
+          const entries = normalizeToEntries(from === "/payments/me" ? pay : null, from !== "/payments/me" ? pay : null);
           const tableRows = entries.map(e => ({
             sorteio: e.draw_id != null ? String(e.draw_id) : "--",
             numero: Number(e.number),
@@ -153,7 +130,6 @@ export default function AccountPage() {
             pagamento: e.status,
             resultado: drawsMap.get(Number(e.draw_id)) || "aberto",
           }));
-
           tableRows.sort((a, b) => {
             const ap = String(a.pagamento).toLowerCase() === "pending";
             const bp = String(b.pagamento).toLowerCase() === "pending";
@@ -161,7 +137,6 @@ export default function AccountPage() {
             if (!ap && bp) return 1;
             return 0;
           });
-
           setRows(tableRows);
 
           let totalCents = 0;
@@ -169,8 +144,6 @@ export default function AccountPage() {
             const list = Array.isArray(pay) ? pay : (pay.payments || []);
             totalCents = list.reduce((acc, p) =>
               String(p.status).toLowerCase() === "approved" ? acc + Number(p.amount_cents || 0) : acc, 0);
-          } else {
-            totalCents = 0;
           }
           setValorAcumulado((totalCents || 0) / 100);
         }
@@ -178,11 +151,9 @@ export default function AccountPage() {
         if (alive) setLoading(false);
       }
     })();
-
     return () => { alive = false; };
   }, [ctxUser, storedMe]);
 
-  // sincroniza cupom (idempotente)
   React.useEffect(() => {
     let alive = true;
     (async () => {
@@ -207,9 +178,7 @@ export default function AccountPage() {
         } else if (alive && mine?.code) {
           setCupom(mine.code);
         }
-      } catch {
-        // ignora
-      } finally {
+      } catch {} finally {
         if (alive) setSyncing(false);
       }
     })();
@@ -217,8 +186,7 @@ export default function AccountPage() {
   }, [valorAcumulado]);
 
   const u = user || {};
-  const headingName =
-    u.name || u.fullName || u.nome || u.displayName || u.username || u.email || "NOME DO CLIENTE";
+  const headingName = u.name || u.fullName || u.nome || u.displayName || u.username || u.email || "NOME DO CLIENTE";
   const cardEmail = u.email || (u.username?.includes?.("@") ? u.username : headingName);
   const couponCode = u?.coupon_code || cupom || "CUPOMAQUI";
   const isAdminUser = !!(u?.is_admin || u?.role === "admin" || (u?.email && u.email.toLowerCase() === ADMIN_EMAIL));
@@ -231,14 +199,8 @@ export default function AccountPage() {
           <IconButton edge="start" color="inherit" onClick={() => navigate(-1)} aria-label="Voltar">
             <ArrowBackIosNewRoundedIcon />
           </IconButton>
-          <Box
-            component={RouterLink}
-            to="/"
-            sx={{
-              position: "absolute", left: "50%", top: "50%",
-              transform: "translate(-50%, -50%)", display: "flex", alignItems: "center"
-            }}
-          >
+          <Box component={RouterLink} to="/"
+            sx={{ position: "absolute", left: "50%", top: "50%", transform: "translate(-50%, -50%)", display: "flex", alignItems: "center" }}>
             <Box component="img" src={logoNewStore} alt="NEW STORE" sx={{ height: { xs: 28, sm: 36, md: 40 }, objectFit: "contain" }} />
           </Box>
           <IconButton color="inherit" sx={{ ml: "auto" }} onClick={(e) => setMenuEl(e.currentTarget)}>
@@ -260,35 +222,27 @@ export default function AccountPage() {
         </Toolbar>
       </AppBar>
 
-      <Container maxWidth="sm" sx={{ py: { xs: 2.5, md: 5 } }}>
+      {/* ⬅️ VOLTA A LARGURA DE DESKTOP */}
+      <Container maxWidth="lg" sx={{ py: { xs: 2.5, md: 5 } }}>
         <Stack spacing={2.5}>
           <Typography
             sx={{
-              fontWeight: 900,
-              letterSpacing: 0.5,
-              textTransform: "uppercase",
-              opacity: 0.9,
-              textAlign: { xs: "center", md: "left" },
-              fontSize: { xs: 18, sm: 20, md: 22 },
-              lineHeight: 1.2,
-              wordBreak: "break-word",
+              fontWeight: 900, letterSpacing: 0.5, textTransform: "uppercase", opacity: 0.9,
+              textAlign: { xs: "center", md: "left" }, fontSize: { xs: 18, sm: 20, md: 22 }, lineHeight: 1.2, wordBreak: "break-word",
             }}
           >
             {headingName}
           </Typography>
 
-          {/* Cartão */}
+          {/* Cartão (permanece compacto para não “esticar” demais no desktop) */}
           <Box sx={{ width: "100%", display: "flex", justifyContent: "center" }}>
             <Paper
               elevation={0}
               sx={{
                 width: { xs: "min(94vw, 420px)", sm: "min(88vw, 520px)", md: 560 },
                 aspectRatio: "1.586 / 1",
-                borderRadius: 5,
-                position: "relative",
-                overflow: "hidden",
-                p: { xs: 1.25, sm: 2, md: 2.2 },
-                bgcolor: "#181818",
+                borderRadius: 5, position: "relative", overflow: "hidden",
+                p: { xs: 1.25, sm: 2, md: 2.2 }, bgcolor: "#181818",
                 border: "1px solid rgba(255,255,255,0.08)",
                 backgroundImage: `
                   radial-gradient(70% 120% at 35% 65%, rgba(255,255,255,0.20), transparent 60%),
@@ -298,18 +252,12 @@ export default function AccountPage() {
                 backgroundBlendMode: "screen, lighten, normal",
               }}
             >
-              <Box
-                sx={{
-                  pointerEvents: "none",
-                  position: "absolute",
-                  inset: 0,
-                  opacity: 0.08,
-                  backgroundImage:
-                    "radial-gradient(rgba(255,255,255,0.5) 1px, transparent 1px), radial-gradient(rgba(255,255,255,0.35) 1px, transparent 1px)",
-                  backgroundSize: "3px 3px, 5px 5px",
-                  backgroundPosition: "0 0, 10px 5px",
-                }}
-              />
+              <Box sx={{
+                pointerEvents: "none", position: "absolute", inset: 0, opacity: 0.08,
+                backgroundImage:
+                  "radial-gradient(rgba(255,255,255,0.5) 1px, transparent 1px), radial-gradient(rgba(255,255,255,0.35) 1px, transparent 1px)",
+                backgroundSize: "3px 3px, 5px 5px", backgroundPosition: "0 0, 10px 5px",
+              }} />
               <Stack
                 direction={{ xs: "column", sm: "row" }}
                 justifyContent="space-between"
@@ -317,99 +265,42 @@ export default function AccountPage() {
                 gap={1}
                 sx={{ position: "relative", height: "100%" }}
               >
-                {/* Coluna esquerda */}
                 <Stack spacing={0.8} flex={1} minWidth={0}>
-                  <Typography
-                    variant="caption"
-                    sx={{
-                      fontFamily:
-                        'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
-                      letterSpacing: 1,
-                      opacity: 0.85,
-                    }}
-                  >
+                  <Typography variant="caption" sx={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace', letterSpacing: 1, opacity: 0.85 }}>
                     CARTÃO PRESENTE
                   </Typography>
-
                   <Stack direction="row" spacing={1} alignItems="center" sx={{ mt: "auto", minWidth: 0 }}>
                     <Box component="img" src={logoNewStore} alt="NS" sx={{ height: 16, opacity: 0.9 }} />
                     <Typography
                       sx={{
-                        fontWeight: 900,
-                        letterSpacing: { xs: 1, sm: 2 },
-                        textTransform: "uppercase",
-                        lineHeight: 1.1,
-                        fontSize: { xs: 12, sm: 14, md: 16 },
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                        whiteSpace: "nowrap",
-                        maxWidth: "100%",
+                        fontWeight: 900, letterSpacing: { xs: 1, sm: 2 }, textTransform: "uppercase", lineHeight: 1.1,
+                        fontSize: { xs: 12, sm: 14, md: 16 }, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "100%",
                       }}
                     >
                       {cardEmail}
                     </Typography>
                   </Stack>
-
                   <Stack spacing={0.1} sx={{ mt: "auto" }}>
-                    <Typography
-                      variant="caption"
-                      sx={{
-                        fontFamily:
-                          'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
-                        letterSpacing: 1,
-                        opacity: 0.75,
-                      }}
-                    >
+                    <Typography variant="caption" sx={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace', letterSpacing: 1, opacity: 0.75 }}>
                       VÁLIDO ATÉ
                     </Typography>
                     <Typography sx={{ fontWeight: 800, fontSize: { xs: 12, sm: 13 } }}>{validade}</Typography>
                   </Stack>
                 </Stack>
 
-                {/* Coluna direita (quebra no xs) */}
-                <Stack
-                  spacing={0.4}
-                  alignItems={{ xs: "flex-start", sm: "flex-end" }}
-                  sx={{ ml: { sm: 1 }, mt: { xs: 1, sm: 0 } }}
-                >
-                  <Typography
-                    variant="caption"
-                    sx={{
-                      fontFamily:
-                        'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
-                      letterSpacing: 1,
-                      opacity: 0.85,
-                    }}
-                  >
+                <Stack spacing={0.4} alignItems={{ xs: "flex-start", sm: "flex-end" }} sx={{ ml: { sm: 1 }, mt: { xs: 1, sm: 0 } }}>
+                  <Typography variant="caption" sx={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace', letterSpacing: 1, opacity: 0.85 }}>
                     CÓDIGO DE DESCONTO:
                   </Typography>
-
                   <Typography
                     sx={{
-                      fontWeight: 900,
-                      letterSpacing: { xs: 0.5, sm: 2 },
-                      wordBreak: "break-all",
-                      overflowWrap: "anywhere",
-                      maxWidth: { xs: "100%", sm: 260 },
-                      fontSize: { xs: 14, sm: 18 },
-                      lineHeight: 1.2,
-                      textAlign: { xs: "left", sm: "right" },
+                      fontWeight: 900, letterSpacing: { xs: 0.5, sm: 2 }, wordBreak: "break-all", overflowWrap: "anywhere",
+                      maxWidth: { xs: "100%", sm: 260 }, fontSize: { xs: 14, sm: 18 }, lineHeight: 1.2, textAlign: { xs: "left", sm: "right" },
                     }}
                   >
                     {couponCode}
                   </Typography>
-
-                  <Typography
-                    variant="caption"
-                    sx={{
-                      fontFamily:
-                        'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
-                      letterSpacing: 1,
-                      opacity: 0.9,
-                      color: "#9AE6B4",
-                      textAlign: { xs: "left", sm: "right" },
-                    }}
-                  >
+                  <Typography variant="caption" sx={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace', letterSpacing: 1, opacity: 0.9, color: "#9AE6B4", textAlign: { xs: "left", sm: "right" } }}>
                     VALOR ACUMULADO:
                   </Typography>
                   <Typography sx={{ fontWeight: 900, color: "#9AE6B4", fontSize: { xs: 16, sm: 18 } }}>
@@ -421,7 +312,7 @@ export default function AccountPage() {
             </Paper>
           </Box>
 
-          {/* Tabela responsiva (scroll no mobile) */}
+          {/* Tabela responsiva ocupando a largura do Container lg no desktop */}
           <Paper variant="outlined" sx={{ p: { xs: 1, md: 2 } }}>
             {loading ? (
               <Box sx={{ px: 2, py: 1 }}><LinearProgress /></Box>
@@ -439,11 +330,7 @@ export default function AccountPage() {
                   </TableHead>
                   <TableBody>
                     {rows.length === 0 && (
-                      <TableRow>
-                        <TableCell colSpan={5} sx={{ color: "#bbb" }}>
-                          Nenhuma participação encontrada.
-                        </TableCell>
-                      </TableRow>
+                      <TableRow><TableCell colSpan={5} sx={{ color: "#bbb" }}>Nenhuma participação encontrada.</TableCell></TableRow>
                     )}
                     {rows.map((row, idx) => (
                       <TableRow key={`${row.sorteio}-${row.numero}-${idx}`} hover>
@@ -459,23 +346,8 @@ export default function AccountPage() {
               </TableContainer>
             )}
 
-            <Stack
-              direction={{ xs: "column", sm: "row" }}
-              justifyContent="flex-end"
-              alignItems={{ xs: "stretch", sm: "center" }}
-              gap={1.5}
-              sx={{ mt: 2 }}
-            >
-              <Button
-                component="a"
-                href="http://newstorerj.com.br/"
-                target="_blank"
-                rel="noopener"
-                variant="contained"
-                color="success"
-                fullWidth
-                sx={{ maxWidth: { sm: 220 } }}
-              >
+            <Stack direction={{ xs: "column", sm: "row" }} justifyContent="flex-end" alignItems={{ xs: "stretch", sm: "center" }} gap={1.5} sx={{ mt: 2 }}>
+              <Button component="a" href="http://newstorerj.com.br/" target="_blank" rel="noopener" variant="contained" color="success" fullWidth sx={{ maxWidth: { sm: 220 } }}>
                 Resgatar cupom
               </Button>
               <Button variant="text" onClick={doLogout} fullWidth sx={{ maxWidth: { sm: 120 } }}>
