@@ -1,36 +1,23 @@
 // src/services/me.js
-import supabase from '../utils/supabaseClient';
+import { apiJoin, authHeaders } from "../lib/api";
 
-const API_BASE_URL = (process.env.REACT_APP_API_BASE_URL || 'http://localhost:4000').replace(/\/+$/,'');
-
-function getAuthToken() {
-  try {
-    const raw = localStorage.getItem('ns_auth_token') || sessionStorage.getItem('ns_auth_token') || '';
-    return raw?.replace(/^Bearer\s+/i,'').replace(/^["']|["']$/g,'');
-  } catch { return ''; }
-}
-
-async function doFetch(url, opts = {}) {
-  const token = getAuthToken();
-  const headers = Object.assign({ 'Content-Type': 'application/json' }, opts.headers || {});
-  if (token) headers['Authorization'] = `Bearer ${token}`;
-  const res = await fetch(url, Object.assign({}, opts, { headers }));
-  if (!res.ok) {
-    const text = await res.text().catch(() => '');
-    const err = new Error(text || `${res.status}`);
-    err.status = res.status;
-    throw err;
+async function doFetch(path, opts = {}) {
+  const r = await fetch(apiJoin(path), {
+    method: opts.method || "GET",
+    headers: { "Content-Type": "application/json", ...authHeaders(), ...(opts.headers || {}) },
+    credentials: "omit",
+    body: opts.body ? JSON.stringify(opts.body) : undefined,
+  });
+  if (!r.ok) {
+    const txt = await r.text().catch(() => "");
+    const e = new Error(txt || `${r.status}`);
+    e.status = r.status;
+    throw e;
   }
-  return res.json();
+  return r.json();
 }
 
 export async function getMyReservations() {
-  const json = await doFetch(`${API_BASE_URL}/api/me/reservations`);
+  const json = await doFetch("/me/reservations");
   return json.reservations || [];
-}
-
-export async function pingSupabase() {
-  const { data, error } = await supabase.from('teste').select('*').limit(1); // troque 'teste' por uma tabela existente
-  if (error) throw error;
-  return data;
 }

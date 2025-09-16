@@ -1,28 +1,23 @@
 // src/lib/api.js
-// Util de API para o frontend (React)
+// Helper único de API (front)
 
-const RAW_BASE =
+const RAW =
   process.env.REACT_APP_API_BASE_URL ||
   process.env.REACT_APP_API_BASE ||
-  ""; // se vazio, caímos no fallback '/api' logo abaixo
+  ""; // produção: DEVE vir com /api no final; dev: vazio -> /api (proxy)
 
-const ROOT = String(RAW_BASE).replace(/\/+$/, ""); // sem barra final
-// Se não informou nada -> usa '/api' local (proxy)
-// Se informou e NÃO termina com /api -> acrescenta /api
-// Se informou e já termina com /api -> mantém
-const API_BASE =
-  ROOT === ""
-    ? "/api"
-    : /\/api$/i.test(ROOT)
-    ? ROOT
-    : `${ROOT}/api`;
+const BASE = (() => {
+  if (!RAW) return "/api";                 // dev com proxy
+  const r = String(RAW).replace(/\/+$/, ""); // sem barra final
+  return r.endsWith("/api") ? r : `${r}/api`;
+})();
 
 export const apiJoin = (path) => {
   const p = path.startsWith("/") ? path : `/${path}`;
-  return `${API_BASE}${p}`;
+  return `${BASE}${p}`;
 };
 
-/* ---------- token helpers ---------- */
+/* token helpers */
 const TOKEN_KEY = "ns_auth_token";
 const COMPAT_KEYS = ["token", "access_token"];
 
@@ -45,7 +40,7 @@ export const authHeaders = () => {
   return t ? { Authorization: `Bearer ${t}` } : {};
 };
 
-/* ---------- HTTP helpers ---------- */
+/* HTTP helpers */
 async function request(pathOrUrl, opts = {}) {
   const url = /^https?:\/\//i.test(pathOrUrl) ? pathOrUrl : apiJoin(pathOrUrl);
   const r = await fetch(url, {
@@ -56,7 +51,11 @@ async function request(pathOrUrl, opts = {}) {
       ...authHeaders(),
     },
     credentials: "omit", // usamos Authorization, não cookie
-    body: opts.body ? (typeof opts.body === "string" ? opts.body : JSON.stringify(opts.body)) : undefined,
+    body: opts.body
+      ? typeof opts.body === "string"
+        ? opts.body
+        : JSON.stringify(opts.body)
+      : undefined,
   });
   if (!r.ok) {
     let err = `${r.status}`;
