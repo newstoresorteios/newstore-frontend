@@ -13,6 +13,12 @@ import logoNewStore from "./Logo-branca-sem-fundo-768x132.png";
 import { useAuth } from "./authContext";
 import { apiJoin } from "./lib/api";
 
+/** ===== DEBUG ===== */
+const DBG =
+  (typeof window !== "undefined" && (window.NS_DEBUG === 1 || window.NS_DEBUG === true)) ||
+  String(localStorage.getItem("NS_DEBUG") || "").trim() === "1";
+const dlog = (...a) => { if (DBG) console.log("[login]", ...a); };
+
 const theme = createTheme({
   palette: { mode: "dark", primary: { main: "#67C23A" }, background: { default: "#0E0E0E", paper: "#121212" } },
   shape: { borderRadius: 12 },
@@ -21,7 +27,6 @@ const theme = createTheme({
 
 const ADMIN_EMAIL = "admin@newstore.com.br";
 
-// helper simples para reset sem depender de cookie/token
 function genPass(len = 6) {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
   let out = ""; for (let i = 0; i < len; i++) out += chars[Math.floor(Math.random() * chars.length)];
@@ -41,7 +46,7 @@ export default function LoginPage() {
   const [error, setError] = React.useState("");
   const [loading, setLoading] = React.useState(false);
 
-  // ----- ESQUECI MINHA SENHA -----
+  // forgot password
   const [forgotOpen, setForgotOpen] = React.useState(false);
   const [forgotEmail, setForgotEmail] = React.useState("");
   const [forgotLoading, setForgotLoading] = React.useState(false);
@@ -49,10 +54,7 @@ export default function LoginPage() {
   const [forgotSent, setForgotSent] = React.useState(false);
   const [sentTo, setSentTo] = React.useState("");
 
-  const openForgot = () => {
-    setForgotError(""); setForgotSent(false); setSentTo("");
-    setForgotEmail(email || ""); setForgotOpen(true);
-  };
+  const openForgot = () => { setForgotError(""); setForgotSent(false); setSentTo(""); setForgotEmail(email || ""); setForgotOpen(true); };
   const closeForgot = () => { if (!forgotLoading) setForgotOpen(false); };
 
   async function handleResetPassword() {
@@ -62,37 +64,26 @@ export default function LoginPage() {
     setForgotLoading(true);
     try {
       const newPassword = genPass(6);
-      const candidates = [
-        apiJoin("/auth/reset-password"),
-        apiJoin("/auth/forgot"),
-      ];
-      let ok = false;
-      for (const url of candidates) {
-        try {
-          const r = await fetch(url, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            credentials: "include",
-            body: JSON.stringify({
-              email: e,
-              newPassword,
-              from: "administracao@newstoresorteios.com.br",
-              subject: "Reset de senha - New Store Sorteios",
-              message: `Sua senha foi resetada.\n\nNova Senha: ${newPassword}\n\nSe você não solicitou, ignore este e-mail.`
-            }),
-          });
-          if (r.ok) { ok = true; break; }
-        } catch {}
-      }
-      if (!ok) { setForgotError("Não foi possível solicitar o reset agora."); return; }
+      const url = apiJoin("/auth/reset-password");
+      dlog("reset-password -> POST", url, { email: e });
+      const r = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          email: e,
+          newPassword,
+          from: "administracao@newstoresorteios.com.br",
+          subject: "Reset de senha - New Store Sorteios",
+          message: `Sua senha foi resetada.\n\nNova Senha: ${newPassword}\n\nSe você não solicitou, ignore este e-mail.`
+        }),
+      });
+      dlog("reset-password status:", r.status);
+      if (!r.ok) { setForgotError("Não foi possível solicitar o reset agora."); return; }
       setSentTo(e); setForgotSent(true);
-    } finally {
-      setForgotLoading(false);
-    }
+    } finally { setForgotLoading(false); }
   }
-  // --------------------------------
 
-  // LOGIN
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError("");
@@ -102,23 +93,32 @@ export default function LoginPage() {
 
     try {
       setLoading(true);
-
-      // Faz login e JÁ retorna o usuário carregado
+      dlog("submit -> calling login()", { email, remember });
       const me = await login({ email, password, remember });
+      dlog("login() returned user:", me);
 
-      if (!me) { setError("Não foi possível carregar seus dados."); return; }
+      if (!me) {
+        setError("Não foi possível carregar seus dados.");
+        return;
+      }
 
-      const isAdmin =
-        me.role === "admin" || me.is_admin === true ||
+      const isAdmin = me.role === "admin" || me.is_admin === true ||
         (me.email || email).trim().toLowerCase() === ADMIN_EMAIL;
 
-      navigate(isAdmin ? "/admin" : from, { replace: true });
+      const dest = isAdmin ? "/admin" : from;
+      dlog("navigate ->", dest, "(isAdmin:", isAdmin, ")");
+      navigate(dest, { replace: true });
     } catch (err) {
+      dlog("submit error:", err?.message || err);
       setError(err.message || "Falha ao entrar.");
     } finally {
       setLoading(false);
     }
   };
+
+  React.useEffect(() => {
+    dlog("mounted. API base ~", apiJoin("/").replace(/\/+$/, ""));
+  }, []);
 
   return (
     <ThemeProvider theme={theme}>
@@ -145,15 +145,7 @@ export default function LoginPage() {
 
             {error && <Alert severity="error">{error}</Alert>}
 
-            <TextField
-              label="E-mail"
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              fullWidth
-              required
-              autoComplete="email"
-            />
+            <TextField label="E-mail" type="email" value={email} onChange={(e) => setEmail(e.target.value)} fullWidth required autoComplete="email" />
             <TextField
               label="Senha"
               type={showPass ? "text" : "password"}
@@ -174,10 +166,7 @@ export default function LoginPage() {
             />
 
             <Stack direction="row" alignItems="center" justifyContent="space-between" flexWrap="wrap">
-              <FormControlLabel
-                control={<Checkbox checked={remember} onChange={(e) => setRemember(e.target.checked)} />}
-                label="Manter-me conectado"
-              />
+              <FormControlLabel control={<Checkbox checked={remember} onChange={(e) => setRemember(e.target.checked)} />} label="Manter-me conectado" />
               <Link component="button" type="button" onClick={openForgot} underline="hover" sx={{ fontSize: 14, opacity: 0.9 }}>
                 Esqueci minha senha
               </Link>
@@ -190,10 +179,6 @@ export default function LoginPage() {
             <Button component={RouterLink} to="/cadastro" variant="text" sx={{ fontWeight: 700, mt: 1 }}>
               Criar conta
             </Button>
-
-            <Typography variant="caption" sx={{ opacity: 0.7, mt: 1 }}>
-              Dica: agora o login é real (DB). Se não lembrar a senha, use “Esqueci minha senha”.
-            </Typography>
           </Stack>
         </Paper>
       </Container>
@@ -203,27 +188,16 @@ export default function LoginPage() {
         <DialogTitle sx={{ fontWeight: 900 }}>
           {forgotSent ? "E-mail enviado" : "Resetar senha"}
         </DialogTitle>
-
         <DialogContent sx={{ pt: 1 }}>
           {!forgotSent ? (
             <>
               {forgotError && <Alert severity="error" sx={{ mb: 2 }}>{forgotError}</Alert>}
-              <TextField
-                label="Informe seu e-mail"
-                type="email"
-                fullWidth
-                autoFocus
-                value={forgotEmail}
-                onChange={(e) => setForgotEmail(e.target.value)}
-              />
+              <TextField label="Informe seu e-mail" type="email" fullWidth autoFocus value={forgotEmail} onChange={(e) => setForgotEmail(e.target.value)} />
             </>
           ) : (
-            <Alert severity="success">
-              Solicitação registrada para <strong>{sentTo}</strong>.
-            </Alert>
+            <Alert severity="success">Solicitação registrada para <strong>{sentTo}</strong>.</Alert>
           )}
         </DialogContent>
-
         <DialogActions sx={{ px: 3, pb: 2 }}>
           {!forgotSent ? (
             <>
