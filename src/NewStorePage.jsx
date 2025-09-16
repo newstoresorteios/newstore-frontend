@@ -65,9 +65,6 @@ const RESULTADOS_LOTERIAS =
 const MOCK_RESERVADOS = [];
 const MOCK_INDISPONIVEIS = [];
 
-// PREÇO por número (ENV ou 55)
-//const PRICE = Number(process.env.REACT_APP_PIX_PRICE) || 55;
-
 // Base do backend
 const API_BASE = (
   process.env.REACT_APP_API_BASE_URL ||
@@ -121,6 +118,74 @@ async function reserveNumbers(numbers) {
   return r.json(); // { reservationId, drawId, expiresAt, numbers }
 }
 
+/**
+ * Consulta simples do purchase_limit no backend.
+ * Espera que o backend ENTENDA o draw atual se drawId vier vazio.
+ * Retorna { blocked: boolean, current?: number, max?: number }
+ */
+async function checkUserPurchaseLimit({ addCount = 1, drawId } = {}) {
+  const token = getAuthToken();
+  const headers = { 'Content-Type': 'application/json' };
+  if (token) headers.Authorization = `Bearer ${token}`;
+
+  const qs = new URLSearchParams();
+  if (addCount) qs.set('add', String(addCount));
+  if (drawId != null) qs.set('draw_id', String(drawId));
+
+  // Tentamos alguns endpoints comuns
+  const candidatesGET = [
+    `/api/purchase-limit/check?${qs.toString()}`,
+    `/purchase-limit/check?${qs.toString()}`,
+    `/api/limits/purchase?${qs.toString()}`,
+    `/limits/purchase?${qs.toString()}`,
+  ];
+  for (const p of candidatesGET) {
+    try {
+      const res = await fetch(`${API_BASE}${p}`, { headers, credentials: 'include', cache: 'no-store' });
+      if (res.status === 401) throw new Error('unauthorized');
+      if (res.ok) {
+        const j = await res.json().catch(() => ({}));
+        // Normalizamos chaves comuns
+        const blocked =
+          j?.blocked ?? j?.limitReached ?? j?.reached ?? j?.exceeded ?? false;
+        const current = j?.current ?? j?.cnt ?? j?.count;
+        const max = j?.max ?? j?.limit ?? j?.MAX;
+        return { blocked: Boolean(blocked), current, max };
+      }
+    } catch (_) {}
+  }
+
+  // Fallback em POST (caso a API exija body)
+  const candidatesPOST = [
+    `/api/purchase-limit/check`,
+    `/purchase-limit/check`,
+    `/api/limits/purchase`,
+    `/limits/purchase`,
+  ];
+  for (const p of candidatesPOST) {
+    try {
+      const res = await fetch(`${API_BASE}${p}`, {
+        method: 'POST',
+        headers,
+        credentials: 'include',
+        body: JSON.stringify({ add: addCount, draw_id: drawId }),
+      });
+      if (res.status === 401) throw new Error('unauthorized');
+      if (res.ok) {
+        const j = await res.json().catch(() => ({}));
+        const blocked =
+          j?.blocked ?? j?.limitReached ?? j?.reached ?? j?.exceeded ?? false;
+        const current = j?.current ?? j?.cnt ?? j?.count;
+        const max = j?.max ?? j?.limit ?? j?.MAX;
+        return { blocked: Boolean(blocked), current, max };
+      }
+    } catch (_) {}
+  }
+
+  // Se nada respondeu, assumimos não bloqueado para não travar usuário por erro de rede.
+  return { blocked: false };
+}
+
 export default function NewStorePage({
   reservados = MOCK_RESERVADOS,
   indisponiveis = MOCK_INDISPONIVEIS,
@@ -129,11 +194,10 @@ export default function NewStorePage({
 }) {
   const navigate = useNavigate();
   const { selecionados, setSelecionados, limparSelecao } = React.useContext(SelectionContext);
-  //const { isAuthenticated, logout } = useAuth();
   const { user, token, logout } = useAuth();
   const isAuthenticated = !!(user?.email || user?.id || token);
 
-   const logoTo = isAuthenticated ? "/conta" : "/";
+  const logoTo = isAuthenticated ? "/conta" : "/";
 
   // Estados vindos do backend para pintar reservados/indisponíveis
   const [srvReservados, setSrvReservados] = React.useState([]);
@@ -143,58 +207,67 @@ export default function NewStorePage({
   const FALLBACK_PRICE = Number(process.env.REACT_APP_PIX_PRICE) || 55;
   const [unitPrice, setUnitPrice] = React.useState(FALLBACK_PRICE);
 
-  // Busca o preço atual no backend (várias rotas possíveis) e converte de cents -> R$
-React.useEffect(() => {
-  let alive = true;
+  // Guardamos também o draw atual, se o backend expuser
+  const [currentDrawId, setCurrentDrawId] = React.useState(null);
 
-  async function fetchJSON(path) {
-    const res = await fetch(`${API_BASE}${path.startsWith('/') ? '' : '/'}${path}`, {
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'include',
-      cache: 'no-store',
-    });
-    if (!res.ok) throw new Error(String(res.status));
-    return res.json();
-  }
+  // Busca o preço atual no backend e tenta extrair draw id
+  React.useEffect(() => {
+    let alive = true;
 
-  (async () => {
-    const candidates = [
-      '/api/summary',
-      '/summary',
-      '/api/dashboard/summary',
-      '/dashboard/summary',
-      '/api/draws/current',
-      '/draws/current',
-    ];
-
-    for (const p of candidates) {
-      try {
-        const j = await fetchJSON(p);
-
-        // tenta vários formatos comuns
-        const cents =
-          j?.price_cents ??
-          j?.priceCents ??
-          j?.current?.price_cents ??
-          j?.current_draw?.price_cents ??
-          (Array.isArray(j?.draws) ? j.draws[0]?.price_cents : undefined);
-
-        // se vier em reais
-        const reaisRaw = j?.price ?? j?.preco;
-
-        const reais = cents != null ? Number(cents) / 100 : Number(reaisRaw);
-        if (Number.isFinite(reais) && reais > 0) {
-          if (alive) setUnitPrice(reais);
-          return;
-        }
-      } catch {}
+    async function fetchJSON(path) {
+      const res = await fetch(`${API_BASE}${path.startsWith('/') ? '' : '/'}${path}`, {
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        cache: 'no-store',
+      });
+      if (!res.ok) throw new Error(String(res.status));
+      return res.json();
     }
-    // se nada funcionar, fica no fallback
-  })();
 
-  return () => { alive = false; };
-}, []);
+    (async () => {
+      const candidates = [
+        '/api/summary',
+        '/summary',
+        '/api/dashboard/summary',
+        '/dashboard/summary',
+        '/api/draws/current',
+        '/draws/current',
+      ];
 
+      for (const p of candidates) {
+        try {
+          const j = await fetchJSON(p);
+
+          // tenta vários formatos comuns (preço)
+          const cents =
+            j?.price_cents ??
+            j?.priceCents ??
+            j?.current?.price_cents ??
+            j?.current_draw?.price_cents ??
+            (Array.isArray(j?.draws) ? j.draws[0]?.price_cents : undefined);
+
+          const reaisRaw = j?.price ?? j?.preco;
+          const reais = cents != null ? Number(cents) / 100 : Number(reaisRaw);
+
+          if (Number.isFinite(reais) && reais > 0 && alive) {
+            setUnitPrice(reais);
+          }
+
+          // tenta extrair draw id em formatos comuns
+          const did =
+            j?.draw_id ?? j?.id ?? j?.current?.id ??
+            j?.current_draw?.id ??
+            (Array.isArray(j?.draws) ? j.draws[0]?.id : undefined);
+
+          if (did != null && alive) setCurrentDrawId(did);
+          return; // se um candidato funcionou, paramos aqui
+        } catch {}
+      }
+      // se nada funcionar, fica no fallback
+    })();
+
+    return () => { alive = false; };
+  }, []);
 
   // Polling leve para /api/numbers
   React.useEffect(() => {
@@ -202,21 +275,20 @@ React.useEffect(() => {
 
     async function load() {
       try {
-         const res = await fetch(`${API_BASE}/api/numbers`, {
+        const res = await fetch(`${API_BASE}/api/numbers`, {
           headers: { 'Content-Type': 'application/json' },
           credentials: 'include',
-          cache: 'no-store',            // evita 304 do cache do navegador
+          cache: 'no-store',
         });
         if (!res.ok) return;
         const j = await res.json();
         const reserv = [];
         const indis  = [];
         for (const it of j?.numbers || []) {
-           const st = String(it.status || '').toLowerCase();
-           if (st === 'reserved') reserv.push(Number(it.n));
-           // back usa "taken" p/ números já pagos/aprovados (indisponíveis)
-           if (st === 'taken' || st === 'sold') indis.push(Number(it.n));
-         }
+          const st = String(it.status || '').toLowerCase();
+          if (st === 'reserved') reserv.push(Number(it.n));
+          if (st === 'taken' || st === 'sold') indis.push(Number(it.n));
+        }
         if (!alive) return;
         setSrvReservados(Array.from(new Set(reserv)));
         setSrvIndisponiveis(Array.from(new Set(indis)));
@@ -258,22 +330,51 @@ React.useEffect(() => {
   const [pixData, setPixData] = React.useState(null);
   const [pixAmount, setPixAmount] = React.useState(0);
 
-  // >>> NOVO: estado para sucesso e callback
+  // Sucesso do PIX
   const [pixApproved, setPixApproved] = React.useState(false);
   const handlePixApproved = React.useCallback(() => {
-    setPixApproved(true);      // abre a modal de sucesso
-    setPixOpen(false);         // fecha a modal do QR
+    setPixApproved(true);
+    setPixOpen(false);
     setPixLoading(false);
   }, []);
 
+  // === NOVO: Modal de limite atingido ===
+  const [limitOpen, setLimitOpen] = React.useState(false);
+  const [limitInfo, setLimitInfo] = React.useState({ current: undefined, max: undefined });
+
+  const openLimitModal = (info) => {
+    setLimitInfo(info || {});
+    setLimitOpen(true);
+  };
+
   const handleIrPagamento = async () => {
     setOpen(false);
+
+    // 1) precisa estar logado
     if (!isAuthenticated) {
       navigate('/login', { replace: false, state: { from: '/', wantPay: true } });
       return;
     }
 
-    //const amount = selecionados.length * PRICE;
+    // 2) checa limite de compra ANTES de reservar/gerar PIX
+    try {
+      const addCount = selecionados.length || 1;
+      const { blocked, current, max } = await checkUserPurchaseLimit({
+        addCount,
+        drawId: currentDrawId, // pode ser ignorado pelo backend se não usar
+      });
+
+      if (blocked) {
+        openLimitModal({ current, max });
+        return; // não segue fluxo
+      }
+    } catch (e) {
+      // Se a checagem falhar por rede/endpoint, mantemos o fluxo normal
+      // (mas log para debug no console)
+      console.warn('[limit-check] falhou, seguindo fluxo:', e);
+    }
+
+    // 3) fluxo normal de pagamento
     const amount = selecionados.length * unitPrice;
     setPixAmount(amount);
     setPixOpen(true);
@@ -281,10 +382,8 @@ React.useEffect(() => {
     setPixApproved(false);
 
     try {
-      // 1) cria a reserva
       const { reservationId } = await reserveNumbers(selecionados);
 
-      // 2) cria o PIX usando a reserva
       const data = await createPixPayment({
         orderId: String(Date.now()),
         amount,
@@ -301,7 +400,7 @@ React.useEffect(() => {
     }
   };
 
-  // >>> NOVO: polling automático enquanto a modal do PIX estiver aberta
+  // Polling de status enquanto a modal do PIX estiver aberta
   React.useEffect(() => {
     if (!pixOpen || !pixData?.paymentId || pixApproved) return;
     const id = setInterval(async () => {
@@ -357,9 +456,7 @@ React.useEffect(() => {
       {/* Topo */}
       <AppBar position="sticky" elevation={0} sx={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
         <Toolbar sx={{ position: 'relative', minHeight: 64 }}>
-          <IconButton edge="start" color="inherit">
-            {/* espaçamento */}
-          </IconButton>
+          <IconButton edge="start" color="inherit">{/* espaçamento */}</IconButton>
 
           <Button
             component={RouterLink}
@@ -370,11 +467,10 @@ React.useEffect(() => {
             Criar conta
           </Button>
 
-         
           <Box
             component={RouterLink}
             to={logoTo}
-            onClick={(e) => { e.preventDefault(); navigate(logoTo); }} // garante SPA, sem reload
+            onClick={(e) => { e.preventDefault(); navigate(logoTo); }}
             sx={{ position:'absolute', left:'50%', top:'50%', transform:'translate(-50%, -50%)', display:'flex', alignItems:'center' }}
           >
             <Box component="img" src={logoNewStore} alt="NEW STORE" sx={{ height: 40, objectFit: 'contain' }} />
@@ -446,7 +542,7 @@ React.useEffect(() => {
                   LIMPAR SELEÇÃO
                 </Button>
                 <Button variant="contained" color="success" disabled={!selecionados.length} onClick={handleAbrirConfirmacao}>
-                  CONTINUAR
+                    CONTINUAR
                 </Button>
               </Stack>
             </Stack>
@@ -676,7 +772,7 @@ React.useEffect(() => {
           try {
             const st = await checkPixStatus(pixData.paymentId);
             if (st.status === 'approved') {
-              handlePixApproved(); // <<< troca para a modal de sucesso
+              handlePixApproved();
             } else {
               alert(`Status: ${st.status || 'pendente'}`);
             }
@@ -686,7 +782,7 @@ React.useEffect(() => {
         }}
       />
 
-      {/* >>> NOVA MODAL DE SUCESSO (abre quando aprovado) */}
+      {/* Modal de sucesso do PIX */}
       <Dialog
         open={pixApproved}
         onClose={() => setPixApproved(false)}
@@ -713,6 +809,34 @@ React.useEffect(() => {
             onClick={() => setPixApproved(false)}
             sx={{ py: 1.2, fontWeight: 800 }}
           >
+            OK
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* === NOVA MODAL: limite atingido === */}
+      <Dialog
+        open={limitOpen}
+        onClose={() => setLimitOpen(false)}
+        maxWidth="xs"
+        fullWidth
+        PaperProps={{ sx: { borderRadius: 3 } }}
+      >
+        <DialogTitle sx={{ fontSize: 20, fontWeight: 900, textAlign: 'center' }}>
+          Numero máximo de compras por usuario atingido
+        </DialogTitle>
+        <DialogContent sx={{ textAlign: 'center' }}>
+          <Typography sx={{ opacity: 0.9 }}>
+            Você já alcançou o limite de números neste sorteio.
+          </Typography>
+          {(Number.isFinite(limitInfo?.current) || Number.isFinite(limitInfo?.max)) && (
+            <Typography sx={{ mt: 1, fontWeight: 700 }}>
+              {`(${limitInfo?.current ?? '-'} de ${limitInfo?.max ?? '-'})`}
+            </Typography>
+          )}
+        </DialogContent>
+        <DialogActions sx={{ px: 3, pb: 3 }}>
+          <Button fullWidth variant="contained" onClick={() => setLimitOpen(false)} sx={{ py: 1.1, fontWeight: 800 }}>
             OK
           </Button>
         </DialogActions>
