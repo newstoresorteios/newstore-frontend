@@ -32,6 +32,9 @@ const ADMIN_EMAIL = "admin@newstore.com.br";
 // TTL de expiração de reserva (minutos). Ajuste por env: REACT_APP_RESERVATION_TTL_MINUTES
 const TTL_MINUTES = Number(process.env.REACT_APP_RESERVATION_TTL_MINUTES || 15);
 
+const isLoggedIn = !!(user?.email || user?.id);
+const logoTo = isLoggedIn ? "/conta" : "/";
+
 // chips
 const PayChip = ({ status }) => {
   const st = String(status || "").toLowerCase();
@@ -258,8 +261,12 @@ export default function AccountPage() {
           <IconButton edge="start" color="inherit" onClick={() => navigate(-1)} aria-label="Voltar">
             <ArrowBackIosNewRoundedIcon />
           </IconButton>
-          <Box component={RouterLink} to="/"
-            sx={{ position: "absolute", left: "50%", top: "50%", transform: "translate(-50%, -50%)", display: "flex", alignItems: "center" }}>
+          <Box
+            component={RouterLink}
+            to={logoTo}
+            onClick={(e) => { e.preventDefault(); navigate(logoTo); }} // navegação SPA
+            sx={{ position: "absolute", left: "50%", top: "50%", transform: "translate(-50%, -50%)", display: "flex", alignItems: "center" }}
+          >
             <Box component="img" src={logoNewStore} alt="NEW STORE" sx={{ height: { xs: 28, sm: 36, md: 40 }, objectFit: "contain" }} />
           </Box>
           <IconButton color="inherit" sx={{ ml: "auto" }} onClick={(e) => setMenuEl(e.currentTarget)}>
