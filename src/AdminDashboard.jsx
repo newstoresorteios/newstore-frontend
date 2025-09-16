@@ -243,7 +243,7 @@ export default function AdminDashboard() {
       <Container maxWidth="md" sx={{ py: { xs: 4, md: 8 } }}>
         <Stack spacing={4} alignItems="center">
           <Typography sx={{ fontWeight: 900, textAlign: "center", lineHeight: 1.1, fontSize: { xs: 28, md: 56 } }}>
-            Painel de Controlo
+            Painel de Controle
             <br /> dos Sorteios
           </Typography>
 
