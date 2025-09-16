@@ -2,9 +2,9 @@
 import * as React from "react";
 import { useNavigate, Link as RouterLink } from "react-router-dom";
 import {
-  AppBar, Box, Button, ButtonBase, Container, CssBaseline, Divider, Grid,
-  IconButton, Menu, MenuItem, Paper, Stack, TextField,
-  ThemeProvider, Toolbar, Typography, createTheme
+  AppBar, Box, ButtonBase, Button, Container, CssBaseline, Divider,
+  IconButton, Menu, MenuItem, Paper, Stack, TextField, ThemeProvider,
+  Toolbar, Typography, createTheme
 } from "@mui/material";
 import ArrowBackIosNewRoundedIcon from "@mui/icons-material/ArrowBackIosNewRounded";
 import AccountCircleRoundedIcon from "@mui/icons-material/AccountCircleRounded";
@@ -19,10 +19,10 @@ const theme = createTheme({
     warning: { main: "#B58900" },
   },
   shape: { borderRadius: 16 },
-  typography: { fontFamily: ["Inter", "system-ui", "Segoe UI", "Roboto", "Arial"].join(",") },
+  typography: { fontFamily: ["Inter","system-ui","Segoe UI","Roboto","Arial"].join(",") },
 });
 
-/* ---------- API utils ---------- */
+/* ---- helpers http ---- */
 const RAW_BASE =
   process.env.REACT_APP_API_BASE_URL ||
   process.env.REACT_APP_API_BASE ||
@@ -44,26 +44,25 @@ const authHeaders = () => {
     ? { Authorization: `Bearer ${String(tk).replace(/^Bearer\s+/i,"").replace(/^["']|["']$/g,"")}` }
     : {};
 };
-async function getJSON(path) {
-  const url = /^https?:\/\//i.test(path) ? path : apiJoin(path);
-  console.info("[AdminDashboard] GET", url);
+async function getJSON(pathOrUrl) {
+  const url = /^https?:\/\//i.test(pathOrUrl) ? pathOrUrl : apiJoin(pathOrUrl);
   const r = await fetch(url, { headers: { "Content-Type": "application/json", ...authHeaders() }, credentials: "include" });
   if (!r.ok) throw new Error(`${r.status}`);
   return r.json();
 }
-async function putJSON(path, body) {
-  const url = /^https?:\/\//i.test(path) ? path : apiJoin(path);
-  console.info("[AdminDashboard] PUT", url, body);
+async function postJSON(path, body) {
+  const url = apiJoin(path);
   const r = await fetch(url, {
-    method: "PUT",
+    method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders() },
     credentials: "include",
-    body: JSON.stringify(body || {}),
+    body: JSON.stringify(body || {})
   });
   if (!r.ok) throw new Error(`${r.status}`);
   return r.json();
 }
 
+/* ---- UI helpers ---- */
 function BigCard({ children, color, outlined = false, onClick }) {
   return (
     <ButtonBase onClick={onClick} sx={{ width: "100%" }}>
@@ -114,39 +113,47 @@ export default function AdminDashboard() {
   const goPainel = () => { closeMenu(); navigate("/admin"); };
   const doLogout = () => { closeMenu(); logout(); navigate("/"); };
 
-  // resumo do sorteio atual / preço
-  const [loading, setLoading] = React.useState(true);
-  const [summary, setSummary] = React.useState({ draw_id: null, total: 0, sold: 0, remaining: 0 });
-  const [priceCents, setPriceCents] = React.useState(5500);
-  const [saving, setSaving] = React.useState(false);
+  // resumo
+  const [drawId, setDrawId] = React.useState(0);
+  const [sold, setSold] = React.useState(0);
+  const [remaining, setRemaining] = React.useState(0);
+  const [priceInput, setPriceInput] = React.useState(""); // sempre string p/ evitar NaN
 
-  async function refresh() {
-    setLoading(true);
+  React.useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const data = await getJSON("/admin/dashboard/summary");
+        console.log("[AdminDashboard] GET /summary ->", data);
+
+        if (!alive) return;
+        setDrawId(Number(data?.draw_id) || 0);
+        setSold(Number(data?.sold) || 0);
+        setRemaining(Number(data?.remaining) || 0);
+
+        // garante string e evita NaN no <input>
+        const pc =
+          Number.isFinite(Number(data?.price_cents))
+            ? String(Number(data.price_cents))
+            : "";
+        setPriceInput(pc);
+      } catch (e) {
+        console.error("[AdminDashboard] GET /summary failed:", e);
+      }
+    })();
+    return () => { alive = false; };
+  }, []);
+
+  const onUpdatePrice = async () => {
+    const n = Math.max(0, Math.floor(Number(priceInput)));
     try {
-      const s = await getJSON("/api/admin/dashboard/summary");
-      setSummary({ draw_id: s.draw_id, total: s.total, sold: s.sold, remaining: s.remaining });
-      if (s.price_cents != null) setPriceCents(Number(s.price_cents));
+      const resp = await postJSON("/admin/dashboard/price", { price_cents: n });
+      console.log("[AdminDashboard] POST /price ->", resp);
+      // Se quiser, dá um feedback visual/toast aqui
     } catch (e) {
-      console.error("[AdminDashboard] summary error:", e);
-    } finally {
-      setLoading(false);
+      console.error("[AdminDashboard] POST /price failed:", e);
     }
-  }
-
-  React.useEffect(() => { refresh(); }, []);
-
-  async function savePrice() {
-    try {
-      setSaving(true);
-      await putJSON("/api/admin/dashboard/ticket-price", { price_cents: Number(priceCents) });
-      await refresh();
-    } catch (e) {
-      console.error("[AdminDashboard] update price error:", e);
-      alert("Falha ao atualizar o preço do ticket.");
-    } finally {
-      setSaving(false);
-    }
-  }
+  };
 
   return (
     <ThemeProvider theme={theme}>
@@ -185,75 +192,73 @@ export default function AdminDashboard() {
 
       <Container maxWidth="md" sx={{ py: { xs: 4, md: 8 } }}>
         <Stack spacing={4} alignItems="center">
-
           <Typography sx={{ fontWeight: 900, textAlign: "center", lineHeight: 1.1, fontSize: { xs: 28, md: 56 } }}>
             Painel de Controlo
             <br /> dos Sorteios
           </Typography>
 
-          {/* BLOCO DE CONTROLE */}
-          <Paper variant="outlined" sx={{ p: { xs: 2, md: 3 }, width: "100%", borderRadius: 3 }}>
-            <Grid container spacing={2} alignItems="center">
-              <Grid item xs={12} md={3}>
-                <Typography sx={{ fontWeight: 700 }}>Nº Sorteio Atual</Typography>
-                <Typography sx={{ mt: 0.5, fontSize: 24, fontWeight: 900 }}>
-                  {loading ? "—" : (summary.draw_id ?? "—")}
-                </Typography>
-              </Grid>
-              <Grid item xs={6} md={3}>
-                <Typography sx={{ fontWeight: 700 }}>N°s Vendidos</Typography>
-                <Typography sx={{ mt: 0.5, fontSize: 24, fontWeight: 900 }}>
-                  {loading ? "—" : summary.sold}
-                </Typography>
-              </Grid>
-              <Grid item xs={6} md={3}>
-                <Typography sx={{ fontWeight: 700 }}>N°s Restantes</Typography>
-                <Typography sx={{ mt: 0.5, fontSize: 24, fontWeight: 900 }}>
-                  {loading ? "—" : summary.remaining}
-                </Typography>
-              </Grid>
-              <Grid item xs={12} md={3} sx={{ display: "flex", justifyContent: { xs: "flex-start", md: "flex-end" } }}>
-                <Button
-                  variant="outlined"
-                  onClick={() => navigate("/admin/sorteios")}
-                  sx={{ height: 40, fontWeight: 800 }}
-                >
-                  Novo Sorteio
-                </Button>
-              </Grid>
+          {/* bloco de resumo + preço */}
+          <Paper
+            variant="outlined"
+            sx={{
+              width: "100%",
+              p: { xs: 3, md: 4 },
+              borderRadius: 4,
+              display: "grid",
+              gridTemplateColumns: { xs: "1fr", md: "auto auto auto auto 1fr" },
+              gap: 3,
+              alignItems: "center",
+            }}
+          >
+            <Box>
+              <Typography sx={{ opacity: 0.8 }}>Nº Sorteio Atual</Typography>
+              <Typography sx={{ fontWeight: 900, fontSize: 28 }}>{drawId || "-"}</Typography>
+            </Box>
 
-              <Grid item xs={12}>
-                <Divider sx={{ my: 1 }} />
-              </Grid>
+            <Box>
+              <Typography sx={{ opacity: 0.8 }}>Nºs Vendidos</Typography>
+              <Typography sx={{ fontWeight: 900, fontSize: 28 }}>{sold}</Typography>
+            </Box>
 
-              <Grid item xs={12} md={3}>
-                <Typography sx={{ fontWeight: 700 }}>Valor por Ticket</Typography>
-              </Grid>
-              <Grid item xs={6} md={3}>
-                <TextField
-                  fullWidth
-                  size="small"
-                  type="number"
-                  inputProps={{ min: 1 }}
-                  value={priceCents}
-                  onChange={(e) => setPriceCents(e.target.value)}
-                  helperText="em centavos (ex.: 100 = R$ 1,00)"
-                />
-              </Grid>
-              <Grid item xs={6} md={3}>
-                <Button
-                  variant="contained"
-                  onClick={savePrice}
-                  disabled={saving}
-                  sx={{ height: 40, fontWeight: 800 }}
-                >
-                  {saving ? "Atualizando..." : "Atualizar"}
-                </Button>
-              </Grid>
-            </Grid>
+            <Box>
+              <Typography sx={{ opacity: 0.8 }}>Nºs Restantes</Typography>
+              <Typography sx={{ fontWeight: 900, fontSize: 28 }}>{remaining}</Typography>
+            </Box>
+
+            <Button
+              variant="outlined"
+              color="success"
+              onClick={() => navigate("/admin/sorteios")}
+              sx={{ height: 44, px: 3, fontWeight: 800 }}
+            >
+              NOVO SORTEIO
+            </Button>
+
+            <Box sx={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 2, alignItems: "center" }}>
+              <Typography sx={{ opacity: 0.8, fontWeight: 700 }}>Valor por Ticket</Typography>
+              <Box />
+              <TextField
+                size="small"
+                type="number"
+                inputProps={{ min: 0, step: 1 }}
+                value={priceInput}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  // aceita vazio, ou inteiro >= 0
+                  if (v === "") return setPriceInput("");
+                  const n = Math.max(0, Math.floor(Number(v)));
+                  setPriceInput(String(n));
+                }}
+                placeholder="em centavos (ex.: 100 = R$ 1,00)"
+                sx={{ maxWidth: 240 }}
+              />
+              <Button variant="contained" color="success" onClick={onUpdatePrice} sx={{ height: 40, px: 3 }}>
+                ATUALIZAR
+              </Button>
+            </Box>
           </Paper>
 
-          {/* Atalhos grandes */}
+          {/* cards */}
           <Stack spacing={3} sx={{ width: "100%" }}>
             <BigCard outlined onClick={() => navigate("/admin/sorteios")}>
               LISTA DE SORTEIOS
