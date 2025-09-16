@@ -29,7 +29,10 @@ const theme = createTheme({
 
 const pad2 = (n) => String(n).padStart(2, "0");
 const ADMIN_EMAIL = "admin@newstore.com.br";
+// TTL de expiração de reserva (minutos). Ajuste por env: REACT_APP_RESERVATION_TTL_MINUTES
+const TTL_MINUTES = Number(process.env.REACT_APP_RESERVATION_TTL_MINUTES || 15);
 
+// chips
 const PayChip = ({ status }) => {
   const st = String(status || "").toLowerCase();
   if (["approved","paid","pago"].includes(st)) {
@@ -45,6 +48,7 @@ const ResultChip = ({ result }) => {
   return <Chip label="ABERTO" sx={{ bgcolor: "primary.main", color: "#0E0E0E", fontWeight: 800, borderRadius: 999, px: 1.5 }} />;
 };
 
+// tenta uma lista de endpoints e retorna o primeiro que responder 2xx com JSON
 async function tryManyJson(paths) {
   for (const p of paths) {
     try {
@@ -55,17 +59,29 @@ async function tryManyJson(paths) {
   return { data: null, from: null };
 }
 
+// normaliza payloads diferentes para um único formato
 function normalizeToEntries(payPayload, reservationsPayload) {
+  // payments: [{ draw_id, numbers:[...], status, paid_at, amount_cents }]
   if (payPayload) {
-    const list = Array.isArray(payPayload) ? payPayload : payPayload.payments || payPayload.items || [];
+    const list = Array.isArray(payPayload)
+      ? payPayload
+      : payPayload.payments || payPayload.items || [];
     return list.flatMap(p => {
       const drawId = p.draw_id ?? p.drawId ?? p.sorteio_id ?? null;
       const numbers = Array.isArray(p.numbers) ? p.numbers : [];
       const payStatus = p.status || p.paymentStatus || "pending";
       const when = p.paid_at || p.created_at || p.updated_at || null;
-      return numbers.map(n => ({ draw_id: drawId, number: Number(n), status: payStatus, when }));
+      return numbers.map(n => ({
+        draw_id: drawId,
+        number: Number(n),
+        status: payStatus,
+        when,
+        expires_at: p.expires_at || p.expire_at || null,
+      }));
     });
   }
+
+  // reservations: { reservations:[{ draw_id, n, status, created_at, paid_at, reserved_until/expires_at }] }
   if (reservationsPayload) {
     const list = reservationsPayload.reservations || reservationsPayload.items || [];
     return list.map(r => ({
@@ -73,8 +89,10 @@ function normalizeToEntries(payPayload, reservationsPayload) {
       number: r.n ?? r.number ?? r.numero,
       status: (String(r.status || "").toLowerCase() === "sold") ? "approved" : "pending",
       when: r.paid_at || r.created_at || r.updated_at || null,
+      expires_at: r.reserved_until || r.expires_at || r.expire_at || null,
     }));
   }
+
   return [];
 }
 
@@ -92,9 +110,7 @@ export default function AccountPage() {
   const [validade] = React.useState("28/10/25");
   const [syncing, setSyncing] = React.useState(false);
 
-  const handleOpenMenu = (e) => setMenuEl(e.currentTarget);
   const doLogout = () => { setMenuEl(null); logout(); navigate("/"); };
-
   const storedMe = React.useMemo(() => {
     try { return JSON.parse(localStorage.getItem("me") || "null"); } catch { return null; }
   }, []);
@@ -103,6 +119,7 @@ export default function AccountPage() {
     let alive = true;
     (async () => {
       try {
+        // /me
         let me = ctxUser || storedMe || null;
         try {
           const meResp = await getJSON("/me");
@@ -113,7 +130,16 @@ export default function AccountPage() {
           try { if (me) localStorage.setItem("me", JSON.stringify(me)); } catch {}
         }
 
-        const { data: pay, from } = await tryManyJson(["/payments/me", "/me/reservations", "/reservations/me"]);
+        // pagamentos OU reservas (prefira ativos)
+        const { data: pay, from } = await tryManyJson([
+          "/payments/me",
+          "/me/reservations?active=1",
+          "/reservations/me?active=1",
+          "/me/reservations",
+          "/reservations/me",
+        ]);
+
+        // draws (status)
         let drawsMap = new Map();
         try {
           const draws = await getJSON("/draws");
@@ -122,14 +148,43 @@ export default function AccountPage() {
         } catch {}
 
         if (alive && pay) {
-          const entries = normalizeToEntries(from === "/payments/me" ? pay : null, from !== "/payments/me" ? pay : null);
-          const tableRows = entries.map(e => ({
+          const entries = normalizeToEntries(
+            from === "/payments/me" ? pay : null,
+            from !== "/payments/me" ? pay : null
+          );
+
+          // —— filtro: remover reservas expiradas ——
+          const now = Date.now();
+          const ttlMs = TTL_MINUTES * 60 * 1000;
+          const filtered = entries.filter(e => {
+            const st = String(e.status || "").toLowerCase();
+            // Pagos/histórico sempre aparecem
+            if (["approved","paid","pago"].includes(st)) return true;
+
+            // Pendentes expiram por campo explícito…
+            if (e.expires_at) {
+              const expMs = new Date(e.expires_at).getTime();
+              if (!isNaN(expMs)) return expMs > now;
+            }
+            // …ou por TTL contado a partir de 'when'
+            if (e.when) {
+              const whenMs = new Date(e.when).getTime();
+              if (!isNaN(whenMs)) return (whenMs + ttlMs) > now;
+            }
+            // Sem data → mantém (para não esconder algo válido por erro de payload)
+            return true;
+          });
+
+          // monta linhas
+          const tableRows = filtered.map(e => ({
             sorteio: e.draw_id != null ? String(e.draw_id) : "--",
             numero: Number(e.number),
             dia: e.when ? new Date(e.when).toLocaleDateString("pt-BR") : "--/--/----",
             pagamento: e.status,
             resultado: drawsMap.get(Number(e.draw_id)) || "aberto",
           }));
+
+          // pendentes primeiro
           tableRows.sort((a, b) => {
             const ap = String(a.pagamento).toLowerCase() === "pending";
             const bp = String(b.pagamento).toLowerCase() === "pending";
@@ -137,8 +192,10 @@ export default function AccountPage() {
             if (!ap && bp) return 1;
             return 0;
           });
+
           setRows(tableRows);
 
+          // total acumulado (apenas payments aprovados)
           let totalCents = 0;
           if (from === "/payments/me") {
             const list = Array.isArray(pay) ? pay : (pay.payments || []);
@@ -154,6 +211,7 @@ export default function AccountPage() {
     return () => { alive = false; };
   }, [ctxUser, storedMe]);
 
+  // sincroniza cupom
   React.useEffect(() => {
     let alive = true;
     (async () => {
@@ -186,7 +244,8 @@ export default function AccountPage() {
   }, [valorAcumulado]);
 
   const u = user || {};
-  const headingName = u.name || u.fullName || u.nome || u.displayName || u.username || u.email || "NOME DO CLIENTE";
+  const headingName =
+    u.name || u.fullName || u.nome || u.displayName || u.username || u.email || "NOME DO CLIENTE";
   const cardEmail = u.email || (u.username?.includes?.("@") ? u.username : headingName);
   const couponCode = u?.coupon_code || cupom || "CUPOMAQUI";
   const isAdminUser = !!(u?.is_admin || u?.role === "admin" || (u?.email && u.email.toLowerCase() === ADMIN_EMAIL));
@@ -222,7 +281,6 @@ export default function AccountPage() {
         </Toolbar>
       </AppBar>
 
-      {/* ⬅️ VOLTA A LARGURA DE DESKTOP */}
       <Container maxWidth="lg" sx={{ py: { xs: 2.5, md: 5 } }}>
         <Stack spacing={2.5}>
           <Typography
@@ -234,7 +292,7 @@ export default function AccountPage() {
             {headingName}
           </Typography>
 
-          {/* Cartão (permanece compacto para não “esticar” demais no desktop) */}
+          {/* Cartão */}
           <Box sx={{ width: "100%", display: "flex", justifyContent: "center" }}>
             <Paper
               elevation={0}
@@ -312,7 +370,7 @@ export default function AccountPage() {
             </Paper>
           </Box>
 
-          {/* Tabela responsiva ocupando a largura do Container lg no desktop */}
+          {/* Tabela */}
           <Paper variant="outlined" sx={{ p: { xs: 1, md: 2 } }}>
             {loading ? (
               <Box sx={{ px: 2, py: 1 }}><LinearProgress /></Box>
