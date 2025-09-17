@@ -32,12 +32,13 @@ import {
 } from '@mui/material';
 import AccountCircleRoundedIcon from '@mui/icons-material/AccountCircleRounded';
 
+// Imagens locais
 import imgCardExemplo from './cartaoilustrativoTexto-do-seu-paragrafo-6-1024x1024.png';
 import imgTabelaUtilizacao from './Tabela-para-utilizacao-do-3-1024x1024.png';
 import imgAcumulo1 from './1-2-1-1024x512.png';
 import imgAcumulo2 from './2-1-1-1024x512.png';
 
-// === Tema
+// Tema
 const theme = createTheme({
   palette: {
     mode: 'dark',
@@ -53,18 +54,25 @@ const theme = createTheme({
   },
 });
 
-// === Consts/Helpers
+// Helpers
 const pad2 = (n) => n.toString().padStart(2, '0');
-const FRONT_HARD_MAX = Number(process.env.REACT_APP_MAX_NUMBERS_PER_USER || 20);
+const FRONT_MAX_SELECT = Number(process.env.REACT_APP_MAX_NUMBERS_PER_USER || 20);
+
+// Link externo
 const RESULTADOS_LOTERIAS = 'https://asloterias.com.br/todos-resultados-loteria-federal';
+
+// Mocks
 const MOCK_RESERVADOS = [];
 const MOCK_INDISPONIVEIS = [];
+
+// Base do backend
 const API_BASE = (
   process.env.REACT_APP_API_BASE_URL ||
   process.env.REACT_APP_API_BASE ||
   'https://newstore-backend.onrender.com'
 ).replace(/\/+$/, '');
 
+// ===== Helpers de auth + reserva/limite =====
 function sanitizeToken(t) {
   if (!t) return '';
   let s = String(t).trim();
@@ -85,7 +93,6 @@ function getAuthToken() {
   }
 }
 
-// === API helpers
 async function reserveNumbers(numbers) {
   const token = getAuthToken();
   const headers = { 'Content-Type': 'application/json' };
@@ -100,61 +107,56 @@ async function reserveNumbers(numbers) {
 
   if (r.status === 409) {
     const j = await r.json().catch(() => ({}));
-    if (j?.code === 'max_numbers_reached' || j?.error === 'max_numbers_reached') {
-      const err = new Error('max_numbers_reached');
-      err.code = 'max_numbers_reached';
-      err.payload = j?.payload; // { current, max }
-      throw err;
-    }
     const c = j?.conflicts || j?.n || [];
     throw new Error(
-      Array.isArray(c) && c.length
-        ? `Alguns números ficaram indisponíveis: ${c.join(', ')}`
-        : (j?.error || 'Falha ao reservar')
+      `Alguns números ficaram indisponíveis: ${Array.isArray(c) ? c.join(', ') : c}`
     );
   }
-
   if (!r.ok) {
     const j = await r.json().catch(() => ({}));
     throw new Error(j?.error || 'Falha ao reservar');
   }
-
   return r.json(); // { reservationId, drawId, expiresAt, numbers }
 }
 
+// Checagem do limite no backend
 async function checkUserPurchaseLimit({ addCount = 0, drawId } = {}) {
   const qs = new URLSearchParams();
-  qs.set('add', String(Math.max(0, addCount)));
+  qs.set('add', String(addCount));
   if (drawId != null) qs.set('draw_id', String(drawId));
 
-  // 1ª tentativa: sem headers (evita preflight)
-  let res = await fetch(`${API_BASE}/api/purchase-limit/check?${qs}`, {
+  const token = getAuthToken();
+  const headers = token ? { Authorization: `Bearer ${token}` } : undefined;
+
+  const res = await fetch(`${API_BASE}/api/purchase-limit/check?${qs}`, {
     credentials: 'include',
     cache: 'no-store',
+    headers,
   });
 
-  // 2ª tentativa com Authorization (se exigido)
-  if (res.status === 401) {
-    const token = getAuthToken();
-    const headers = token ? { Authorization: `Bearer ${token}` } : undefined;
-    res = await fetch(`${API_BASE}/api/purchase-limit/check?${qs}`, {
-      credentials: 'include',
-      cache: 'no-store',
-      headers,
-    });
-  }
-
+  if (res.status === 401) throw new Error('unauthorized');
   if (!res.ok) throw new Error(`limit_check_${res.status}`);
 
   const j = await res.json().catch(() => ({}));
-  const current = Number(j?.current ?? j?.cnt ?? j?.count ?? 0);
-  const max = Number(j?.max ?? j?.limit ?? j?.MAX ?? FRONT_HARD_MAX);
-  const blocked = !!(j?.blocked ?? j?.limitReached ?? j?.reached ?? j?.exceeded ?? (current >= max));
-  const remaining = Math.max(0, max - current);
-  return { blocked, current, max, remaining };
+
+  // Extrai números
+  const current = Number(j?.current ?? j?.cnt ?? j?.count);
+  const max = Number(j?.max ?? j?.limit ?? j?.MAX ?? FRONT_MAX_SELECT);
+
+  // Se o payload for estranho (não-numérico), trata como falha => bloqueia
+  const validNumbers = Number.isFinite(current) && Number.isFinite(max);
+  if (!validNumbers) throw new Error('invalid_limit_payload');
+
+  // Sinalizadores do back
+  const serverBlocked = !!(j?.blocked ?? j?.limitReached ?? j?.reached ?? j?.exceeded);
+
+  // Protege também por soma (servidor pode não considerar addCount)
+  const willExceed = (current + addCount) > max;
+
+  return { blocked: serverBlocked || willExceed, current, max };
 }
 
-// === Página
+
 export default function NewStorePage({
   reservados = MOCK_RESERVADOS,
   indisponiveis = MOCK_INDISPONIVEIS,
@@ -165,100 +167,75 @@ export default function NewStorePage({
   const { selecionados, setSelecionados, limparSelecao } = React.useContext(SelectionContext);
   const { user, token, logout } = useAuth();
   const isAuthenticated = !!(user?.email || user?.id || token);
+
   const logoTo = isAuthenticated ? '/conta' : '/';
 
-  // Estado vindo do backend
+  // Estados vindos do backend
   const [srvReservados, setSrvReservados] = React.useState([]);
   const [srvIndisponiveis, setSrvIndisponiveis] = React.useState([]);
 
-  // Preço
+  // Preço dinâmico
   const FALLBACK_PRICE = Number(process.env.REACT_APP_PIX_PRICE) || 55;
   const [unitPrice, setUnitPrice] = React.useState(FALLBACK_PRICE);
 
   // Draw atual
   const [currentDrawId, setCurrentDrawId] = React.useState(null);
 
-  // Limite (status do backend)
-  const [limitOpen, setLimitOpen] = React.useState(false);
-  const [limitInfo, setLimitInfo] = React.useState({ type: 'purchase', current: undefined, max: undefined });
-  const [limitRemaining, setLimitRemaining] = React.useState(FRONT_HARD_MAX); // quanto ainda pode comprar neste sorteio
+  // Limite do usuário (no total da conta)
+  const [userLimit, setUserLimit] = React.useState({
+    loaded: false,
+    blocked: false,
+    current: 0,
+    max: FRONT_MAX_SELECT,
+  });
 
-  const openLimitModal = (info) => { setLimitInfo(info || { type: 'purchase' }); setLimitOpen(true); };
-
-  // Modal de confirmação
-  const [open, setOpen] = React.useState(false);
-  const handleAbrirConfirmacao = () => setOpen(true);
-  const handleFechar = () => setOpen(false);
-
-  // PIX modal
-  const [pixOpen, setPixOpen] = React.useState(false);
-  const [pixLoading, setPixLoading] = React.useState(false);
-  const [pixData, setPixData] = React.useState(null);
-  const [pixAmount, setPixAmount] = React.useState(0);
-  const [pixApproved, setPixApproved] = React.useState(false);
-  const handlePixApproved = React.useCallback(() => {
-    setPixApproved(true);
-    setPixOpen(false);
-    setPixLoading(false);
-  }, []);
-
-  // === Buscar preço e draw
+  // === Buscar preço (1 endpoint estável) e tentar obter draw atual ===
   React.useEffect(() => {
     let alive = true;
 
-    async function fetchJSON(path) {
-      const res = await fetch(`${API_BASE}${path.startsWith('/') ? '' : '/'}${path}`, {
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        cache: 'no-store',
-      });
-      if (!res.ok) throw new Error(String(res.status));
-      return res.json();
-    }
-
-    (async () => {
-      const candidates = [
-        '/api/summary',
-        '/summary',
-        '/api/dashboard/summary',
-        '/dashboard/summary',
-        '/api/draws/current',
-        '/draws/current',
-      ];
-
-      for (const p of candidates) {
-        try {
-          const j = await fetchJSON(p);
+    async function loadConfig() {
+      try {
+        // Preço público
+        const r = await fetch(`${API_BASE}/api/config`, {
+          credentials: 'include',
+          cache: 'no-store',
+        });
+        if (r.ok) {
+          const j = await r.json();
           const cents =
+            j?.ticket_price_cents ??
             j?.price_cents ??
             j?.priceCents ??
-            j?.current?.price_cents ??
-            j?.current_draw?.price_cents ??
-            (Array.isArray(j?.draws) ? j.draws[0]?.price_cents : undefined);
-
-          const reaisRaw = j?.price ?? j?.preco;
+            j?.preco_centavos;
+          const reaisRaw = j?.ticket_price ?? j?.price ?? j?.preco;
           const reais = cents != null ? Number(cents) / 100 : Number(reaisRaw);
-          if (Number.isFinite(reais) && reais > 0 && alive) setUnitPrice(reais);
-
+          if (alive && Number.isFinite(reais) && reais > 0) setUnitPrice(reais);
+        }
+      } catch {}
+      try {
+        // Tenta pegar draw atual (apenas 1 request para evitar 404s no console)
+        const r2 = await fetch(`${API_BASE}/api/draws/current`, {
+          credentials: 'include',
+          cache: 'no-store',
+        });
+        if (r2.ok) {
+          const j2 = await r2.json().catch(() => ({}));
           const did =
-            j?.draw_id ?? j?.id ?? j?.current?.id ??
-            j?.current_draw?.id ??
-            (Array.isArray(j?.draws) ? j.draws[0]?.id : undefined);
-          if (did != null && alive) setCurrentDrawId(did);
+            j2?.draw_id ?? j2?.id ?? j2?.current?.id ?? j2?.current_draw?.id;
+          if (alive && did != null) setCurrentDrawId(did);
+        }
+      } catch {}
+    }
 
-          return; // primeira que funcionar já resolve
-        } catch {}
-      }
-    })();
-
+    loadConfig();
     return () => { alive = false; };
   }, []);
 
-  // === Polling /api/numbers
+  // Polling leve de /api/numbers (disponibilidade)
   React.useEffect(() => {
     let alive = true;
 
-    async function load() {
+    async function loadNumbers() {
       try {
         const res = await fetch(`${API_BASE}/api/numbers`, {
           headers: { 'Content-Type': 'application/json' },
@@ -268,7 +245,7 @@ export default function NewStorePage({
         if (!res.ok) return;
         const j = await res.json();
         const reserv = [];
-        const indis  = [];
+        const indis = [];
         for (const it of j?.numbers || []) {
           const st = String(it.status || '').toLowerCase();
           if (st === 'reserved') reserv.push(Number(it.n));
@@ -280,10 +257,32 @@ export default function NewStorePage({
       } catch {}
     }
 
-    load();
-    const id = setInterval(load, 15000);
+    loadNumbers();
+    const id = setInterval(loadNumbers, 15000);
     return () => { alive = false; clearInterval(id); };
   }, []);
+
+  // Carregar o limite total do usuário (se logado)
+  React.useEffect(() => {
+  let alive = true;
+  async function loadLimit() {
+    if (!isAuthenticated) {
+      setUserLimit((u) => ({ ...u, loaded: true, blocked: false, current: 0, max: FRONT_MAX_SELECT }));
+      return;
+    }
+    try {
+      const { blocked, current, max } = await checkUserPurchaseLimit({ addCount: 0, drawId: currentDrawId });
+      if (!alive) return;
+      setUserLimit({ loaded: true, blocked, current, max: Number(max || FRONT_MAX_SELECT) });
+    } catch {
+      // Falhou ou payload inválido? BLOQUEIA por segurança
+      if (!alive) return;
+      setUserLimit({ loaded: true, blocked: true, current: undefined, max: FRONT_MAX_SELECT });
+    }
+  }
+  loadLimit();
+}, [isAuthenticated, currentDrawId]);
+
 
   const reservadosAll = React.useMemo(
     () => Array.from(new Set([...(reservados || []), ...srvReservados])),
@@ -294,38 +293,7 @@ export default function NewStorePage({
     [indisponiveis, srvIndisponiveis]
   );
 
-  // === Pré-checa limite assim que tiver auth + draw
-  React.useEffect(() => {
-    let cancelled = false;
-    async function run() {
-      if (!isAuthenticated || currentDrawId == null) {
-        setLimitRemaining(FRONT_HARD_MAX);
-        return;
-      }
-      try {
-        const r = await checkUserPurchaseLimit({ addCount: 0, drawId: currentDrawId });
-        if (cancelled) return;
-
-        const allowed = Math.min(FRONT_HARD_MAX, r.remaining);
-        setLimitRemaining(allowed);
-
-        if (r.blocked || allowed <= 0) {
-          openLimitModal({ type: 'purchase', current: r.current, max: r.max });
-        }
-      } catch (_e) {
-        // Se não conseguimos checar a base, seja conservador e bloqueie
-        setLimitRemaining(0);
-        openLimitModal({ type: 'purchase' });
-      }
-    }
-    run();
-    return () => { cancelled = true; };
-  }, [isAuthenticated, currentDrawId]);
-
-  // === Máximo permitido nesta tela (teto do front ∩ teto restante do backend)
-  const ALLOWED_MAX = Math.max(0, Math.min(FRONT_HARD_MAX, limitRemaining ?? FRONT_HARD_MAX));
-
-  // === Menu/avatar
+  // menu avatar
   const [menuEl, setMenuEl] = React.useState(null);
   const menuOpen = Boolean(menuEl);
   const handleOpenMenu = (e) => setMenuEl(e.currentTarget);
@@ -334,96 +302,71 @@ export default function NewStorePage({
   const goLogin = () => { handleCloseMenu(); navigate('/login'); };
   const doLogout = () => { handleCloseMenu(); logout(); navigate('/'); };
 
-  // === Seleção com teto dinâmico
-  const isReservado = (n) => reservadosAll.includes(n);
-  const isIndisponivel = (n) => indisponiveisAll.includes(n);
-  const isSelecionado = (n) => selecionados.includes(n);
+  // modal (confirmação)
+  const [open, setOpen] = React.useState(false);
+  const handleAbrirConfirmacao = () => setOpen(true);
+  const handleFechar = () => setOpen(false);
 
-  const handleClickNumero = (n) => {
-    if (isIndisponivel(n) || ALLOWED_MAX <= 0) return;
-    setSelecionados((prev) => {
-      const already = prev.includes(n);
-      if (already) return prev.filter((x) => x !== n);
+  // PIX modal
+  const [pixOpen, setPixOpen] = React.useState(false);
+  const [pixLoading, setPixLoading] = React.useState(false);
+  const [pixData, setPixData] = React.useState(null);
+  const [pixAmount, setPixAmount] = React.useState(0);
 
-      if (prev.length >= ALLOWED_MAX) {
-        openLimitModal({
-          type: 'selection',
-          current: ALLOWED_MAX,
-          max: ALLOWED_MAX,
-        });
-        return prev;
-      }
-      return [...prev, n];
-    });
-  };
+  // sucesso PIX
+  const [pixApproved, setPixApproved] = React.useState(false);
+  const handlePixApproved = React.useCallback(() => {
+    setPixApproved(true);
+    setPixOpen(false);
+    setPixLoading(false);
+  }, []);
 
-  const getCellSx = (n) => {
-    if (isIndisponivel(n)) {
-      return {
-        border: '2px solid',
-        borderColor: 'error.main',
-        bgcolor: 'rgba(211,47,47,0.15)',
-        color: 'grey.300',
-        cursor: 'not-allowed',
-        opacity: 0.85,
-      };
+  // === Modal de limite ===
+  const [limitOpen, setLimitOpen] = React.useState(false);
+  const [limitInfo, setLimitInfo] = React.useState({ type: 'purchase', current: undefined, max: undefined });
+  const openLimitModal = (info) => { setLimitInfo(info || { type: 'purchase' }); setLimitOpen(true); };
+
+  // Gate de segurança (bloqueia se checagem falhar ou se estourar o teto)
+  async function ensureCanBuy(addCount) {
+  // Checagem no servidor (fail-closed)
+  try {
+    const { blocked, current, max } = await checkUserPurchaseLimit({ addCount, drawId: currentDrawId });
+    if (blocked) {
+      openLimitModal({ type: 'purchase', current, max });
+      return false;
     }
-    if (isSelecionado(n) || isReservado(n)) {
-      return { border: '2px solid', borderColor: 'secondary.main', bgcolor: 'rgba(255,193,7,0.12)' };
-    }
-    return {
-      border: '2px solid rgba(255,255,255,0.08)',
-      bgcolor: 'primary.main',
-      color: '#0E0E0E',
-      '&:hover': { filter: 'brightness(0.95)' },
-      transition: 'filter 120ms ease',
-      cursor: ALLOWED_MAX > 0 ? 'pointer' : 'not-allowed',
-      opacity: ALLOWED_MAX > 0 ? 1 : 0.6,
-    };
-  };
+  } catch {
+    openLimitModal({ type: 'purchase', current: userLimit.current, max: userLimit.max });
+    return false;
+  }
 
-  // === Ir para pagamento
+ // Dupla conferência com o snapshot local
+  const owned = Number(userLimit.current ?? 0);
+  const maxLocal = Number(userLimit.max ?? FRONT_MAX_SELECT);
+  if (Number.isFinite(owned) && Number.isFinite(maxLocal) && (owned + addCount) > maxLocal) {
+    openLimitModal({ type: 'purchase', current: owned, max: maxLocal });
+    return false;
+  }
+
+  return true;
+}
+
+
   const handleIrPagamento = async () => {
     setOpen(false);
 
+    // precisa estar logado
     if (!isAuthenticated) {
       navigate('/login', { replace: false, state: { from: '/', wantPay: true } });
       return;
     }
 
-    // Checagem local com teto restante
-    if (selecionados.length > ALLOWED_MAX) {
-      openLimitModal({ type: 'purchase' });
-      return;
-    }
+    // Revalida teto total (fail-closed)
+    const addCount = selecionados.length || 1;
+    const ok = await ensureCanBuy(addCount);
+    if (!ok) return;
 
-    // CHECAGEM #1 (status atual)
-    try {
-      const pre = await checkUserPurchaseLimit({ addCount: 0, drawId: currentDrawId });
-      if (pre.blocked || pre.remaining <= 0) {
-        openLimitModal({ type: 'purchase', current: pre.current, max: pre.max });
-        return;
-      }
-    } catch {
-      // se falhar, não prossegue
-      openLimitModal({ type: 'purchase' });
-      return;
-    }
-
-    // CHECAGEM #2 (com a seleção)
-    try {
-      const addCount = selecionados.length || 1;
-      const { blocked, current, max } = await checkUserPurchaseLimit({ addCount, drawId: currentDrawId });
-      if (blocked) {
-        openLimitModal({ type: 'purchase', current, max });
-        return;
-      }
-    } catch {
-      openLimitModal({ type: 'purchase' });
-      return;
-    }
-
-    // fluxo normal
+    // fluxo normal de pagamento
     const amount = selecionados.length * unitPrice;
     setPixAmount(amount);
     setPixOpen(true);
@@ -439,16 +382,14 @@ export default function NewStorePage({
         reservationId,
       });
       setPixData(data);
+
+      // Atualiza contagem do usuário após reservar
+      try {
+        const ul = await checkUserPurchaseLimit({ addCount: 0, drawId: currentDrawId });
+        setUserLimit({ loaded: true, ...ul });
+      } catch {}
     } catch (e) {
-      if (e?.code === 'max_numbers_reached') {
-        openLimitModal({
-          type: 'purchase',
-          current: e?.payload?.current,
-          max: e?.payload?.max,
-        });
-      } else {
-        alert(e.message || 'Falha ao gerar PIX');
-      }
+      alert(e.message || 'Falha ao gerar PIX');
       setPixOpen(false);
     } finally {
       setPixLoading(false);
@@ -466,6 +407,77 @@ export default function NewStorePage({
     }, 3500);
     return () => clearInterval(id);
   }, [pixOpen, pixData, pixApproved, handlePixApproved]);
+
+  // Seleção com dois tetos:
+  // - teto visual por rodada (FRONT_MAX_SELECT) para UX
+  // - teto TOTAL da conta (userLimit.max) = (já comprou) + (seleção atual)
+  const isReservado = (n) => reservadosAll.includes(n);
+  const isIndisponivel = (n) => indisponiveisAll.includes(n);
+  const isSelecionado = (n) => selecionados.includes(n);
+
+  const handleClickNumero = (n) => {
+    if (isIndisponivel(n)) return;
+    setSelecionados((prev) => {
+      const already = prev.includes(n);
+      if (already) return prev.filter((x) => x !== n);
+
+      // Bloqueia se o usuário já está no teto total
+      const maxTotal = Number(userLimit?.max ?? FRONT_MAX_SELECT);
+      const owned = Number(userLimit?.current ?? 0);
+      if (Number.isFinite(maxTotal) && Number.isFinite(owned) && owned >= maxTotal) {
+        openLimitModal({ type: 'purchase', current: owned, max: maxTotal });
+        return prev;
+      }
+
+      // Checa se adicionar mais 1 estoura o teto TOTAL
+      const newTotal = owned + prev.length + 1;
+      if (Number.isFinite(maxTotal) && newTotal > maxTotal) {
+        openLimitModal({ type: 'purchase', current: owned, max: maxTotal });
+        return prev;
+      }
+
+      // Teto visual (por seleção atual)
+      if (prev.length >= FRONT_MAX_SELECT) {
+        openLimitModal({ type: 'selection', current: FRONT_MAX_SELECT, max: FRONT_MAX_SELECT });
+        return prev;
+      }
+
+      return [...prev, n];
+    });
+  };
+
+  // Estado de “bloqueado” para o botão continuar
+  const selectionWouldExceed =
+    Number.isFinite(userLimit?.max) &&
+    Number.isFinite(userLimit?.current) &&
+    (userLimit.current + selecionados.length > userLimit.max);
+
+  const getCellSx = (n) => {
+    if (isIndisponivel(n)) {
+      return {
+        border: '2px solid',
+        borderColor: 'error.main',
+        bgcolor: 'rgba(211,47,47,0.15)',
+        color: 'grey.300',
+        cursor: 'not-allowed',
+        opacity: 0.85,
+      };
+    }
+    if (isSelecionado(n) || isReservado(n)) {
+      return {
+        border: '2px solid',
+        borderColor: 'secondary.main',
+        bgcolor: 'rgba(255,193,7,0.12)',
+      };
+    }
+    return {
+      border: '2px solid rgba(255,255,255,0.08)',
+      bgcolor: 'primary.main',
+      color: '#0E0E0E',
+      '&:hover': { filter: 'brightness(0.95)' },
+      transition: 'filter 120ms ease',
+    };
+  };
 
   return (
     <ThemeProvider theme={theme}>
@@ -535,9 +547,14 @@ export default function NewStorePage({
                 <Chip size="small" label="DISPONÍVEL" sx={{ bgcolor: 'primary.main', color: '#0E0E0E', fontWeight: 700 }} />
                 <Chip size="small" label="RESERVADO" sx={{ bgcolor: 'rgba(255,193,7,0.18)', border: '1px solid', borderColor: 'secondary.main', color: 'secondary.main', fontWeight: 700 }} />
                 <Chip size="small" label="INDISPONÍVEL" sx={{ bgcolor: 'rgba(211,47,47,0.18)', border: '1px solid', borderColor: 'error.main', color: 'error.main', fontWeight: 700 }} />
+                {!!isAuthenticated && userLimit.loaded && (
+                  <Typography variant="body2" sx={{ ml: 1, opacity: 0.8 }}>
+                    • Você tem <strong>{Number.isFinite(userLimit.current) ? userLimit.current : '-'}</strong> de {Number.isFinite(userLimit.max) ? userLimit.max : '-'} possíveis
+                  </Typography>
+                )}
                 {!!selecionados.length && (
-                  <Typography variant="body2" sx={{ ml: 0.5, opacity: 0.8 }}>
-                    • {selecionados.length} selecionado(s) (máx. {ALLOWED_MAX})
+                  <Typography variant="body2" sx={{ ml: 1, opacity: 0.8 }}>
+                    • {selecionados.length} selecionado(s) (máx. {FRONT_MAX_SELECT} por seleção)
                   </Typography>
                 )}
               </Stack>
@@ -549,7 +566,7 @@ export default function NewStorePage({
                 <Button
                   variant="contained"
                   color="success"
-                  disabled={!selecionados.length || ALLOWED_MAX <= 0}
+                  disabled={!selecionados.length || selectionWouldExceed || (isAuthenticated && userLimit.blocked)}
                   onClick={handleAbrirConfirmacao}
                 >
                   CONTINUAR
@@ -559,17 +576,7 @@ export default function NewStorePage({
 
             {/* Grid 10x10 */}
             <Box sx={{ width: { xs: 'calc(100vw - 32px)', sm: 'calc(100vw - 64px)', md: '100%' }, maxWidth: 640, aspectRatio: '1 / 1', mx: 'auto' }}>
-              <Box
-                sx={{
-                  display: 'grid',
-                  gridTemplateColumns: 'repeat(10, minmax(0, 1fr))',
-                  gridTemplateRows: 'repeat(10, minmax(0, 1fr))',
-                  gap: { xs: 1, md: 1.2 },
-                  height: '100%',
-                  width: '100%',
-                  boxSizing: 'border-box',
-                }}
-              >
+              <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(10, minmax(0, 1fr))', gridTemplateRows: 'repeat(10, minmax(0, 1fr))', gap: { xs: 1, md: 1.2 }, height: '100%', width: '100%', boxSizing: 'border-box' }}>
                 {Array.from({ length: 100 }).map((_, idx) => (
                   <Box
                     key={idx}
@@ -578,6 +585,7 @@ export default function NewStorePage({
                       ...getCellSx(idx),
                       borderRadius: 1.2,
                       userSelect: 'none',
+                      cursor: isIndisponivel(idx) ? 'not-allowed' : 'pointer',
                       aspectRatio: '1 / 1',
                       display: 'flex',
                       alignItems: 'center',
@@ -594,7 +602,7 @@ export default function NewStorePage({
           </Paper>
           {/* === FIM CARTELA === */}
 
-          {/* Demais seções (conteúdo institucional) */}
+          {/* Demais seções */}
           <Paper variant="outlined" sx={{ p: { xs: 2, md: 3 } }}>
             <Stack spacing={1.5}>
               <Typography sx={{ color: '#ff6b6b', fontWeight: 800, letterSpacing: 0.5 }}>
@@ -680,9 +688,11 @@ export default function NewStorePage({
               <Typography variant="body1" sx={{ mt: 0.5, mb: 1 }}>
                 Total: <strong>R$ {(selecionados.length * unitPrice).toFixed(2)}</strong>
               </Typography>
-              <Typography variant="caption" sx={{ opacity: 0.7 }}>
-                Você pode voltar e ajustar a seleção, se quiser.
-              </Typography>
+              {selectionWouldExceed && (
+                <Typography color="error" sx={{ fontWeight: 700 }}>
+                  Essa seleção ultrapassa seu limite total ({userLimit.current ?? '-'} de {userLimit.max ?? '-'}).
+                </Typography>
+              )}
             </>
           ) : (
             <Typography variant="body2" sx={{ opacity: 0.8 }}>
@@ -697,13 +707,19 @@ export default function NewStorePage({
           <Button variant="outlined" color="error" onClick={() => { limparSelecao(); setOpen(false); }} disabled={!selecionados.length} sx={{ py: 1.2, fontWeight: 700 }}>
             LIMPAR SELEÇÃO
           </Button>
-          <Button variant="contained" color="success" onClick={handleIrPagamento} disabled={!selecionados.length || ALLOWED_MAX <= 0} sx={{ py: 1.2, fontWeight: 700 }}>
+          <Button
+            variant="contained"
+            color="success"
+            onClick={handleIrPagamento}
+            disabled={!selecionados.length || selectionWouldExceed || (isAuthenticated && userLimit.blocked)}
+            sx={{ py: 1.2, fontWeight: 700 }}
+          >
             IR PARA PAGAMENTO
           </Button>
         </DialogActions>
       </Dialog>
 
-      {/* Modal PIX */}
+      {/* Modal PIX (QR) */}
       <PixModal
         open={pixOpen}
         onClose={() => { setPixOpen(false); setPixApproved(false); }}
@@ -720,7 +736,7 @@ export default function NewStorePage({
             } else {
               alert(`Status: ${st.status || 'pendente'}`);
             }
-          } catch {
+          } catch (e) {
             alert('Não foi possível consultar o status agora.');
           }
         }}
@@ -750,14 +766,14 @@ export default function NewStorePage({
       <Dialog open={limitOpen} onClose={() => setLimitOpen(false)} maxWidth="xs" fullWidth PaperProps={{ sx: { borderRadius: 3 } }}>
         <DialogTitle sx={{ fontSize: 20, fontWeight: 900, textAlign: 'center' }}>
           {limitInfo?.type === 'selection'
-            ? 'Você pode selecionar no máximo 20 números'
+            ? 'Você pode selecionar no máximo 20 números por vez'
             : 'Número máximo de compras por usuário atingido'}
         </DialogTitle>
         <DialogContent sx={{ textAlign: 'center' }}>
           <Typography sx={{ opacity: 0.9 }}>
             {limitInfo?.type === 'selection'
               ? 'Para continuar, remova um número antes de adicionar outro.'
-              : 'Você já alcançou o limite de números neste sorteio.'}
+              : 'Você já alcançou o limite de números neste sorteio/conta.'}
           </Typography>
           {(Number.isFinite(limitInfo?.current) || Number.isFinite(limitInfo?.max)) && (
             <Typography sx={{ mt: 1, fontWeight: 700 }}>
