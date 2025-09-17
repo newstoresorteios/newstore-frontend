@@ -93,6 +93,8 @@ function getAuthToken() {
     return '';
   }
 }
+
+// === reserva com tratamento de limite atingido ===
 async function reserveNumbers(numbers) {
   const token = getAuthToken();
   const headers = { 'Content-Type': 'application/json' };
@@ -107,15 +109,29 @@ async function reserveNumbers(numbers) {
 
   if (r.status === 409) {
     const j = await r.json().catch(() => ({}));
+
+    // limite do backend
+    if (j?.code === 'max_numbers_reached' || j?.error === 'max_numbers_reached') {
+      const err = new Error('max_numbers_reached');
+      err.code = 'max_numbers_reached';
+      err.payload = j?.payload; // { current, max }
+      throw err;
+    }
+
+    // conflitos de números
     const c = j?.conflicts || j?.n || [];
     throw new Error(
-      `Alguns números ficaram indisponíveis: ${Array.isArray(c) ? c.join(', ') : c}`
+      Array.isArray(c) && c.length
+        ? `Alguns números ficaram indisponíveis: ${c.join(', ')}`
+        : (j?.error || 'Falha ao reservar')
     );
   }
+
   if (!r.ok) {
     const j = await r.json().catch(() => ({}));
     throw new Error(j?.error || 'Falha ao reservar');
   }
+
   return r.json(); // { reservationId, drawId, expiresAt, numbers }
 }
 
@@ -225,6 +241,7 @@ export default function NewStorePage({
           return;
         } catch {}
       }
+      // fica no fallback se nada respondeu
     })();
 
     return () => { alive = false; };
@@ -303,65 +320,27 @@ export default function NewStorePage({
   const [limitInfo, setLimitInfo] = React.useState({ type: 'purchase', current: undefined, max: undefined });
   const openLimitModal = (info) => { setLimitInfo(info || { type: 'purchase' }); setLimitOpen(true); };
 
-  const handleIrPagamento = async () => {
-    setOpen(false);
-
-    // precisa estar logado
-    if (!isAuthenticated) {
-      navigate('/login', { replace: false, state: { from: '/', wantPay: true } });
-      return;
-    }
-
-    // checa limite no servidor antes de reservar/gerar PIX
-    try {
-      const addCount = selecionados.length || 1;
-      const { blocked, current, max } = await checkUserPurchaseLimit({
-        addCount,
-        drawId: currentDrawId,
-      });
-      if (blocked) {
-        openLimitModal({ type: 'purchase', current, max });
-        return;
-      }
-    } catch (e) {
-      console.warn('[limit-check] falhou, seguindo fluxo:', e);
-    }
-
-    // fluxo normal de pagamento
-    const amount = selecionados.length * unitPrice;
-    setPixAmount(amount);
-    setPixOpen(true);
-    setPixLoading(true);
-    setPixApproved(false);
-
-    try {
-      const { reservationId } = await reserveNumbers(selecionados);
-      const data = await createPixPayment({
-        orderId: String(Date.now()),
-        amount,
-        numbers: selecionados,
-        reservationId,
-      });
-      setPixData(data);
-    } catch (e) {
-      alert(e.message || 'Falha ao gerar PIX');
-      setPixOpen(false);
-    } finally {
-      setPixLoading(false);
-    }
-  };
-
-  // Polling de status PIX
+  // Pré-checar limite assim que tiver usuário e draw
   React.useEffect(() => {
-    if (!pixOpen || !pixData?.paymentId || pixApproved) return;
-    const id = setInterval(async () => {
+    let cancelled = false;
+    if (!isAuthenticated || currentDrawId == null) return;
+
+    (async () => {
       try {
-        const st = await checkPixStatus(pixData.paymentId);
-        if (st?.status === 'approved') handlePixApproved();
-      } catch {}
-    }, 3500);
-    return () => clearInterval(id);
-  }, [pixOpen, pixData, pixApproved, handlePixApproved]);
+        const { blocked, current, max } = await checkUserPurchaseLimit({
+          addCount: 0,             // só status atual
+          drawId: currentDrawId,
+        });
+        if (!cancelled && blocked) {
+          openLimitModal({ type: 'purchase', current, max });
+        }
+      } catch {
+        // falha de rede não bloqueia
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [isAuthenticated, currentDrawId]);
 
   // Seleção com teto (front)
   const isReservado = (n) => reservadosAll.includes(n);
@@ -405,6 +384,91 @@ export default function NewStorePage({
       transition: 'filter 120ms ease',
     };
   };
+
+  // Ir para pagamento (com checagens)
+  const handleIrPagamento = async () => {
+    setOpen(false);
+
+    // precisa estar logado
+    if (!isAuthenticated) {
+      navigate('/login', { replace: false, state: { from: '/', wantPay: true } });
+      return;
+    }
+
+    // CHECAGEM #1: status atual do usuário (sem somar seleção)
+    try {
+      const pre = await checkUserPurchaseLimit({
+        addCount: 0,
+        drawId: currentDrawId,
+      });
+      if (pre.blocked) {
+        openLimitModal({ type: 'purchase', current: pre.current, max: pre.max });
+        return;
+      }
+    } catch (e) {
+      console.warn('[limit-check pre] falhou, seguindo:', e);
+    }
+
+    // CHECAGEM #2: com a seleção atual
+    try {
+      const addCount = selecionados.length || 1;
+      const { blocked, current, max } = await checkUserPurchaseLimit({
+        addCount,
+        drawId: currentDrawId,
+      });
+      if (blocked) {
+        openLimitModal({ type: 'purchase', current, max });
+        return;
+      }
+    } catch (e) {
+      console.warn('[limit-check add] falhou, seguindo:', e);
+    }
+
+    // fluxo normal de pagamento
+    const amount = selecionados.length * unitPrice;
+    setPixAmount(amount);
+    setPixOpen(true);
+    setPixLoading(true);
+    setPixApproved(false);
+
+    try {
+      const { reservationId } = await reserveNumbers(selecionados);
+
+      const data = await createPixPayment({
+        orderId: String(Date.now()),
+        amount,
+        numbers: selecionados,
+        reservationId,
+      });
+
+      setPixData(data);
+    } catch (e) {
+      if (e?.code === 'max_numbers_reached') {
+        openLimitModal({
+          type: 'purchase',
+          current: e?.payload?.current,
+          max: e?.payload?.max,
+        });
+      } else {
+        alert(e.message || 'Falha ao gerar PIX');
+      }
+      setPixOpen(false);
+    } finally {
+      setPixLoading(false);
+    }
+  };
+
+  // Polling de status PIX
+  React.useEffect(() => {
+    if (!pixOpen || !pixData?.paymentId || pixApproved) return;
+    const id = setInterval(async () => {
+      try {
+        const st = await checkPixStatus(pixData.paymentId);
+        if (st?.status === 'approved') handlePixApproved();
+      } catch {}
+    }, 3500);
+    return () => clearInterval(id);
+  }, [pixOpen, pixData, pixApproved, handlePixApproved]);
 
   return (
     <ThemeProvider theme={theme}>
@@ -469,6 +533,7 @@ export default function NewStorePage({
 
           {/* === CARTELA === */}
           <Paper variant="outlined" sx={{ p: { xs: 1.5, md: 3 }, bgcolor: 'background.paper' }}>
+            {/* Ações e legenda */}
             <Stack direction={{ xs: 'column', md: 'row' }} spacing={1.5} alignItems="center" justifyContent="space-between" sx={{ mb: 2 }}>
               <Stack direction="row" spacing={1.5} alignItems="center" flexWrap="wrap">
                 <Chip size="small" label="DISPONÍVEL" sx={{ bgcolor: 'primary.main', color: '#0E0E0E', fontWeight: 700 }} />
@@ -493,7 +558,17 @@ export default function NewStorePage({
 
             {/* Grid 10x10 */}
             <Box sx={{ width: { xs: 'calc(100vw - 32px)', sm: 'calc(100vw - 64px)', md: '100%' }, maxWidth: 640, aspectRatio: '1 / 1', mx: 'auto' }}>
-              <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(10, minmax(0, 1fr))', gridTemplateRows: 'repeat(10, minmax(0, 1fr))', gap: { xs: 1, md: 1.2 }, height: '100%', width: '100%', boxSizing: 'border-box' }}>
+              <Box
+                sx={{
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(10, minmax(0, 1fr))',
+                  gridTemplateRows: 'repeat(10, minmax(0, 1fr))',
+                  gap: { xs: 1, md: 1.2 },
+                  height: '100%',
+                  width: '100%',
+                  boxSizing: 'border-box',
+                }}
+              >
                 {Array.from({ length: 100 }).map((_, idx) => (
                   <Box
                     key={idx}
@@ -525,7 +600,12 @@ export default function NewStorePage({
               <Typography sx={{ color: '#ff6b6b', fontWeight: 800, letterSpacing: 0.5 }}>
                 imagem ilustrativa do cartão presente
               </Typography>
-              <Box component="img" src={imgCardExemplo} alt="Cartão presente - exemplo" sx={{ width: '100%', maxWidth: 800, mx: 'auto', display: 'block', borderRadius: 2 }} />
+              <Box
+                component="img"
+                src={imgCardExemplo}
+                alt="Cartão presente - exemplo"
+                sx={{ width: '100%', maxWidth: 800, mx: 'auto', display: 'block', borderRadius: 2 }}
+              />
               <Typography variant="body2" sx={{ opacity: 0.85 }}>
                 Os cartões são <strong>acumulativos</strong>, permitindo somar até <strong>R$ 4.200</strong> em um único cartão.
               </Typography>
@@ -537,7 +617,10 @@ export default function NewStorePage({
               <Typography variant="h6" fontWeight={800}>Informações do sorteio</Typography>
               <Typography variant="body1">• A posição só é considerada <strong>confirmada</strong> após a compensação do pagamento pelo número reservado.</Typography>
               <Typography variant="body1">• O sorteio é realizado <strong>após a venda de todos os cartões</strong>.</Typography>
-              <Typography variant="body1">• O resultado utiliza a <strong>Lotomania</strong> — veja em <Link href={RESULTADOS_LOTERIAS} target="_blank" rel="noopener">Resultados das loterias</Link>.</Typography>
+              <Typography variant="body1">
+                • O resultado utiliza a <strong>Lotomania</strong> — veja em{' '}
+                <Link href={RESULTADOS_LOTERIAS} target="_blank" rel="noopener">Resultados das loterias</Link>.
+              </Typography>
               <Typography variant="body1">• O <strong>ganhador</strong> é aquele que tirar o <strong>último número</strong> sorteado da Lotomania.</Typography>
               <Typography variant="body1">• Custos de entrega por conta do vencedor; envio a partir do RJ.</Typography>
               <Typography variant="body1">• Duração máxima do sorteio: <strong>7 dias</strong>.</Typography>
@@ -547,7 +630,9 @@ export default function NewStorePage({
 
           <Paper variant="outlined" sx={{ p: { xs: 2, md: 3 } }}>
             <Stack spacing={2}>
-              <Typography variant="h5" fontWeight={900}>Regras para utilização dos <Box component="span" sx={{ opacity: 0.85 }}>cartões presente</Box></Typography>
+              <Typography variant="h5" fontWeight={900}>
+                Regras para utilização dos <Box component="span" sx={{ opacity: 0.85 }}>cartões presente</Box>
+              </Typography>
               <Stack component="ul" sx={{ pl: 3, m: 0 }} spacing={1}>
                 <Typography component="li">Uso apenas no site da New Store.</Typography>
                 <Typography component="li">Não é possível comprar outro cartão-presente com cartão-presente.</Typography>
@@ -558,14 +643,23 @@ export default function NewStorePage({
                 <Typography component="li">Considerar o <strong>valor cheio do produto</strong> (tabela abaixo).</Typography>
                 <Typography component="li">Não soma com outros cupons.</Typography>
               </Stack>
-              <Box component="img" src={imgTabelaUtilizacao} alt="Tabela para utilização do cartão presente" sx={{ width: '100%', maxWidth: 900, mx: 'auto', display: 'block', borderRadius: 2, mt: 1 }} />
-              <Typography align="center" sx={{ mt: 1.5, fontWeight: 700, letterSpacing: 1 }}>CONSIDERAR O VALOR CHEIO DO PRODUTO</Typography>
+              <Box
+                component="img"
+                src={imgTabelaUtilizacao}
+                alt="Tabela para utilização do cartão presente"
+                sx={{ width: '100%', maxWidth: 900, mx: 'auto', display: 'block', borderRadius: 2, mt: 1 }}
+              />
+              <Typography align="center" sx={{ mt: 1.5, fontWeight: 700, letterSpacing: 1 }}>
+                CONSIDERAR O VALOR CHEIO DO PRODUTO
+              </Typography>
             </Stack>
           </Paper>
 
           <Paper variant="outlined" sx={{ p: { xs: 2, md: 3 } }}>
             <Stack spacing={1.5}>
-              <Typography>Dica: ao <strong>juntar cartões</strong>, a validade passa a ser a do cartão <strong>mais recente</strong>.</Typography>
+              <Typography>
+                Dica: ao <strong>juntar cartões</strong>, a validade passa a ser a do cartão <strong>mais recente</strong>.
+              </Typography>
               <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} alignItems="center" sx={{ mt: 1 }}>
                 <Box component="img" src={imgAcumulo1} alt="Exemplo de acúmulo 1" sx={{ width: '100%', maxWidth: 560, borderRadius: 2 }} />
                 <Box component="img" src={imgAcumulo2} alt="Exemplo de acúmulo 2" sx={{ width: '100%', maxWidth: 560, borderRadius: 2 }} />
@@ -574,14 +668,31 @@ export default function NewStorePage({
           </Paper>
 
           {/* Convite grupo */}
-          <Paper variant="outlined" sx={{ p: { xs: 3, md: 4 }, textAlign: 'center', bgcolor: 'rgba(103, 194, 58, 0.05)', borderColor: 'primary.main' }}>
+          <Paper
+            variant="outlined"
+            sx={{
+              p: { xs: 3, md: 4 },
+              textAlign: 'center',
+              bgcolor: 'rgba(103, 194, 58, 0.05)',
+              borderColor: 'primary.main',
+            }}
+          >
             <Typography variant="h4" fontWeight={900} sx={{ mb: 1 }}>
               Clique no link abaixo e faça parte do <br /> grupo do sorteio!
             </Typography>
             <Typography sx={{ opacity: 0.85, mb: 2 }}>
               Lá você acompanha novidades, abertura de novas rodadas e avisos importantes.
             </Typography>
-            <Button component="a" href={groupUrl} target="_blank" rel="noopener" size="large" variant="contained" color="success" sx={{ px: 4, py: 1.5, fontWeight: 800, letterSpacing: 0.5 }}>
+            <Button
+              component="a"
+              href={groupUrl}
+              target="_blank"
+              rel="noopener"
+              size="large"
+              variant="contained"
+              color="success"
+              sx={{ px: 4, py: 1.5, fontWeight: 800, letterSpacing: 0.5 }}
+            >
               SIM, EU QUERO PARTICIPAR!
             </Button>
           </Paper>
@@ -615,14 +726,33 @@ export default function NewStorePage({
             </Typography>
           )}
         </DialogContent>
-        <DialogActions sx={{ px: 3, pb: 3, gap: 1.2, flexWrap: 'wrap', flexDirection: { xs: 'column', sm: 'row' }, '& > *': { flex: 1 } }}>
+        <DialogActions
+          sx={{
+            px: 3, pb: 3, gap: 1.2,
+            flexWrap: 'wrap',
+            flexDirection: { xs: 'column', sm: 'row' },
+            '& > *': { flex: 1 },
+          }}
+        >
           <Button variant="outlined" onClick={handleFechar} sx={{ py: 1.2, fontWeight: 700 }}>
             SELECIONAR MAIS NÚMEROS
           </Button>
-          <Button variant="outlined" color="error" onClick={() => { limparSelecao(); setOpen(false); }} disabled={!selecionados.length} sx={{ py: 1.2, fontWeight: 700 }}>
+          <Button
+            variant="outlined"
+            color="error"
+            onClick={() => { limparSelecao(); setOpen(false); }}
+            disabled={!selecionados.length}
+            sx={{ py: 1.2, fontWeight: 700 }}
+          >
             LIMPAR SELEÇÃO
           </Button>
-          <Button variant="contained" color="success" onClick={handleIrPagamento} disabled={!selecionados.length} sx={{ py: 1.2, fontWeight: 700 }}>
+          <Button
+            variant="contained"
+            color="success"
+            onClick={handleIrPagamento}
+            disabled={!selecionados.length}
+            sx={{ py: 1.2, fontWeight: 700 }}
+          >
             IR PARA PAGAMENTO
           </Button>
         </DialogActions>
@@ -652,7 +782,13 @@ export default function NewStorePage({
       />
 
       {/* Modal de sucesso do PIX */}
-      <Dialog open={pixApproved} onClose={() => setPixApproved(false)} maxWidth="xs" fullWidth PaperProps={{ sx: { borderRadius: 3 } }}>
+      <Dialog
+        open={pixApproved}
+        onClose={() => setPixApproved(false)}
+        maxWidth="xs"
+        fullWidth
+        PaperProps={{ sx: { borderRadius: 3 } }}
+      >
         <DialogTitle sx={{ fontSize: 22, fontWeight: 900, textAlign: 'center' }}>
           Pagamento confirmado! 🎉
         </DialogTitle>
@@ -665,14 +801,26 @@ export default function NewStorePage({
           </Typography>
         </DialogContent>
         <DialogActions sx={{ px: 3, pb: 3 }}>
-          <Button fullWidth variant="contained" color="success" onClick={() => setPixApproved(false)} sx={{ py: 1.2, fontWeight: 800 }}>
+          <Button
+            fullWidth
+            variant="contained"
+            color="success"
+            onClick={() => setPixApproved(false)}
+            sx={{ py: 1.2, fontWeight: 800 }}
+          >
             OK
           </Button>
         </DialogActions>
       </Dialog>
 
       {/* Modal: limite atingido */}
-      <Dialog open={limitOpen} onClose={() => setLimitOpen(false)} maxWidth="xs" fullWidth PaperProps={{ sx: { borderRadius: 3 } }}>
+      <Dialog
+        open={limitOpen}
+        onClose={() => setLimitOpen(false)}
+        maxWidth="xs"
+        fullWidth
+        PaperProps={{ sx: { borderRadius: 3 } }}
+      >
         <DialogTitle sx={{ fontSize: 20, fontWeight: 900, textAlign: 'center' }}>
           {limitInfo?.type === 'selection'
             ? 'Você pode selecionar no máximo 20 números'
