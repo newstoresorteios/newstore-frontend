@@ -594,6 +594,34 @@ export default function NewStorePage({
             variant="outlined"
             sx={{ p: { xs: 1.5, md: 3 }, bgcolor: "background.paper" }}
           >
+            {/* >>>>> BANNER SUPERIOR (apenas texto adicionado) */}
+            <Box
+              sx={{
+                mb: 2,
+                p: { xs: 1.25, md: 1.5 },
+                borderRadius: 2,
+                border: "1px solid rgba(255,255,255,0.12)",
+                background:
+                  "linear-gradient(90deg, rgba(103,194,58,0.12), rgba(255,193,7,0.10))",
+              }}
+            >
+              <Typography
+                variant="h4"
+                sx={{
+                  fontWeight: 900,
+                  textAlign: "center",
+                  letterSpacing: 1,
+                  background: "linear-gradient(90deg, #67C23A, #FFC107)",
+                  WebkitBackgroundClip: "text",
+                  backgroundClip: "text",
+                  WebkitTextFillColor: "transparent",
+                  textShadow: "0 0 12px rgba(103,194,58,0.18)",
+                }}
+              >
+                🎁 SORTEIO DE 5MIL REAIS EM CRÉDITOS NO SITE 💸
+              </Typography>
+            </Box>
+
             <Stack
               direction={{ xs: "column", md: "row" }}
               spacing={1.5}
@@ -705,6 +733,23 @@ export default function NewStorePage({
                   </Box>
                 ))}
               </Box>
+            </Box>
+
+            {/* >>>>> LINHA INFERIOR (apenas texto adicionado) */}
+            <Box sx={{ mt: 2.5, textAlign: "center" }}>
+              {
+                (() => {
+                  const d = new Date();
+                  d.setDate(d.getDate() + 7);
+                  const dia = String(d.getDate()).padStart(2, "0");
+                  return (
+                    <Typography variant="subtitle1" sx={{ opacity: 0.95, fontWeight: 800 }}>
+                      📅 Utilizaremos o sorteio do dia <strong>{dia}</strong> ou o
+                      primeiro sorteio da <strong>Lotofácil</strong> após a tabela fechada. 🎯
+                    </Typography>
+                  );
+                })()
+              }
             </Box>
           </Paper>
           {/* === FIM CARTELA === */}
