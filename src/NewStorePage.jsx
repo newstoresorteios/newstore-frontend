@@ -1,11 +1,11 @@
 // src/NewStorePage.jsx
-import * as React from 'react';
-import { useNavigate, Link as RouterLink } from 'react-router-dom';
-import logoNewStore from './Logo-branca-sem-fundo-768x132.png';
-import { SelectionContext } from './selectionContext';
-import PixModal from './PixModal';
-import { createPixPayment, checkPixStatus } from './services/pix';
-import { useAuth } from './authContext';
+import * as React from "react";
+import { useNavigate, Link as RouterLink } from "react-router-dom";
+import logoNewStore from "./Logo-branca-sem-fundo-768x132.png";
+import { SelectionContext } from "./selectionContext";
+import PixModal from "./PixModal";
+import { createPixPayment, checkPixStatus } from "./services/pix";
+import { useAuth } from "./authContext";
 
 import {
   AppBar,
@@ -29,37 +29,38 @@ import {
   Toolbar,
   Typography,
   createTheme,
-} from '@mui/material';
-import AccountCircleRoundedIcon from '@mui/icons-material/AccountCircleRounded';
+} from "@mui/material";
+import AccountCircleRoundedIcon from "@mui/icons-material/AccountCircleRounded";
 
 // Imagens locais
-import imgCardExemplo from './cartaoilustrativoTexto-do-seu-paragrafo-6-1024x1024.png';
-import imgTabelaUtilizacao from './Tabela-para-utilizacao-do-3-1024x1024.png';
-import imgAcumulo1 from './1-2-1-1024x512.png';
-import imgAcumulo2 from './2-1-1-1024x512.png';
+import imgCardExemplo from "./cartaoilustrativoTexto-do-seu-paragrafo-6-1024x1024.png";
+import imgTabelaUtilizacao from "./Tabela-para-utilizacao-do-3-1024x1024.png";
+import imgAcumulo1 from "./1-2-1-1024x512.png";
+import imgAcumulo2 from "./2-1-1-1024x512.png";
 
 // Tema
 const theme = createTheme({
   palette: {
-    mode: 'dark',
-    primary: { main: '#67C23A' },
-    secondary: { main: '#FFC107' },
-    error: { main: '#D32F2F' },
-    background: { default: '#0E0E0E', paper: '#121212' },
-    success: { main: '#59b15f' },
+    mode: "dark",
+    primary: { main: "#67C23A" },
+    secondary: { main: "#FFC107" },
+    error: { main: "#D32F2F" },
+    background: { default: "#0E0E0E", paper: "#121212" },
+    success: { main: "#59b15f" },
   },
   shape: { borderRadius: 12 },
   typography: {
-    fontFamily: ['Inter', 'system-ui', 'Segoe UI', 'Roboto', 'Arial'].join(','),
+    fontFamily: ["Inter", "system-ui", "Segoe UI", "Roboto", "Arial"].join(","),
   },
 });
 
 // Helpers
-const pad2 = (n) => n.toString().padStart(2, '0');
-const FRONT_MAX_SELECT = Number(process.env.REACT_APP_MAX_NUMBERS_PER_USER || 20);
+const pad2 = (n) => n.toString().padStart(2, "0");
+const MAX_SELECT = Number(process.env.REACT_APP_MAX_NUMBERS_PER_USER || 20);
 
 // Link externo
-const RESULTADOS_LOTERIAS = 'https://asloterias.com.br/todos-resultados-loteria-federal';
+const RESULTADOS_LOTERIAS =
+  "https://asloterias.com.br/todos-resultados-loteria-federal";
 
 // Mocks
 const MOCK_RESERVADOS = [];
@@ -69,39 +70,42 @@ const MOCK_INDISPONIVEIS = [];
 const API_BASE = (
   process.env.REACT_APP_API_BASE_URL ||
   process.env.REACT_APP_API_BASE ||
-  'https://newstore-backend.onrender.com'
-).replace(/\/+$/, '');
+  "https://newstore-backend.onrender.com"
+).replace(/\/+$/, "");
 
-// ===== Helpers de auth + reserva/limite =====
+// ===== Helpers de auth + reserva =====
 function sanitizeToken(t) {
-  if (!t) return '';
+  if (!t) return "";
   let s = String(t).trim();
-  if ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'"))) s = s.slice(1, -1);
-  if (/^Bearer\s+/i.test(s)) s = s.replace(/^Bearer\s+/i, '').trim();
-  return s.replace(/\s+/g, '');
+  if (
+    (s.startsWith('"') && s.endsWith('"')) ||
+    (s.startsWith("'") && s.endsWith("'"))
+  )
+    s = s.slice(1, -1);
+  if (/^Bearer\s+/i.test(s)) s = s.replace(/^Bearer\s+/i, "").trim();
+  return s.replace(/\s+/g, "");
 }
 function getAuthToken() {
   try {
-    const keys = ['ns_auth_token', 'authToken', 'token', 'jwt', 'access_token'];
+    const keys = ["ns_auth_token", "authToken", "token", "jwt", "access_token"];
     for (const k of keys) {
       const raw = localStorage.getItem(k) || sessionStorage.getItem(k);
       if (raw) return sanitizeToken(raw);
     }
-    return '';
+    return "";
   } catch {
-    return '';
+    return "";
   }
 }
-
 async function reserveNumbers(numbers) {
   const token = getAuthToken();
-  const headers = { 'Content-Type': 'application/json' };
+  const headers = { "Content-Type": "application/json" };
   if (token) headers.Authorization = `Bearer ${token}`;
 
   const r = await fetch(`${API_BASE}/api/reservations`, {
-    method: 'POST',
+    method: "POST",
     headers,
-    credentials: 'include',
+    credentials: "include",
     body: JSON.stringify({ numbers }),
   });
 
@@ -109,66 +113,67 @@ async function reserveNumbers(numbers) {
     const j = await r.json().catch(() => ({}));
     const c = j?.conflicts || j?.n || [];
     throw new Error(
-      `Alguns números ficaram indisponíveis: ${Array.isArray(c) ? c.join(', ') : c}`
+      `Alguns números ficaram indisponíveis: ${
+        Array.isArray(c) ? c.join(", ") : c
+      }`
     );
   }
   if (!r.ok) {
     const j = await r.json().catch(() => ({}));
-    throw new Error(j?.error || 'Falha ao reservar');
+    throw new Error(j?.error || "Falha ao reservar");
   }
   return r.json(); // { reservationId, drawId, expiresAt, numbers }
 }
 
-// Checagem do limite no backend
+// Checagem do limite no backend (evita preflight; re-tenta com Authorization se 401)
 async function checkUserPurchaseLimit({ addCount = 0, drawId } = {}) {
   const qs = new URLSearchParams();
-  qs.set('add', String(addCount));
-  if (drawId != null) qs.set('draw_id', String(drawId));
+  qs.set("add", String(addCount));
+  if (drawId != null) qs.set("draw_id", String(drawId));
 
-  const token = getAuthToken();
-  const headers = token ? { Authorization: `Bearer ${token}` } : undefined;
-
-  const res = await fetch(`${API_BASE}/api/purchase-limit/check?${qs}`, {
-    credentials: 'include',
-    cache: 'no-store',
-    headers,
+  // 1ª tentativa: sem headers (sem preflight)
+  let res = await fetch(`${API_BASE}/api/purchase-limit/check?${qs}`, {
+    credentials: "include",
+    cache: "no-store",
   });
 
-  if (res.status === 401) throw new Error('unauthorized');
+  // 2ª tentativa (se precisar header Authorization)
+  if (res.status === 401) {
+    const token = getAuthToken();
+    const headers = token ? { Authorization: `Bearer ${token}` } : undefined;
+    res = await fetch(`${API_BASE}/api/purchase-limit/check?${qs}`, {
+      credentials: "include",
+      cache: "no-store",
+      headers,
+    });
+  }
+
+  if (res.status === 401) throw new Error("unauthorized");
   if (!res.ok) throw new Error(`limit_check_${res.status}`);
 
   const j = await res.json().catch(() => ({}));
-
-  // Extrai números
-  const current = Number(j?.current ?? j?.cnt ?? j?.count);
-  const max = Number(j?.max ?? j?.limit ?? j?.MAX ?? FRONT_MAX_SELECT);
-
-  // Se o payload for estranho (não-numérico), trata como falha => bloqueia
-  const validNumbers = Number.isFinite(current) && Number.isFinite(max);
-  if (!validNumbers) throw new Error('invalid_limit_payload');
-
-  // Sinalizadores do back
-  const serverBlocked = !!(j?.blocked ?? j?.limitReached ?? j?.reached ?? j?.exceeded);
-
-  // Protege também por soma (servidor pode não considerar addCount)
-  const willExceed = (current + addCount) > max;
-
-  return { blocked: serverBlocked || willExceed, current, max };
+  const blocked = !!(
+    j?.blocked ??
+    j?.limitReached ??
+    j?.reached ??
+    j?.exceeded
+  );
+  const current = j?.current ?? j?.cnt ?? j?.count ?? null;
+  const max = j?.max ?? j?.limit ?? j?.MAX ?? null;
+  return { blocked, current, max };
 }
-
 
 export default function NewStorePage({
   reservados = MOCK_RESERVADOS,
   indisponiveis = MOCK_INDISPONIVEIS,
-  onIrParaPagamento,
-  groupUrl = 'https://chat.whatsapp.com/GdosYmyW2Jj1mDXNDTFt6F',
+  groupUrl = "https://chat.whatsapp.com/GdosYmyW2Jj1mDXNDTFt6F",
 }) {
   const navigate = useNavigate();
-  const { selecionados, setSelecionados, limparSelecao } = React.useContext(SelectionContext);
+  const { selecionados, setSelecionados, limparSelecao } =
+    React.useContext(SelectionContext);
   const { user, token, logout } = useAuth();
   const isAuthenticated = !!(user?.email || user?.id || token);
-
-  const logoTo = isAuthenticated ? '/conta' : '/';
+  const logoTo = isAuthenticated ? "/conta" : "/";
 
   // Estados vindos do backend
   const [srvReservados, setSrvReservados] = React.useState([]);
@@ -178,118 +183,114 @@ export default function NewStorePage({
   const FALLBACK_PRICE = Number(process.env.REACT_APP_PIX_PRICE) || 55;
   const [unitPrice, setUnitPrice] = React.useState(FALLBACK_PRICE);
 
-  // Draw atual
+  // Draw atual (se o backend expuser)
   const [currentDrawId, setCurrentDrawId] = React.useState(null);
 
-  // Limite do usuário (no total da conta)
-  const [userLimit, setUserLimit] = React.useState({
-    loaded: false,
-    blocked: false,
-    current: 0,
-    max: FRONT_MAX_SELECT,
+  // Limite acumulado do usuário
+  const [limitUsage, setLimitUsage] = React.useState({
+    current: null,
+    max: null,
   });
 
-  // === Buscar preço (1 endpoint estável) e tentar obter draw atual ===
+  // ===== Carregar preço e (se houver) draw id — sem 404 no console
   React.useEffect(() => {
     let alive = true;
 
-    async function loadConfig() {
+    (async () => {
       try {
-        // Preço público
-        const r = await fetch(`${API_BASE}/api/config`, {
-          credentials: 'include',
-          cache: 'no-store',
+        // seu back expõe /api/config (pública) — usar só ela
+        const res = await fetch(`${API_BASE}/api/config`, {
+          credentials: "include",
+          cache: "no-store",
         });
-        if (r.ok) {
-          const j = await r.json();
+        if (res.ok) {
+          const j = await res.json().catch(() => ({}));
+
           const cents =
             j?.ticket_price_cents ??
             j?.price_cents ??
-            j?.priceCents ??
-            j?.preco_centavos;
-          const reaisRaw = j?.ticket_price ?? j?.price ?? j?.preco;
-          const reais = cents != null ? Number(cents) / 100 : Number(reaisRaw);
+            j?.current?.price_cents ??
+            j?.current_draw?.price_cents;
+
+          const reais =
+            cents != null && Number.isFinite(Number(cents))
+              ? Number(cents) / 100
+              : Number(j?.ticket_price ?? j?.price);
+
           if (alive && Number.isFinite(reais) && reais > 0) setUnitPrice(reais);
-        }
-      } catch {}
-      try {
-        // Tenta pegar draw atual (apenas 1 request para evitar 404s no console)
-        const r2 = await fetch(`${API_BASE}/api/draws/current`, {
-          credentials: 'include',
-          cache: 'no-store',
-        });
-        if (r2.ok) {
-          const j2 = await r2.json().catch(() => ({}));
+
           const did =
-            j2?.draw_id ?? j2?.id ?? j2?.current?.id ?? j2?.current_draw?.id;
+            j?.current_draw_id ??
+            j?.draw_id ??
+            j?.current?.id ??
+            j?.current_draw?.id;
+
           if (alive && did != null) setCurrentDrawId(did);
         }
-      } catch {}
-    }
+      } catch {
+        // fica no fallback sem poluir o console
+      } finally {
+        // também tentamos carregar o uso do limite (add=0)
+        try {
+          const info = await checkUserPurchaseLimit({
+            addCount: 0,
+            drawId: currentDrawId,
+          });
+          if (alive) setLimitUsage({ current: info.current, max: info.max });
+        } catch {
+          /* silencioso */
+        }
+      }
+    })();
 
-    loadConfig();
-    return () => { alive = false; };
-  }, []);
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [API_BASE]);
 
-  // Polling leve de /api/numbers (disponibilidade)
+  // Polling leve de /api/numbers (sem Content-Type p/ não gerar preflight)
   React.useEffect(() => {
     let alive = true;
 
-    async function loadNumbers() {
+    async function load() {
       try {
         const res = await fetch(`${API_BASE}/api/numbers`, {
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'include',
-          cache: 'no-store',
+          credentials: "include",
+          cache: "no-store",
         });
         if (!res.ok) return;
         const j = await res.json();
         const reserv = [];
         const indis = [];
         for (const it of j?.numbers || []) {
-          const st = String(it.status || '').toLowerCase();
-          if (st === 'reserved') reserv.push(Number(it.n));
-          if (st === 'taken' || st === 'sold') indis.push(Number(it.n));
+          const st = String(it.status || "").toLowerCase();
+          if (st === "reserved") reserv.push(Number(it.n));
+          if (st === "taken" || st === "sold") indis.push(Number(it.n));
         }
         if (!alive) return;
         setSrvReservados(Array.from(new Set(reserv)));
         setSrvIndisponiveis(Array.from(new Set(indis)));
-      } catch {}
+      } catch {
+        /* silencioso */
+      }
     }
 
-    loadNumbers();
-    const id = setInterval(loadNumbers, 15000);
-    return () => { alive = false; clearInterval(id); };
+    load();
+    const id = setInterval(load, 15000);
+    return () => {
+      alive = false;
+      clearInterval(id);
+    };
   }, []);
-
-  // Carregar o limite total do usuário (se logado)
-  React.useEffect(() => {
-  let alive = true;
-  async function loadLimit() {
-    if (!isAuthenticated) {
-      setUserLimit((u) => ({ ...u, loaded: true, blocked: false, current: 0, max: FRONT_MAX_SELECT }));
-      return;
-    }
-    try {
-      const { blocked, current, max } = await checkUserPurchaseLimit({ addCount: 0, drawId: currentDrawId });
-      if (!alive) return;
-      setUserLimit({ loaded: true, blocked, current, max: Number(max || FRONT_MAX_SELECT) });
-    } catch {
-      // Falhou ou payload inválido? BLOQUEIA por segurança
-      if (!alive) return;
-      setUserLimit({ loaded: true, blocked: true, current: undefined, max: FRONT_MAX_SELECT });
-    }
-  }
-  loadLimit();
-}, [isAuthenticated, currentDrawId]);
-
 
   const reservadosAll = React.useMemo(
     () => Array.from(new Set([...(reservados || []), ...srvReservados])),
     [reservados, srvReservados]
   );
   const indisponiveisAll = React.useMemo(
-    () => Array.from(new Set([...(indisponiveis || []), ...srvIndisponiveis])),
+    () =>
+      Array.from(new Set([...(indisponiveis || []), ...srvIndisponiveis])),
     [indisponiveis, srvIndisponiveis]
   );
 
@@ -298,9 +299,19 @@ export default function NewStorePage({
   const menuOpen = Boolean(menuEl);
   const handleOpenMenu = (e) => setMenuEl(e.currentTarget);
   const handleCloseMenu = () => setMenuEl(null);
-  const goConta = () => { handleCloseMenu(); navigate('/conta'); };
-  const goLogin = () => { handleCloseMenu(); navigate('/login'); };
-  const doLogout = () => { handleCloseMenu(); logout(); navigate('/'); };
+  const goConta = () => {
+    handleCloseMenu();
+    navigate("/conta");
+  };
+  const goLogin = () => {
+    handleCloseMenu();
+    navigate("/login");
+  };
+  const doLogout = () => {
+    handleCloseMenu();
+    logout();
+    navigate("/");
+  };
 
   // modal (confirmação)
   const [open, setOpen] = React.useState(false);
@@ -323,50 +334,58 @@ export default function NewStorePage({
 
   // === Modal de limite ===
   const [limitOpen, setLimitOpen] = React.useState(false);
-  const [limitInfo, setLimitInfo] = React.useState({ type: 'purchase', current: undefined, max: undefined });
-  const openLimitModal = (info) => { setLimitInfo(info || { type: 'purchase' }); setLimitOpen(true); };
+  const [limitInfo, setLimitInfo] = React.useState({
+    type: "purchase",
+    current: undefined,
+    max: undefined,
+  });
+  const openLimitModal = (info) => {
+    setLimitInfo(info || { type: "purchase" });
+    setLimitOpen(true);
+  };
 
-  // Gate de segurança (bloqueia se checagem falhar ou se estourar o teto)
-  async function ensureCanBuy(addCount) {
-  // Checagem no servidor (fail-closed)
-  try {
-    const { blocked, current, max } = await checkUserPurchaseLimit({ addCount, drawId: currentDrawId });
-    if (blocked) {
-      openLimitModal({ type: 'purchase', current, max });
-      return false;
-    }
-  } catch {
-    openLimitModal({ type: 'purchase', current: userLimit.current, max: userLimit.max });
-    return false;
-  }
-
- // Dupla conferência com o snapshot local
-  const owned = Number(userLimit.current ?? 0);
-  const maxLocal = Number(userLimit.max ?? FRONT_MAX_SELECT);
-  if (Number.isFinite(owned) && Number.isFinite(maxLocal) && (owned + addCount) > maxLocal) {
-    openLimitModal({ type: 'purchase', current: owned, max: maxLocal });
-    return false;
-  }
-
-  return true;
-}
-
+  // Quantos ainda pode comprar segundo o servidor
+  const remainingFromServer =
+    (limitUsage.max ?? Infinity) - (limitUsage.current ?? 0);
 
   const handleIrPagamento = async () => {
     setOpen(false);
 
     // precisa estar logado
     if (!isAuthenticated) {
-      navigate('/login', { replace: false, state: { from: '/', wantPay: true } });
+      navigate("/login", { replace: false, state: { from: "/", wantPay: true } });
       return;
     }
 
-    // Revalida teto total (fail-closed)
     const addCount = selecionados.length || 1;
-    const ok = await ensureCanBuy(addCount);
-    if (!ok) return;
 
-    // fluxo normal de pagamento
+    // 1) checa limite no servidor
+    try {
+      const { blocked, current, max } = await checkUserPurchaseLimit({
+        addCount,
+        drawId: currentDrawId,
+      });
+
+      // mesmo se o back NÃO marcar blocked, bloqueamos no front
+      const wouldBe = (current ?? 0) + addCount;
+      const overByFront = Number.isFinite(max) && wouldBe > max;
+
+      if (blocked || overByFront) {
+        openLimitModal({
+          type: "purchase",
+          current: current ?? limitUsage.current,
+          max: max ?? limitUsage.max ?? 20,
+        });
+        // atualiza banner de saldo
+        setLimitUsage({ current: current ?? 0, max: max ?? 20 });
+        return;
+      }
+    } catch (e) {
+      console.warn("[limit-check] falhou, seguindo fluxo:", e);
+      // se falhar a checagem, ainda assim mantemos o teto por seleção
+    }
+
+    // 2) fluxo normal de pagamento
     const amount = selecionados.length * unitPrice;
     setPixAmount(amount);
     setPixOpen(true);
@@ -383,13 +402,14 @@ export default function NewStorePage({
       });
       setPixData(data);
 
-      // Atualiza contagem do usuário após reservar
-      try {
-        const ul = await checkUserPurchaseLimit({ addCount: 0, drawId: currentDrawId });
-        setUserLimit({ loaded: true, ...ul });
-      } catch {}
+      // se chegou aqui, já reservou => incrementa contador local (para o banner)
+      setLimitUsage((old) => ({
+        current:
+          Number.isFinite(old.current) ? (old.current ?? 0) + addCount : old.current,
+        max: old.max,
+      }));
     } catch (e) {
-      alert(e.message || 'Falha ao gerar PIX');
+      alert(e.message || "Falha ao gerar PIX");
       setPixOpen(false);
     } finally {
       setPixLoading(false);
@@ -402,43 +422,41 @@ export default function NewStorePage({
     const id = setInterval(async () => {
       try {
         const st = await checkPixStatus(pixData.paymentId);
-        if (st?.status === 'approved') handlePixApproved();
-      } catch {}
+        if (st?.status === "approved") handlePixApproved();
+      } catch {
+        /* silencioso */
+      }
     }, 3500);
     return () => clearInterval(id);
   }, [pixOpen, pixData, pixApproved, handlePixApproved]);
 
-  // Seleção com dois tetos:
-  // - teto visual por rodada (FRONT_MAX_SELECT) para UX
-  // - teto TOTAL da conta (userLimit.max) = (já comprou) + (seleção atual)
+  // Seleção com teto (front)
   const isReservado = (n) => reservadosAll.includes(n);
   const isIndisponivel = (n) => indisponiveisAll.includes(n);
   const isSelecionado = (n) => selecionados.includes(n);
-
   const handleClickNumero = (n) => {
     if (isIndisponivel(n)) return;
     setSelecionados((prev) => {
       const already = prev.includes(n);
       if (already) return prev.filter((x) => x !== n);
 
-      // Bloqueia se o usuário já está no teto total
-      const maxTotal = Number(userLimit?.max ?? FRONT_MAX_SELECT);
-      const owned = Number(userLimit?.current ?? 0);
-      if (Number.isFinite(maxTotal) && Number.isFinite(owned) && owned >= maxTotal) {
-        openLimitModal({ type: 'purchase', current: owned, max: maxTotal });
+      // teto por seleção
+      if (prev.length >= MAX_SELECT) {
+        openLimitModal({
+          type: "selection",
+          current: MAX_SELECT,
+          max: MAX_SELECT,
+        });
         return prev;
       }
 
-      // Checa se adicionar mais 1 estoura o teto TOTAL
-      const newTotal = owned + prev.length + 1;
-      if (Number.isFinite(maxTotal) && newTotal > maxTotal) {
-        openLimitModal({ type: 'purchase', current: owned, max: maxTotal });
-        return prev;
-      }
-
-      // Teto visual (por seleção atual)
-      if (prev.length >= FRONT_MAX_SELECT) {
-        openLimitModal({ type: 'selection', current: FRONT_MAX_SELECT, max: FRONT_MAX_SELECT });
+      // teto por saldo do servidor (se conhecido)
+      if (Number.isFinite(remainingFromServer) && remainingFromServer <= prev.length) {
+        openLimitModal({
+          type: "purchase",
+          current: limitUsage.current ?? 0,
+          max: limitUsage.max ?? 20,
+        });
         return prev;
       }
 
@@ -446,70 +464,95 @@ export default function NewStorePage({
     });
   };
 
-  // Estado de “bloqueado” para o botão continuar
-  const selectionWouldExceed =
-    Number.isFinite(userLimit?.max) &&
-    Number.isFinite(userLimit?.current) &&
-    (userLimit.current + selecionados.length > userLimit.max);
-
   const getCellSx = (n) => {
     if (isIndisponivel(n)) {
       return {
-        border: '2px solid',
-        borderColor: 'error.main',
-        bgcolor: 'rgba(211,47,47,0.15)',
-        color: 'grey.300',
-        cursor: 'not-allowed',
+        border: "2px solid",
+        borderColor: "error.main",
+        bgcolor: "rgba(211,47,47,0.15)",
+        color: "grey.300",
+        cursor: "not-allowed",
         opacity: 0.85,
       };
     }
     if (isSelecionado(n) || isReservado(n)) {
       return {
-        border: '2px solid',
-        borderColor: 'secondary.main',
-        bgcolor: 'rgba(255,193,7,0.12)',
+        border: "2px solid",
+        borderColor: "secondary.main",
+        bgcolor: "rgba(255,193,7,0.12)",
       };
     }
     return {
-      border: '2px solid rgba(255,255,255,0.08)',
-      bgcolor: 'primary.main',
-      color: '#0E0E0E',
-      '&:hover': { filter: 'brightness(0.95)' },
-      transition: 'filter 120ms ease',
+      border: "2px solid rgba(255,255,255,0.08)",
+      bgcolor: "primary.main",
+      color: "#0E0E0E",
+      "&:hover": { filter: "brightness(0.95)" },
+      transition: "filter 120ms ease",
     };
   };
+
+  const continuarDisabled =
+    !selecionados.length ||
+    (Number.isFinite(remainingFromServer) &&
+      selecionados.length > Math.max(0, remainingFromServer));
 
   return (
     <ThemeProvider theme={theme}>
       <CssBaseline />
 
       {/* Topo */}
-      <AppBar position="sticky" elevation={0} sx={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
-        <Toolbar sx={{ position: 'relative', minHeight: 64 }}>
-          <IconButton edge="start" color="inherit">{/* espaçamento */}</IconButton>
+      <AppBar
+        position="sticky"
+        elevation={0}
+        sx={{ borderBottom: "1px solid rgba(255,255,255,0.08)" }}
+      >
+        <Toolbar sx={{ position: "relative", minHeight: 64 }}>
+          <IconButton edge="start" color="inherit">
+            {/* espaçamento */}
+          </IconButton>
 
-          <Button component={RouterLink} to="/cadastro" variant="text" sx={{ fontWeight: 700, mt: 1 }}>
+          <Button
+            component={RouterLink}
+            to="/cadastro"
+            variant="text"
+            sx={{ fontWeight: 700, mt: 1 }}
+          >
             Criar conta
           </Button>
 
           <Box
             component={RouterLink}
             to={logoTo}
-            onClick={(e) => { e.preventDefault(); navigate(logoTo); }}
-            sx={{ position:'absolute', left:'50%', top:'50%', transform:'translate(-50%, -50%)', display:'flex', alignItems:'center' }}
+            onClick={(e) => {
+              e.preventDefault();
+              navigate(logoTo);
+            }}
+            sx={{
+              position: "absolute",
+              left: "50%",
+              top: "50%",
+              transform: "translate(-50%, -50%)",
+              display: "flex",
+              alignItems: "center",
+            }}
           >
-            <Box component="img" src={logoNewStore} alt="NEW STORE" sx={{ height: 40, objectFit: 'contain' }} />
+            <Box
+              component="img"
+              src={logoNewStore}
+              alt="NEW STORE"
+              sx={{ height: 40, objectFit: "contain" }}
+            />
           </Box>
 
-          <IconButton color="inherit" sx={{ ml: 'auto' }} onClick={handleOpenMenu}>
+          <IconButton color="inherit" sx={{ ml: "auto" }} onClick={handleOpenMenu}>
             <AccountCircleRoundedIcon />
           </IconButton>
           <Menu
             anchorEl={menuEl}
             open={menuOpen}
             onClose={handleCloseMenu}
-            anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
-            transformOrigin={{ vertical: 'top', horizontal: 'right' }}
+            anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
+            transformOrigin={{ vertical: "top", horizontal: "right" }}
           >
             {isAuthenticated ? (
               <>
@@ -530,43 +573,90 @@ export default function NewStorePage({
           <Paper variant="outlined" sx={{ p: { xs: 2, md: 3 } }}>
             <Stack spacing={2}>
               <Typography variant="h3" fontWeight={900}>
-                Bem-vindos ao Sorteio da <Box component="span" sx={{ opacity: 0.85 }}>New Store</Box> Relógios!
+                Bem-vindos ao Sorteio da{" "}
+                <Box component="span" sx={{ opacity: 0.85 }}>
+                  New Store
+                </Box>{" "}
+                Relógios!
               </Typography>
               <Typography variant="h6" sx={{ opacity: 0.9 }}>
-                O único sorteio que permite receber <strong>100% do valor</strong> de volta em todas as participações. Além de
-                concorrer ao prêmio, você tem a <strong>vantagem de não perder o valor investido</strong> — o valor vira um
-                <strong> cupom de desconto</strong> para usar no site (validade de até <strong>6 meses</strong>).
+                O único sorteio que permite receber <strong>100% do valor</strong>{" "}
+                de volta em todas as participações. Além de concorrer ao prêmio,
+                você tem a <strong>vantagem de não perder o valor investido</strong>{" "}
+                — o valor vira um<strong> cupom de desconto</strong> para usar no
+                site (validade de até <strong>6 meses</strong>).
               </Typography>
             </Stack>
           </Paper>
 
           {/* === CARTELA === */}
-          <Paper variant="outlined" sx={{ p: { xs: 1.5, md: 3 }, bgcolor: 'background.paper' }}>
-            <Stack direction={{ xs: 'column', md: 'row' }} spacing={1.5} alignItems="center" justifyContent="space-between" sx={{ mb: 2 }}>
+          <Paper
+            variant="outlined"
+            sx={{ p: { xs: 1.5, md: 3 }, bgcolor: "background.paper" }}
+          >
+            <Stack
+              direction={{ xs: "column", md: "row" }}
+              spacing={1.5}
+              alignItems="center"
+              justifyContent="space-between"
+              sx={{ mb: 2 }}
+            >
               <Stack direction="row" spacing={1.5} alignItems="center" flexWrap="wrap">
-                <Chip size="small" label="DISPONÍVEL" sx={{ bgcolor: 'primary.main', color: '#0E0E0E', fontWeight: 700 }} />
-                <Chip size="small" label="RESERVADO" sx={{ bgcolor: 'rgba(255,193,7,0.18)', border: '1px solid', borderColor: 'secondary.main', color: 'secondary.main', fontWeight: 700 }} />
-                <Chip size="small" label="INDISPONÍVEL" sx={{ bgcolor: 'rgba(211,47,47,0.18)', border: '1px solid', borderColor: 'error.main', color: 'error.main', fontWeight: 700 }} />
-                {!!isAuthenticated && userLimit.loaded && (
-                  <Typography variant="body2" sx={{ ml: 1, opacity: 0.8 }}>
-                    • Você tem <strong>{Number.isFinite(userLimit.current) ? userLimit.current : '-'}</strong> de {Number.isFinite(userLimit.max) ? userLimit.max : '-'} possíveis
-                  </Typography>
-                )}
+                <Chip
+                  size="small"
+                  label="DISPONÍVEL"
+                  sx={{ bgcolor: "primary.main", color: "#0E0E0E", fontWeight: 700 }}
+                />
+                <Chip
+                  size="small"
+                  label="RESERVADO"
+                  sx={{
+                    bgcolor: "rgba(255,193,7,0.18)",
+                    border: "1px solid",
+                    borderColor: "secondary.main",
+                    color: "secondary.main",
+                    fontWeight: 700,
+                  }}
+                />
+                <Chip
+                  size="small"
+                  label="INDISPONÍVEL"
+                  sx={{
+                    bgcolor: "rgba(211,47,47,0.18)",
+                    border: "1px solid",
+                    borderColor: "error.main",
+                    color: "error.main",
+                    fontWeight: 700,
+                  }}
+                />
+                <Typography variant="body2" sx={{ ml: 0.5, opacity: 0.9 }}>
+                  {Number.isFinite(limitUsage.max) && Number.isFinite(limitUsage.current)
+                    ? `• Você tem ${Math.max(
+                        0,
+                        (limitUsage.max ?? 0) - (limitUsage.current ?? 0)
+                      )} de ${limitUsage.max} possíveis`
+                    : " "}
+                </Typography>
                 {!!selecionados.length && (
                   <Typography variant="body2" sx={{ ml: 1, opacity: 0.8 }}>
-                    • {selecionados.length} selecionado(s) (máx. {FRONT_MAX_SELECT} por seleção)
+                    • {selecionados.length} selecionado(s) (máx. {MAX_SELECT} por seleção)
                   </Typography>
                 )}
               </Stack>
 
               <Stack direction="row" spacing={1.5}>
-                <Button variant="outlined" color="inherit" disabled={!selecionados.length} onClick={limparSelecao}>
+                <Button
+                  variant="outlined"
+                  color="inherit"
+                  disabled={!selecionados.length}
+                  onClick={limparSelecao}
+                >
                   LIMPAR SELEÇÃO
                 </Button>
                 <Button
                   variant="contained"
                   color="success"
-                  disabled={!selecionados.length || selectionWouldExceed || (isAuthenticated && userLimit.blocked)}
+                  disabled={continuarDisabled}
                   onClick={handleAbrirConfirmacao}
                 >
                   CONTINUAR
@@ -575,8 +665,25 @@ export default function NewStorePage({
             </Stack>
 
             {/* Grid 10x10 */}
-            <Box sx={{ width: { xs: 'calc(100vw - 32px)', sm: 'calc(100vw - 64px)', md: '100%' }, maxWidth: 640, aspectRatio: '1 / 1', mx: 'auto' }}>
-              <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(10, minmax(0, 1fr))', gridTemplateRows: 'repeat(10, minmax(0, 1fr))', gap: { xs: 1, md: 1.2 }, height: '100%', width: '100%', boxSizing: 'border-box' }}>
+            <Box
+              sx={{
+                width: { xs: "calc(100vw - 32px)", sm: "calc(100vw - 64px)", md: "100%" },
+                maxWidth: 640,
+                aspectRatio: "1 / 1",
+                mx: "auto",
+              }}
+            >
+              <Box
+                sx={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(10, minmax(0, 1fr))",
+                  gridTemplateRows: "repeat(10, minmax(0, 1fr))",
+                  gap: { xs: 1, md: 1.2 },
+                  height: "100%",
+                  width: "100%",
+                  boxSizing: "border-box",
+                }}
+              >
                 {Array.from({ length: 100 }).map((_, idx) => (
                   <Box
                     key={idx}
@@ -584,14 +691,14 @@ export default function NewStorePage({
                     sx={{
                       ...getCellSx(idx),
                       borderRadius: 1.2,
-                      userSelect: 'none',
-                      cursor: isIndisponivel(idx) ? 'not-allowed' : 'pointer',
-                      aspectRatio: '1 / 1',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
+                      userSelect: "none",
+                      cursor: isIndisponivel(idx) ? "not-allowed" : "pointer",
+                      aspectRatio: "1 / 1",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
                       fontWeight: 800,
-                      fontVariantNumeric: 'tabular-nums',
+                      fontVariantNumeric: "tabular-nums",
                     }}
                   >
                     {pad2(idx)}
@@ -605,66 +712,134 @@ export default function NewStorePage({
           {/* Demais seções */}
           <Paper variant="outlined" sx={{ p: { xs: 2, md: 3 } }}>
             <Stack spacing={1.5}>
-              <Typography sx={{ color: '#ff6b6b', fontWeight: 800, letterSpacing: 0.5 }}>
+              <Typography sx={{ color: "#ff6b6b", fontWeight: 800, letterSpacing: 0.5 }}>
                 imagem ilustrativa do cartão presente
               </Typography>
-              <Box component="img" src={imgCardExemplo} alt="Cartão presente - exemplo" sx={{ width: '100%', maxWidth: 800, mx: 'auto', display: 'block', borderRadius: 2 }} />
+              <Box
+                component="img"
+                src={imgCardExemplo}
+                alt="Cartão presente - exemplo"
+                sx={{ width: "100%", maxWidth: 800, mx: "auto", display: "block", borderRadius: 2 }}
+              />
               <Typography variant="body2" sx={{ opacity: 0.85 }}>
-                Os cartões são <strong>acumulativos</strong>, permitindo somar até <strong>R$ 4.200</strong> em um único cartão.
+                Os cartões são <strong>acumulativos</strong>, permitindo somar até{" "}
+                <strong>R$ 4.200</strong> em um único cartão.
               </Typography>
             </Stack>
           </Paper>
 
           <Paper variant="outlined" sx={{ p: { xs: 2, md: 3 } }}>
             <Stack spacing={1.2}>
-              <Typography variant="h6" fontWeight={800}>Informações do sorteio</Typography>
-              <Typography variant="body1">• A posição só é considerada <strong>confirmada</strong> após a compensação do pagamento pelo número reservado.</Typography>
-              <Typography variant="body1">• O sorteio é realizado <strong>após a venda de todos os cartões</strong>.</Typography>
-              <Typography variant="body1">• O resultado utiliza a <strong>Lotomania</strong> — veja em <Link href={RESULTADOS_LOTERIAS} target="_blank" rel="noopener">Resultados das loterias</Link>.</Typography>
-              <Typography variant="body1">• O <strong>ganhador</strong> é aquele que tirar o <strong>último número</strong> sorteado da Lotomania.</Typography>
-              <Typography variant="body1">• Custos de entrega por conta do vencedor; envio a partir do RJ.</Typography>
+              <Typography variant="h6" fontWeight={800}>
+                Informações do sorteio
+              </Typography>
+              <Typography variant="body1">
+                • A posição só é considerada <strong>confirmada</strong> após a compensação
+                do pagamento pelo número reservado.
+              </Typography>
+              <Typography variant="body1">
+                • O sorteio é realizado <strong>após a venda de todos os cartões</strong>.
+              </Typography>
+              <Typography variant="body1">
+                • O resultado utiliza a <strong>Lotomania</strong> — veja em{" "}
+                <Link href={RESULTADOS_LOTERIAS} target="_blank" rel="noopener">
+                  Resultados das loterias
+                </Link>
+                .
+              </Typography>
+              <Typography variant="body1">
+                • O <strong>ganhador</strong> é aquele que tirar o <strong>último número</strong>{" "}
+                sorteado da Lotomania.
+              </Typography>
+              <Typography variant="body1">
+                • Custos de entrega por conta do vencedor; envio a partir do RJ.
+              </Typography>
               <Typography variant="body1">• Duração máxima do sorteio: <strong>7 dias</strong>.</Typography>
-              <Typography variant="body1">• O <strong>Cartão Presente não é cumulativo</strong> com o prêmio do sorteio.</Typography>
+              <Typography variant="body1">
+                • O <strong>Cartão Presente não é cumulativo</strong> com o prêmio do sorteio.
+              </Typography>
             </Stack>
           </Paper>
 
           <Paper variant="outlined" sx={{ p: { xs: 2, md: 3 } }}>
             <Stack spacing={2}>
-              <Typography variant="h5" fontWeight={900}>Regras para utilização dos <Box component="span" sx={{ opacity: 0.85 }}>cartões presente</Box></Typography>
+              <Typography variant="h5" fontWeight={900}>
+                Regras para utilização dos <Box component="span" sx={{ opacity: 0.85 }}>cartões presente</Box>
+              </Typography>
               <Stack component="ul" sx={{ pl: 3, m: 0 }} spacing={1}>
                 <Typography component="li">Uso apenas no site da New Store.</Typography>
-                <Typography component="li">Não é possível comprar outro cartão-presente com cartão-presente.</Typography>
+                <Typography component="li">
+                  Não é possível comprar outro cartão-presente com cartão-presente.
+                </Typography>
                 <Typography component="li">Não há conversão em dinheiro.</Typography>
-                <Typography component="li">Utilização em <strong>uma única compra</strong> (pode dividir em vários cartões).</Typography>
+                <Typography component="li">
+                  Utilização em <strong>uma única compra</strong> (pode dividir em vários cartões).
+                </Typography>
                 <Typography component="li">Validade: <strong>6 meses</strong>.</Typography>
-                <Typography component="li">Sem responsabilidade por extravio/furto/perda/validade expirada.</Typography>
-                <Typography component="li">Considerar o <strong>valor cheio do produto</strong> (tabela abaixo).</Typography>
+                <Typography component="li">
+                  Sem responsabilidade por extravio/furto/perda/validade expirada.
+                </Typography>
+                <Typography component="li">
+                  Considerar o <strong>valor cheio do produto</strong> (tabela abaixo).
+                </Typography>
                 <Typography component="li">Não soma com outros cupons.</Typography>
               </Stack>
-              <Box component="img" src={imgTabelaUtilizacao} alt="Tabela para utilização do cartão presente" sx={{ width: '100%', maxWidth: 900, mx: 'auto', display: 'block', borderRadius: 2, mt: 1 }} />
-              <Typography align="center" sx={{ mt: 1.5, fontWeight: 700, letterSpacing: 1 }}>CONSIDERAR O VALOR CHEIO DO PRODUTO</Typography>
+              <Box
+                component="img"
+                src={imgTabelaUtilizacao}
+                alt="Tabela para utilização do cartão presente"
+                sx={{ width: "100%", maxWidth: 900, mx: "auto", display: "block", borderRadius: 2, mt: 1 }}
+              />
+              <Typography align="center" sx={{ mt: 1.5, fontWeight: 700, letterSpacing: 1 }}>
+                CONSIDERAR O VALOR CHEIO DO PRODUTO
+              </Typography>
             </Stack>
           </Paper>
 
           <Paper variant="outlined" sx={{ p: { xs: 2, md: 3 } }}>
             <Stack spacing={1.5}>
-              <Typography>Dica: ao <strong>juntar cartões</strong>, a validade passa a ser a do cartão <strong>mais recente</strong>.</Typography>
-              <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} alignItems="center" sx={{ mt: 1 }}>
-                <Box component="img" src={imgAcumulo1} alt="Exemplo de acúmulo 1" sx={{ width: '100%', maxWidth: 560, borderRadius: 2 }} />
-                <Box component="img" src={imgAcumulo2} alt="Exemplo de acúmulo 2" sx={{ width: '100%', maxWidth: 560, borderRadius: 2 }} />
+              <Typography>
+                Dica: ao <strong>juntar cartões</strong>, a validade passa a ser a do cartão{" "}
+                <strong>mais recente</strong>.
+              </Typography>
+              <Stack
+                direction={{ xs: "column", md: "row" }}
+                spacing={2}
+                alignItems="center"
+                sx={{ mt: 1 }}
+              >
+                <Box component="img" src={imgAcumulo1} alt="Exemplo de acúmulo 1" sx={{ width: "100%", maxWidth: 560, borderRadius: 2 }} />
+                <Box component="img" src={imgAcumulo2} alt="Exemplo de acúmulo 2" sx={{ width: "100%", maxWidth: 560, borderRadius: 2 }} />
               </Stack>
             </Stack>
           </Paper>
 
           {/* Convite grupo */}
-          <Paper variant="outlined" sx={{ p: { xs: 3, md: 4 }, textAlign: 'center', bgcolor: 'rgba(103, 194, 58, 0.05)', borderColor: 'primary.main' }}>
+          <Paper
+            variant="outlined"
+            sx={{
+              p: { xs: 3, md: 4 },
+              textAlign: "center",
+              bgcolor: "rgba(103, 194, 58, 0.05)",
+              borderColor: "primary.main",
+            }}
+          >
             <Typography variant="h4" fontWeight={900} sx={{ mb: 1 }}>
               Clique no link abaixo e faça parte do <br /> grupo do sorteio!
             </Typography>
             <Typography sx={{ opacity: 0.85, mb: 2 }}>
               Lá você acompanha novidades, abertura de novas rodadas e avisos importantes.
             </Typography>
-            <Button component="a" href={groupUrl} target="_blank" rel="noopener" size="large" variant="contained" color="success" sx={{ px: 4, py: 1.5, fontWeight: 800, letterSpacing: 0.5 }}>
+            <Button
+              component="a"
+              href={groupUrl}
+              target="_blank"
+              rel="noopener"
+              size="large"
+              variant="contained"
+              color="success"
+              sx={{ px: 4, py: 1.5, fontWeight: 800, letterSpacing: 0.5 }}
+            >
               SIM, EU QUERO PARTICIPAR!
             </Button>
           </Paper>
@@ -673,24 +848,24 @@ export default function NewStorePage({
 
       {/* Modal de confirmação */}
       <Dialog open={open} onClose={handleFechar} maxWidth="xs" fullWidth PaperProps={{ sx: { borderRadius: 3 } }}>
-        <DialogTitle sx={{ fontSize: 22, fontWeight: 800, textAlign: 'center' }}>
+        <DialogTitle sx={{ fontSize: 22, fontWeight: 800, textAlign: "center" }}>
           Confirme sua seleção
         </DialogTitle>
-        <DialogContent sx={{ textAlign: 'center' }}>
+        <DialogContent sx={{ textAlign: "center" }}>
           {selecionados.length ? (
             <>
               <Typography variant="body2" sx={{ opacity: 0.85, mb: 1 }}>
-                Você selecionou {selecionados.length} {selecionados.length === 1 ? 'número' : 'números'}:
+                Você selecionou {selecionados.length} {selecionados.length === 1 ? "número" : "números"}:
               </Typography>
               <Typography variant="h6" sx={{ fontWeight: 800, letterSpacing: 1, mb: 1 }}>
-                {selecionados.slice().sort((a, b) => a - b).map(pad2).join(', ')}
+                {selecionados.slice().sort((a, b) => a - b).map(pad2).join(", ")}
               </Typography>
               <Typography variant="body1" sx={{ mt: 0.5, mb: 1 }}>
                 Total: <strong>R$ {(selecionados.length * unitPrice).toFixed(2)}</strong>
               </Typography>
-              {selectionWouldExceed && (
-                <Typography color="error" sx={{ fontWeight: 700 }}>
-                  Essa seleção ultrapassa seu limite total ({userLimit.current ?? '-'} de {userLimit.max ?? '-'}).
+              {Number.isFinite(remainingFromServer) && (
+                <Typography variant="caption" sx={{ opacity: 0.75 }}>
+                  Você ainda pode comprar {Math.max(0, remainingFromServer)} número(s) neste sorteio.
                 </Typography>
               )}
             </>
@@ -700,18 +875,36 @@ export default function NewStorePage({
             </Typography>
           )}
         </DialogContent>
-        <DialogActions sx={{ px: 3, pb: 3, gap: 1.2, flexWrap: 'wrap', flexDirection: { xs: 'column', sm: 'row' }, '& > *': { flex: 1 } }}>
+        <DialogActions
+          sx={{
+            px: 3,
+            pb: 3,
+            gap: 1.2,
+            flexWrap: "wrap",
+            flexDirection: { xs: "column", sm: "row" },
+            "& > *": { flex: 1 },
+          }}
+        >
           <Button variant="outlined" onClick={handleFechar} sx={{ py: 1.2, fontWeight: 700 }}>
             SELECIONAR MAIS NÚMEROS
           </Button>
-          <Button variant="outlined" color="error" onClick={() => { limparSelecao(); setOpen(false); }} disabled={!selecionados.length} sx={{ py: 1.2, fontWeight: 700 }}>
+          <Button
+            variant="outlined"
+            color="error"
+            onClick={() => {
+              limparSelecao();
+              setOpen(false);
+            }}
+            disabled={!selecionados.length}
+            sx={{ py: 1.2, fontWeight: 700 }}
+          >
             LIMPAR SELEÇÃO
           </Button>
           <Button
             variant="contained"
             color="success"
             onClick={handleIrPagamento}
-            disabled={!selecionados.length || selectionWouldExceed || (isAuthenticated && userLimit.blocked)}
+            disabled={continuarDisabled}
             sx={{ py: 1.2, fontWeight: 700 }}
           >
             IR PARA PAGAMENTO
@@ -722,32 +915,44 @@ export default function NewStorePage({
       {/* Modal PIX (QR) */}
       <PixModal
         open={pixOpen}
-        onClose={() => { setPixOpen(false); setPixApproved(false); }}
+        onClose={() => {
+          setPixOpen(false);
+          setPixApproved(false);
+        }}
         loading={pixLoading}
         data={pixData}
         amount={pixAmount}
-        onCopy={() => { if (pixData) { navigator.clipboard.writeText(pixData.copy_paste_code || pixData.qr_code || ''); } }}
+        onCopy={() => {
+          if (pixData) {
+            navigator.clipboard.writeText(
+              pixData.copy_paste_code || pixData.qr_code || ""
+            );
+          }
+        }}
         onRefresh={async () => {
-          if (!pixData?.paymentId) { setPixOpen(false); return; }
+          if (!pixData?.paymentId) {
+            setPixOpen(false);
+            return;
+          }
           try {
             const st = await checkPixStatus(pixData.paymentId);
-            if (st.status === 'approved') {
+            if (st.status === "approved") {
               handlePixApproved();
             } else {
-              alert(`Status: ${st.status || 'pendente'}`);
+              alert(`Status: ${st.status || "pendente"}`);
             }
-          } catch (e) {
-            alert('Não foi possível consultar o status agora.');
+          } catch {
+            alert("Não foi possível consultar o status agora.");
           }
         }}
       />
 
       {/* Modal de sucesso do PIX */}
       <Dialog open={pixApproved} onClose={() => setPixApproved(false)} maxWidth="xs" fullWidth PaperProps={{ sx: { borderRadius: 3 } }}>
-        <DialogTitle sx={{ fontSize: 22, fontWeight: 900, textAlign: 'center' }}>
+        <DialogTitle sx={{ fontSize: 22, fontWeight: 900, textAlign: "center" }}>
           Pagamento confirmado! 🎉
         </DialogTitle>
-        <DialogContent sx={{ textAlign: 'center' }}>
+        <DialogContent sx={{ textAlign: "center" }}>
           <Typography variant="h6" sx={{ fontWeight: 800, mb: 1 }}>
             Seus números foram reservados.
           </Typography>
@@ -764,20 +969,20 @@ export default function NewStorePage({
 
       {/* Modal: limite atingido */}
       <Dialog open={limitOpen} onClose={() => setLimitOpen(false)} maxWidth="xs" fullWidth PaperProps={{ sx: { borderRadius: 3 } }}>
-        <DialogTitle sx={{ fontSize: 20, fontWeight: 900, textAlign: 'center' }}>
-          {limitInfo?.type === 'selection'
-            ? 'Você pode selecionar no máximo 20 números por vez'
-            : 'Número máximo de compras por usuário atingido'}
+        <DialogTitle sx={{ fontSize: 20, fontWeight: 900, textAlign: "center" }}>
+          {limitInfo?.type === "selection"
+            ? "Você pode selecionar no máximo 20 números"
+            : "Número máximo de compras por usuário atingido"}
         </DialogTitle>
-        <DialogContent sx={{ textAlign: 'center' }}>
+        <DialogContent sx={{ textAlign: "center" }}>
           <Typography sx={{ opacity: 0.9 }}>
-            {limitInfo?.type === 'selection'
-              ? 'Para continuar, remova um número antes de adicionar outro.'
-              : 'Você já alcançou o limite de números neste sorteio/conta.'}
+            {limitInfo?.type === "selection"
+              ? "Para continuar, remova um número antes de adicionar outro."
+              : "Você já alcançou o limite de números neste sorteio."}
           </Typography>
           {(Number.isFinite(limitInfo?.current) || Number.isFinite(limitInfo?.max)) && (
             <Typography sx={{ mt: 1, fontWeight: 700 }}>
-              ({limitInfo?.current ?? '-'} de {limitInfo?.max ?? '-'})
+              ({limitInfo?.current ?? "-"} de {limitInfo?.max ?? "-"})
             </Typography>
           )}
         </DialogContent>
