@@ -70,10 +70,7 @@ async function getJSON(path) {
   });
   if (!r.ok) {
     let err = `${r.status}`;
-    try {
-      const j = await r.json();
-      if (j?.error) err = j.error;
-    } catch {}
+    try { const j = await r.json(); if (j?.error) err = j.error; } catch {}
     throw new Error(err);
   }
   return r.json();
@@ -87,10 +84,7 @@ async function postJSON(path, body, method = "POST") {
   });
   if (!r.ok) {
     let err = `${r.status}`;
-    try {
-      const j = await r.json();
-      if (j?.error) err = j.error;
-    } catch {}
+    try { const j = await r.json(); if (j?.error) err = j.error; } catch {}
     throw new Error(err);
   }
   return r.json().catch(() => ({}));
@@ -164,28 +158,38 @@ export default function AdminDashboard() {
       setDrawId(r.draw_id ?? null);
       setSold(r.sold ?? 0);
       setRemaining(r.remaining ?? 0);
-      setPrice(
-        Number.isFinite(Number(r.price_cents)) ? String(Number(r.price_cents)) : ""
-      );
-      console.log("[AdminDashboard] GET /summary", r);
+      if (Number.isFinite(Number(r.price_cents))) {
+        setPrice(String(Number(r.price_cents)));
+      }
 
-      // carrega configurações extras (novos campos)
+      // carrega configurações extras (novos campos) – público
       try {
         const cfg = await getJSON("/config");
-        // preço: se o summary não trouxe, usa daqui
+
         const cfgCents =
           cfg?.ticket_price_cents ??
           cfg?.price_cents ??
           cfg?.current?.price_cents ??
           cfg?.current_draw?.price_cents ??
           null;
-        if (!price && cfgCents != null && Number.isFinite(Number(cfgCents))) {
+        if (cfgCents != null && Number.isFinite(Number(cfgCents))) {
           setPrice(String(Number(cfgCents)));
         }
+
         const maxSel =
-          cfg?.max_numbers_per_selection ?? cfg?.max_per_selection ?? cfg?.max_select;
-        if (maxSel != null) setMaxSelect(Number(maxSel));
-        const banner = cfg?.banner_title ?? cfg?.promo_title ?? cfg?.headline ?? "";
+          cfg?.max_numbers_per_selection ??
+          cfg?.max_per_selection ??
+          cfg?.max_select ??
+          null;
+        if (maxSel != null && !Number.isNaN(Number(maxSel))) {
+          setMaxSelect(Number(maxSel));
+        }
+
+        const banner =
+          cfg?.banner_title ??
+          cfg?.promo_title ??
+          cfg?.headline ??
+          "";
         if (banner != null) setBannerTitle(String(banner));
       } catch (e) {
         console.warn("[AdminDashboard] GET /config opcional:", e?.message || e);
@@ -198,38 +202,49 @@ export default function AdminDashboard() {
     } finally {
       setLoading(false);
     }
-  }, [price]);
+  }, []);
 
-  React.useEffect(() => {
-    loadSummary();
-  }, [loadSummary]);
+  React.useEffect(() => { loadSummary(); }, [loadSummary]);
 
-  // ATUALIZAR: agora salva os 3 campos.
-  const onSavePrice = async () => {
+  // ATUALIZAR: salva os 3 campos (com fallback).
+  const onSaveAll = async () => {
     try {
       setSaving(true);
 
-      const n = Math.max(0, Math.floor(Number(price || 0))); // centavos já
+      const priceCents = Math.max(0, Math.floor(Number(price || 0)));
+      const payload = {
+        ticket_price_cents: priceCents,
+        max_numbers_per_selection: Math.max(1, Math.floor(Number(maxSelect || 1))),
+        banner_title: String(bannerTitle || ""),
+      };
 
-      // 1) tenta salvar tudo em /config (preferível)
       let saved = false;
+
+      // 1) rota admin preferida
       try {
-        await postJSON("/config", {
-          ticket_price_cents: n,
-          max_numbers_per_selection: Number(maxSelect) || 1,
-          banner_title: String(bannerTitle || ""),
-        });
+        await postJSON("/admin/config", payload, "POST");
         saved = true;
-      } catch (e) {
-        console.warn("[AdminDashboard] POST /config falhou, tentando rota antiga:", e?.message || e);
+      } catch (e1) {
+        console.warn("[AdminDashboard] POST /admin/config falhou:", e1?.message || e1);
       }
 
-      // 2) compat: se /config não existir, ao menos salva o preço na rota antiga
+      // 2) fallback: POST /config (se o seu back expõe escrita aqui)
       if (!saved) {
-        await postJSON("/admin/dashboard/ticket-price", { price_cents: n });
+        try {
+          await postJSON("/config", payload, "POST");
+          saved = true;
+        } catch (e2) {
+          console.warn("[AdminDashboard] POST /config falhou:", e2?.message || e2);
+        }
+      }
+
+      // 3) retro-compatibilidade: ao menos salva o preço na rota antiga
+      if (!saved) {
+        await postJSON("/admin/dashboard/ticket-price", { price_cents: priceCents }, "POST");
       }
 
       await loadSummary();
+      alert("Configurações atualizadas.");
     } catch (e) {
       console.error("[AdminDashboard] salvar configs falhou:", e);
       alert("Não foi possível atualizar as configurações agora.");
@@ -255,15 +270,8 @@ export default function AdminDashboard() {
   const open = Boolean(menuEl);
   const openMenu = (e) => setMenuEl(e.currentTarget);
   const closeMenu = () => setMenuEl(null);
-  const goPainel = () => {
-    closeMenu();
-    navigate("/admin");
-  };
-  const doLogout = () => {
-    closeMenu();
-    logout();
-    navigate("/");
-  };
+  const goPainel = () => { closeMenu(); navigate("/admin"); };
+  const doLogout = () => { closeMenu(); logout(); navigate("/"); };
 
   return (
     <ThemeProvider theme={theme}>
@@ -275,11 +283,8 @@ export default function AdminDashboard() {
             <ArrowBackIosNewRoundedIcon />
           </IconButton>
 
-          <Box
-            component={RouterLink}
-            to="/admin"
-            sx={{ position: "absolute", left: "50%", top: "50%", transform: "translate(-50%, -50%)" }}
-          >
+          <Box component={RouterLink} to="/admin"
+               sx={{ position: "absolute", left: "50%", top: "50%", transform: "translate(-50%, -50%)" }}>
             <Box component="img" src={logoNewStore} alt="NEW STORE" sx={{ height: 40 }} />
           </Box>
 
@@ -302,19 +307,12 @@ export default function AdminDashboard() {
 
       <Container maxWidth="md" sx={{ py: { xs: 4, md: 8 } }}>
         <Stack spacing={4} alignItems="center">
-          <Typography
-            sx={{
-              fontWeight: 900,
-              textAlign: "center",
-              lineHeight: 1.1,
-              fontSize: { xs: 28, md: 56 },
-            }}
-          >
+          <Typography sx={{ fontWeight: 900, textAlign: "center", lineHeight: 1.1, fontSize: { xs: 28, md: 56 } }}>
             Painel de Controle
             <br /> dos Sorteios
           </Typography>
 
-          {/* Painel (resumo + preço) */}
+          {/* Painel (resumo + preço e configs) */}
           <Paper variant="outlined" sx={{ p: { xs: 3, md: 4 }, borderRadius: 4, width: "100%" }}>
             <Stack direction="row" spacing={4} alignItems="center" flexWrap="wrap">
               <Stack>
@@ -340,7 +338,12 @@ export default function AdminDashboard() {
 
               <Box sx={{ flex: 1 }} />
 
-              <Button onClick={onNewDraw} disabled={creating} variant="outlined" sx={{ borderRadius: 999, px: 3 }}>
+              <Button
+                onClick={onNewDraw}
+                disabled={creating}
+                variant="outlined"
+                sx={{ borderRadius: 999, px: 3 }}
+              >
                 {creating ? "Criando..." : "NOVO SORTEIO"}
               </Button>
             </Stack>
@@ -359,7 +362,7 @@ export default function AdminDashboard() {
               />
             </Stack>
 
-            {/* NOVOS CAMPOS */}
+            {/* Máximo de tickets por seleção */}
             <Typography sx={{ opacity: 0.7, fontWeight: 700, mb: 1 }}>
               Máximo de Tickets permitidos
             </Typography>
@@ -374,6 +377,7 @@ export default function AdminDashboard() {
               />
             </Stack>
 
+            {/* Frase promocional */}
             <Typography sx={{ opacity: 0.7, fontWeight: 700, mb: 1 }}>
               Frase promocional
             </Typography>
@@ -387,7 +391,7 @@ export default function AdminDashboard() {
             </Stack>
 
             <Button
-              onClick={onSavePrice}
+              onClick={onSaveAll}
               disabled={saving}
               variant="contained"
               color="primary"
