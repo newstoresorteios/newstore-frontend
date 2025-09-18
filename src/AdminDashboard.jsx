@@ -67,7 +67,7 @@ async function getJSON(path) {
   const r = await fetch(apiJoin(path), {
     headers: { "Content-Type": "application/json", ...authHeaders() },
     credentials: "omit",
-    cache: "no-store", // evita 304 sem body para JSON dinâmico
+    cache: "no-store", // evita cache 304
   });
   if (!r.ok) {
     let err = `${r.status}`;
@@ -140,10 +140,10 @@ export default function AdminDashboard() {
   const [sold, setSold] = React.useState(0);
   const [remaining, setRemaining] = React.useState(0);
 
-  // preço (em centavos, como já era)
+  // preço (em centavos)
   const [price, setPrice] = React.useState("");
 
-  // NOVOS CAMPOS
+  // novos campos
   const [maxSelect, setMaxSelect] = React.useState(5);
   const [bannerTitle, setBannerTitle] = React.useState("");
 
@@ -154,7 +154,7 @@ export default function AdminDashboard() {
   const loadSummary = React.useCallback(async () => {
     setLoading(true);
     try {
-      // resumo do dashboard (mantém como estava)
+      // resumo do dashboard
       const r = await getJSON("/admin/dashboard/summary");
       setDrawId(r.draw_id ?? null);
       setSold(r.sold ?? 0);
@@ -207,49 +207,29 @@ export default function AdminDashboard() {
 
   React.useEffect(() => { loadSummary(); }, [loadSummary]);
 
-  // ATUALIZAR: grava todos os campos (com fallbacks p/ não quebrar o preço)
+  // SALVAR: mantém o fluxo do preço que já funciona e tenta salvar os novos campos
   const onSaveAll = async () => {
+    setSaving(true);
+    let msg = "Configurações atualizadas.";
     try {
-      setSaving(true);
-
+      // 1) preço — usa a rota que já funciona hoje
       const priceCents = Math.max(0, Math.floor(Number(price || 0)));
-      const payload = {
-        ticket_price_cents: priceCents,
-        max_numbers_per_selection: Math.max(1, Math.floor(Number(maxSelect || 1))),
-        banner_title: String(bannerTitle || ""),
-      };
+      await postJSON("/admin/dashboard/ticket-price", { price_cents: priceCents });
 
-      let saved = false;
-      let lastErr;
-
-      // 1) rota admin dedicada (se existir no seu back)
+      // 2) banner + max — tenta POST /config (se seu backend ainda não tiver, isso cairá no catch)
       try {
-        await postJSON("/admin/config", payload, "POST");
-        saved = true;
-      } catch (e1) {
-        lastErr = e1;
-        console.warn("[AdminDashboard] POST /admin/config falhou:", e1?.message || e1);
-      }
-
-      // 2) rota pública de config (GET/POST) — usada no seu back mais recente
-      if (!saved) {
-        try {
-          await postJSON("/config", payload, "POST");
-          saved = true;
-        } catch (e2) {
-          lastErr = e2;
-          console.warn("[AdminDashboard] POST /config falhou:", e2?.message || e2);
-        }
-      }
-
-      // 3) retro-compatibilidade absoluta: pelo menos atualiza o preço na rota antiga
-      if (!saved) {
-        await postJSON("/admin/dashboard/ticket-price", { price_cents: priceCents }, "POST");
-        // maxSelect / banner ficam para próxima versão do back — mas o preço (que já funcionava) permanece OK
+        await postJSON("/config", {
+          banner_title: String(bannerTitle || ""),
+          max_numbers_per_selection: Math.max(1, Math.floor(Number(maxSelect || 1))),
+        });
+      } catch (e) {
+        console.warn("[AdminDashboard] POST /config falhou:", e?.message || e);
+        msg =
+          "Preço atualizado. Para salvar 'Frase promocional' e 'Máximo de tickets', habilite POST /api/config no backend.";
       }
 
       await loadSummary();
-      alert(saved ? "Configurações atualizadas." : "Preço atualizado. (Os demais campos serão aplicados quando o endpoint de configuração estiver disponível.)");
+      alert(msg);
     } catch (e) {
       console.error("[AdminDashboard] salvar configs falhou:", e);
       alert("Não foi possível atualizar as configurações agora.");
