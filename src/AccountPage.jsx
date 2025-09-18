@@ -8,7 +8,6 @@ import {
   AppBar, Box, Button, Chip, Container, CssBaseline, IconButton, Menu, MenuItem,
   Divider, Paper, Stack, ThemeProvider, Toolbar, Typography, createTheme,
   Table, TableBody, TableCell, TableContainer, TableHead, TableRow, LinearProgress,
-  // ▼ ADIÇÕES
   TextField, Alert
 } from "@mui/material";
 import ArrowBackIosNewRoundedIcon from "@mui/icons-material/ArrowBackIosNewRounded";
@@ -61,7 +60,7 @@ async function tryManyJson(paths) {
   return { data: null, from: null };
 }
 
-// ▼ ADIÇÃO: POST em uma lista de endpoints, parando no primeiro 2xx
+// POST em uma lista de endpoints, parando no primeiro 2xx
 async function tryManyPost(paths, body) {
   for (const p of paths) {
     try {
@@ -128,7 +127,7 @@ export default function AccountPage() {
   const [validade] = React.useState("28/10/25");
   const [syncing, setSyncing] = React.useState(false);
 
-  // ▼ ADIÇÃO: estado das configurações (apenas admin)
+  // estado das configurações (apenas admin)
   const [cfgLoading, setCfgLoading] = React.useState(false);
   const [cfgSaved, setCfgSaved] = React.useState(null); // null | "ok" | "err"
   const [cfg, setCfg] = React.useState({
@@ -240,7 +239,7 @@ export default function AccountPage() {
     return () => { alive = false; };
   }, [ctxUser, storedMe]);
 
-  // ▼ ADIÇÃO: carregar config (banner_title e max_numbers_per_selection)
+  // carregar config (banner_title e max_numbers_per_selection)
   React.useEffect(() => {
     let alive = true;
     (async () => {
@@ -298,7 +297,7 @@ export default function AccountPage() {
   const couponCode = u?.coupon_code || cupom || "CUPOMAQUI";
   const isAdminUser = !!(u?.is_admin || u?.role === "admin" || (u?.email && u.email.toLowerCase() === ADMIN_EMAIL));
 
-  // ▼ ADIÇÃO: salvar config
+  // salvar config
   async function handleSaveConfig() {
     try {
       setCfgLoading(true);
@@ -372,7 +371,7 @@ export default function AccountPage() {
             {headingName}
           </Typography>
 
-          {/* ▼ ADIÇÃO: Configurações do sorteio (apenas admin) */}
+          {/* Configurações do sorteio (apenas admin) */}
           {isAdminUser && (
             <Paper variant="outlined" sx={{ p: { xs: 2, md: 3 } }}>
               <Stack spacing={2}>
@@ -453,6 +452,26 @@ export default function AccountPage() {
                   <Typography variant="caption" sx={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace', letterSpacing: 1, opacity: 0.85 }}>
                     CARTÃO PRESENTE
                   </Typography>
+
+                  {/* ▼ NOME acima do e-mail — só no mobile */}
+                  <Typography
+                    sx={{
+                      display: { xs: "block", sm: "none" },
+                      fontWeight: 900,
+                      letterSpacing: 1,
+                      textTransform: "uppercase",
+                      lineHeight: 1.1,
+                      fontSize: 12,
+                      opacity: 0.95,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                      maxWidth: "100%",
+                    }}
+                  >
+                    {headingName}
+                  </Typography>
+
                   <Stack direction="row" spacing={1} alignItems="center" sx={{ mt: "auto", minWidth: 0 }}>
                     <Box component="img" src={logoNewStore} alt="NS" sx={{ height: 16, opacity: 0.9 }} />
                     <Typography
