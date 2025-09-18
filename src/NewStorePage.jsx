@@ -178,6 +178,8 @@ export default function NewStorePage({
   const [srvReservados, setSrvReservados] = React.useState([]);
   const [srvIndisponiveis, setSrvIndisponiveis] = React.useState([]);
 
+  const [soldInitials, setSoldInitials] = React.useState({}); // ▼ NOVO: mapa n -> iniciais
+
   // Preço dinâmico
   const FALLBACK_PRICE = Number(process.env.REACT_APP_PIX_PRICE) || 55;
   const [unitPrice, setUnitPrice] = React.useState(FALLBACK_PRICE);
@@ -274,16 +276,27 @@ export default function NewStorePage({
         });
         if (!res.ok) return;
         const j = await res.json();
+
         const reserv = [];
         const indis = [];
+        const initials = {}; // ▼ NOVO: coleta de iniciais
+
         for (const it of j?.numbers || []) {
           const st = String(it.status || "").toLowerCase();
           if (st === "reserved") reserv.push(Number(it.n));
-          if (st === "taken" || st === "sold") indis.push(Number(it.n));
+          if (st === "taken" || st === "sold") {
+            const n = Number(it.n);
+            indis.push(n);
+            // se o backend mandar owner_initials, guardamos para mostrar no grid
+            if (it.owner_initials) {
+              initials[n] = String(it.owner_initials).slice(0, 2).toUpperCase();
+            }
+          }
         }
         if (!alive) return;
         setSrvReservados(Array.from(new Set(reserv)));
         setSrvIndisponiveis(Array.from(new Set(indis)));
+        setSoldInitials(initials); // ▼ NOVO
       } catch {
         /* silencioso */
       }
@@ -741,9 +754,34 @@ export default function NewStorePage({
                       justifyContent: "center",
                       fontWeight: 800,
                       fontVariantNumeric: "tabular-nums",
+                      position: "relative", // ▼ NOVO: para posicionar o selo
                     }}
                   >
                     {pad2(idx)}
+
+                    {/* ▼ NOVO: selo com iniciais para números VENDIDOS (sold) */}
+                    {isIndisponivel(idx) && soldInitials[idx] && (
+                      <Box
+                        sx={{
+                          position: "absolute",
+                          right: 4,
+                          bottom: 4,
+                          px: 0.5,
+                          py: 0.1,
+                          borderRadius: 0.75,
+                          fontSize: 10,
+                          fontWeight: 900,
+                          lineHeight: 1,
+                          backgroundColor: "rgba(0,0,0,0.45)",
+                          color: "#fff",
+                          letterSpacing: 0.5,
+                          pointerEvents: "none",
+                        }}
+                      >
+                        {soldInitials[idx]}
+                      </Box>
+                    )}
+                    {/* ▲ FIM NOVO */}
                   </Box>
                 ))}
               </Box>
