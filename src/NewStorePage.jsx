@@ -618,7 +618,7 @@ export default function NewStorePage({
                   textShadow: "0 0 12px rgba(103,194,58,0.18)",
                 }}
               >
-                Sorteio de um Watch Winder Caixa de Suporte Rotativo Para Relógios Automáticos
+               Sorteio de um Watch Winder Caixa de Suporte Rotativo Para Relógios Automáticos
               </Typography>
             </Box>
 
