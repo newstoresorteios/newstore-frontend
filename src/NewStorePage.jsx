@@ -56,7 +56,7 @@ const theme = createTheme({
 
 // Helpers
 const pad2 = (n) => n.toString().padStart(2, "0");
-const MAX_SELECT = Number(process.env.REACT_APP_MAX_NUMBERS_PER_USER || 20);
+const MAX_SELECT = Number(process.env.REACT_APP_MAX_NUMBERS_PER_USER || 5);
 
 // Link externo
 const RESULTADOS_LOTERIAS =
@@ -374,10 +374,10 @@ export default function NewStorePage({
         openLimitModal({
           type: "purchase",
           current: current ?? limitUsage.current,
-          max: max ?? limitUsage.max ?? 20,
+          max: max ?? limitUsage.max ?? 5,
         });
         // atualiza banner de saldo
-        setLimitUsage({ current: current ?? 0, max: max ?? 20 });
+        setLimitUsage({ current: current ?? 0, max: max ?? 5 });
         return;
       }
     } catch (e) {
@@ -455,7 +455,7 @@ export default function NewStorePage({
         openLimitModal({
           type: "purchase",
           current: limitUsage.current ?? 0,
-          max: limitUsage.max ?? 20,
+          max: limitUsage.max ?? 5,
         });
         return prev;
       }
@@ -1016,7 +1016,7 @@ export default function NewStorePage({
       <Dialog open={limitOpen} onClose={() => setLimitOpen(false)} maxWidth="xs" fullWidth PaperProps={{ sx: { borderRadius: 3 } }}>
         <DialogTitle sx={{ fontSize: 20, fontWeight: 900, textAlign: "center" }}>
           {limitInfo?.type === "selection"
-            ? "Você pode selecionar no máximo 20 números"
+            ? "Você pode selecionar no máximo 5 números"
             : "Número máximo de compras por usuário atingido"}
         </DialogTitle>
         <DialogContent sx={{ textAlign: "center" }}>
