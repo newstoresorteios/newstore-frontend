@@ -8,6 +8,8 @@ import {
   AppBar, Box, Button, Chip, Container, CssBaseline, IconButton, Menu, MenuItem,
   Divider, Paper, Stack, ThemeProvider, Toolbar, Typography, createTheme,
   Table, TableBody, TableCell, TableContainer, TableHead, TableRow, LinearProgress,
+  // ▼ ADIÇÕES
+  TextField, Alert
 } from "@mui/material";
 import ArrowBackIosNewRoundedIcon from "@mui/icons-material/ArrowBackIosNewRounded";
 import AccountCircleRoundedIcon from "@mui/icons-material/AccountCircleRounded";
@@ -31,7 +33,6 @@ const pad2 = (n) => String(n).padStart(2, "0");
 const ADMIN_EMAIL = "admin@newstore.com.br";
 // TTL de expiração de reserva (minutos). Ajuste por env: REACT_APP_RESERVATION_TTL_MINUTES
 const TTL_MINUTES = Number(process.env.REACT_APP_RESERVATION_TTL_MINUTES || 15);
-
 
 // chips
 const PayChip = ({ status }) => {
@@ -58,6 +59,22 @@ async function tryManyJson(paths) {
     } catch {}
   }
   return { data: null, from: null };
+}
+
+// ▼ ADIÇÃO: POST em uma lista de endpoints, parando no primeiro 2xx
+async function tryManyPost(paths, body) {
+  for (const p of paths) {
+    try {
+      const r = await fetch(apiJoin(p), {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeaders() },
+        credentials: "include",
+        body: JSON.stringify(body || {}),
+      });
+      if (r.ok) return await r.json().catch(() => ({}));
+    } catch {}
+  }
+  throw new Error("save_failed");
 }
 
 // normaliza payloads diferentes para um único formato
@@ -110,6 +127,14 @@ export default function AccountPage() {
   const [cupom, setCupom] = React.useState("CUPOMAQUI");
   const [validade] = React.useState("28/10/25");
   const [syncing, setSyncing] = React.useState(false);
+
+  // ▼ ADIÇÃO: estado das configurações (apenas admin)
+  const [cfgLoading, setCfgLoading] = React.useState(false);
+  const [cfgSaved, setCfgSaved] = React.useState(null); // null | "ok" | "err"
+  const [cfg, setCfg] = React.useState({
+    banner_title: "",
+    max_numbers_per_selection: 5,
+  });
 
   const isLoggedIn = !!(user?.email || user?.id);
   const logoTo = isLoggedIn ? "/conta" : "/";
@@ -215,6 +240,25 @@ export default function AccountPage() {
     return () => { alive = false; };
   }, [ctxUser, storedMe]);
 
+  // ▼ ADIÇÃO: carregar config (banner_title e max_numbers_per_selection)
+  React.useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const j = await getJSON("/config");
+        const banner = typeof j?.banner_title === "string" ? j.banner_title : "";
+        const maxSel = Number(j?.max_numbers_per_selection ?? j?.max_select ?? 5);
+        if (alive) setCfg({
+          banner_title: banner,
+          max_numbers_per_selection: Number.isFinite(maxSel) && maxSel > 0 ? maxSel : 5,
+        });
+      } catch {
+        /* silencioso */
+      }
+    })();
+    return () => { alive = false; };
+  }, []);
+
   // sincroniza cupom
   React.useEffect(() => {
     let alive = true;
@@ -253,6 +297,28 @@ export default function AccountPage() {
   const cardEmail = u.email || (u.username?.includes?.("@") ? u.username : headingName);
   const couponCode = u?.coupon_code || cupom || "CUPOMAQUI";
   const isAdminUser = !!(u?.is_admin || u?.role === "admin" || (u?.email && u.email.toLowerCase() === ADMIN_EMAIL));
+
+  // ▼ ADIÇÃO: salvar config
+  async function handleSaveConfig() {
+    try {
+      setCfgLoading(true);
+      setCfgSaved(null);
+      const payload = {
+        banner_title: String(cfg.banner_title || "").slice(0, 240),
+        max_numbers_per_selection: Math.max(1, Number(cfg.max_numbers_per_selection || 1)),
+      };
+      await tryManyPost(
+        ["/config", "/admin/config", "/config/update"],
+        payload
+      );
+      setCfgSaved("ok");
+    } catch {
+      setCfgSaved("err");
+    } finally {
+      setCfgLoading(false);
+      setTimeout(() => setCfgSaved(null), 4000);
+    }
+  }
 
   return (
     <ThemeProvider theme={theme}>
@@ -305,6 +371,52 @@ export default function AccountPage() {
           >
             {headingName}
           </Typography>
+
+          {/* ▼ ADIÇÃO: Configurações do sorteio (apenas admin) */}
+          {isAdminUser && (
+            <Paper variant="outlined" sx={{ p: { xs: 2, md: 3 } }}>
+              <Stack spacing={2}>
+                <Typography variant="h6" fontWeight={900}>Configurações do sorteio</Typography>
+
+                <TextField
+                  label="Título do banner (página principal)"
+                  value={cfg.banner_title}
+                  onChange={(e) => setCfg(s => ({ ...s, banner_title: e.target.value }))}
+                  fullWidth
+                  inputProps={{ maxLength: 240 }}
+                />
+
+                <TextField
+                  label="Máx. de números por seleção"
+                  type="number"
+                  value={cfg.max_numbers_per_selection}
+                  onChange={(e) =>
+                    setCfg(s => ({ ...s, max_numbers_per_selection: Math.max(1, Number(e.target.value || 1)) }))
+                  }
+                  inputProps={{ min: 1, step: 1 }}
+                  sx={{ maxWidth: 260 }}
+                />
+
+                <Stack direction="row" spacing={1.5}>
+                  <Button
+                    variant="contained"
+                    color="success"
+                    onClick={handleSaveConfig}
+                    disabled={cfgLoading}
+                  >
+                    {cfgLoading ? "Salvando…" : "Salvar configurações"}
+                  </Button>
+                </Stack>
+
+                {cfgSaved === "ok" && (
+                  <Alert severity="success" variant="outlined">Configurações salvas com sucesso.</Alert>
+                )}
+                {cfgSaved === "err" && (
+                  <Alert severity="error" variant="outlined">Não foi possível salvar. Tente novamente.</Alert>
+                )}
+              </Stack>
+            </Paper>
+          )}
 
           {/* Cartão */}
           <Box sx={{ width: "100%", display: "flex", justifyContent: "center" }}>

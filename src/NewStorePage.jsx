@@ -56,7 +56,6 @@ const theme = createTheme({
 
 // Helpers
 const pad2 = (n) => n.toString().padStart(2, "0");
-const MAX_SELECT = Number(process.env.REACT_APP_MAX_NUMBERS_PER_USER || 5);
 
 // Link externo
 const RESULTADOS_LOTERIAS =
@@ -183,6 +182,10 @@ export default function NewStorePage({
   const FALLBACK_PRICE = Number(process.env.REACT_APP_PIX_PRICE) || 55;
   const [unitPrice, setUnitPrice] = React.useState(FALLBACK_PRICE);
 
+  // Config dinâmicas
+  const [bannerTitle, setBannerTitle] = React.useState("");
+  const [maxSelect, setMaxSelect] = React.useState(5);
+
   // Draw atual (se o backend expuser)
   const [currentDrawId, setCurrentDrawId] = React.useState(null);
 
@@ -192,13 +195,12 @@ export default function NewStorePage({
     max: null,
   });
 
-  // ===== Carregar preço e (se houver) draw id — sem 404 no console
+  // ===== Carregar preço, textos e (se houver) draw id — sem 404 no console
   React.useEffect(() => {
     let alive = true;
 
     (async () => {
       try {
-        // seu back expõe /api/config (pública) — usar só ela
         const res = await fetch(`${API_BASE}/api/config`, {
           credentials: "include",
           cache: "no-store",
@@ -206,26 +208,37 @@ export default function NewStorePage({
         if (res.ok) {
           const j = await res.json().catch(() => ({}));
 
+          // preço
           const cents =
             j?.ticket_price_cents ??
             j?.price_cents ??
             j?.current?.price_cents ??
             j?.current_draw?.price_cents;
-
           const reais =
             cents != null && Number.isFinite(Number(cents))
               ? Number(cents) / 100
               : Number(j?.ticket_price ?? j?.price);
-
           if (alive && Number.isFinite(reais) && reais > 0) setUnitPrice(reais);
 
+          // draw id (se enviado)
           const did =
             j?.current_draw_id ??
             j?.draw_id ??
             j?.current?.id ??
             j?.current_draw?.id;
-
           if (alive && did != null) setCurrentDrawId(did);
+
+          // banner dinâmico
+          if (alive && typeof j?.banner_title === "string") {
+            setBannerTitle(j.banner_title);
+          }
+
+          // teto de seleção dinâmico
+          const maxSel =
+            j?.max_numbers_per_selection ?? j?.max_select ?? j?.selection_limit;
+          if (alive && Number.isFinite(Number(maxSel)) && Number(maxSel) > 0) {
+            setMaxSelect(Number(maxSel));
+          }
         }
       } catch {
         // fica no fallback sem poluir o console
@@ -440,12 +453,12 @@ export default function NewStorePage({
       const already = prev.includes(n);
       if (already) return prev.filter((x) => x !== n);
 
-      // teto por seleção
-      if (prev.length >= MAX_SELECT) {
+      // teto por seleção (DINÂMICO)
+      if (prev.length >= maxSelect) {
         openLimitModal({
           type: "selection",
-          current: MAX_SELECT,
-          max: MAX_SELECT,
+          current: maxSelect,
+          max: maxSelect,
         });
         return prev;
       }
@@ -594,7 +607,7 @@ export default function NewStorePage({
             variant="outlined"
             sx={{ p: { xs: 1.5, md: 3 }, bgcolor: "background.paper" }}
           >
-            {/* >>>>> BANNER SUPERIOR (apenas texto adicionado) */}
+            {/* >>>>> BANNER SUPERIOR (dinâmico) */}
             <Box
               sx={{
                 mb: 2,
@@ -618,7 +631,8 @@ export default function NewStorePage({
                   textShadow: "0 0 12px rgba(103,194,58,0.18)",
                 }}
               >
-               Sorteio de um Watch Winder Caixa de Suporte Rotativo Para Relógios Automáticos
+                {bannerTitle ||
+                  "Sorteio de um Watch Winder Caixa de Suporte Rotativo Para Relógios Automáticos"}
               </Typography>
             </Box>
 
@@ -667,7 +681,7 @@ export default function NewStorePage({
                 </Typography>
                 {!!selecionados.length && (
                   <Typography variant="body2" sx={{ ml: 1, opacity: 0.8 }}>
-                    • {selecionados.length} selecionado(s) (máx. {MAX_SELECT} por seleção)
+                    • {selecionados.length} selecionado(s) (máx. {maxSelect} por seleção)
                   </Typography>
                 )}
               </Stack>
@@ -1016,7 +1030,7 @@ export default function NewStorePage({
       <Dialog open={limitOpen} onClose={() => setLimitOpen(false)} maxWidth="xs" fullWidth PaperProps={{ sx: { borderRadius: 3 } }}>
         <DialogTitle sx={{ fontSize: 20, fontWeight: 900, textAlign: "center" }}>
           {limitInfo?.type === "selection"
-            ? "Você pode selecionar no máximo 5 números"
+            ? `Você pode selecionar no máximo ${maxSelect} números`
             : "Número máximo de compras por usuário atingido"}
         </DialogTitle>
         <DialogContent sx={{ textAlign: "center" }}>
