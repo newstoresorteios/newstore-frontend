@@ -1,3 +1,4 @@
+// src/AdminDashboard.jsx
 import * as React from "react";
 import { useNavigate, Link as RouterLink } from "react-router-dom";
 import {
@@ -206,7 +207,7 @@ export default function AdminDashboard() {
 
   React.useEffect(() => { loadSummary(); }, [loadSummary]);
 
-  // ATUALIZAR: grava todos os campos em /config
+  // ATUALIZAR: grava todos os campos (com fallbacks p/ não quebrar o preço)
   const onSaveAll = async () => {
     try {
       setSaving(true);
@@ -218,9 +219,37 @@ export default function AdminDashboard() {
         banner_title: String(bannerTitle || ""),
       };
 
-      await postJSON("/config", payload, "POST");
+      let saved = false;
+      let lastErr;
+
+      // 1) rota admin dedicada (se existir no seu back)
+      try {
+        await postJSON("/admin/config", payload, "POST");
+        saved = true;
+      } catch (e1) {
+        lastErr = e1;
+        console.warn("[AdminDashboard] POST /admin/config falhou:", e1?.message || e1);
+      }
+
+      // 2) rota pública de config (GET/POST) — usada no seu back mais recente
+      if (!saved) {
+        try {
+          await postJSON("/config", payload, "POST");
+          saved = true;
+        } catch (e2) {
+          lastErr = e2;
+          console.warn("[AdminDashboard] POST /config falhou:", e2?.message || e2);
+        }
+      }
+
+      // 3) retro-compatibilidade absoluta: pelo menos atualiza o preço na rota antiga
+      if (!saved) {
+        await postJSON("/admin/dashboard/ticket-price", { price_cents: priceCents }, "POST");
+        // maxSelect / banner ficam para próxima versão do back — mas o preço (que já funcionava) permanece OK
+      }
+
       await loadSummary();
-      alert("Configurações atualizadas.");
+      alert(saved ? "Configurações atualizadas." : "Preço atualizado. (Os demais campos serão aplicados quando o endpoint de configuração estiver disponível.)");
     } catch (e) {
       console.error("[AdminDashboard] salvar configs falhou:", e);
       alert("Não foi possível atualizar as configurações agora.");
