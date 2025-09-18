@@ -618,7 +618,7 @@ export default function NewStorePage({
                   textShadow: "0 0 12px rgba(103,194,58,0.18)",
                 }}
               >
-                🎁 SORTEIO DE 5MIL REAIS EM CRÉDITOS NO SITE 💸
+                🎁 SORTEIO DE WATCH WINDER REAIS EM CRÉDITOS NO SITE 💸
               </Typography>
             </Box>
 
