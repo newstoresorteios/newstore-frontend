@@ -745,7 +745,7 @@ export default function NewStorePage({
                   return (
                     <Typography variant="subtitle1" sx={{ opacity: 0.95, fontWeight: 800 }}>
                       📅 Utilizaremos o sorteio do dia <strong>{dia}</strong> ou o
-                      primeiro sorteio da <strong>Lotofácil</strong> após a tabela fechada. 🎯
+                      primeiro sorteio da <strong>Lotomania</strong> após a tabela fechada. 🎯
                     </Typography>
                   );
                 })()
