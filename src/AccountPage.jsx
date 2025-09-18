@@ -423,7 +423,7 @@ export default function AccountPage() {
               elevation={0}
               sx={{
                 width: { xs: "min(94vw, 420px)", sm: "min(88vw, 520px)", md: 560 },
-                aspectRatio: "1.586 / 1",
+                aspectRatio: { xs: "1.85 / 1", sm: "1.586 / 1" },
                 borderRadius: 5, position: "relative", overflow: "hidden",
                 p: { xs: 1.25, sm: 2, md: 2.2 }, bgcolor: "#181818",
                 border: "1px solid rgba(255,255,255,0.08)",
