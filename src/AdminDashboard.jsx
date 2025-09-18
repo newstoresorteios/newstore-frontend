@@ -1,4 +1,3 @@
-// src/AdminDashboard.jsx
 import * as React from "react";
 import { useNavigate, Link as RouterLink } from "react-router-dom";
 import {
@@ -67,6 +66,7 @@ async function getJSON(path) {
   const r = await fetch(apiJoin(path), {
     headers: { "Content-Type": "application/json", ...authHeaders() },
     credentials: "omit",
+    cache: "no-store", // evita 304 sem body para JSON dinâmico
   });
   if (!r.ok) {
     let err = `${r.status}`;
@@ -162,7 +162,7 @@ export default function AdminDashboard() {
         setPrice(String(Number(r.price_cents)));
       }
 
-      // carrega configurações extras (novos campos) – público
+      // configurações públicas
       try {
         const cfg = await getJSON("/config");
 
@@ -206,7 +206,7 @@ export default function AdminDashboard() {
 
   React.useEffect(() => { loadSummary(); }, [loadSummary]);
 
-  // ATUALIZAR: salva os 3 campos (com fallback).
+  // ATUALIZAR: grava todos os campos em /config
   const onSaveAll = async () => {
     try {
       setSaving(true);
@@ -218,31 +218,7 @@ export default function AdminDashboard() {
         banner_title: String(bannerTitle || ""),
       };
 
-      let saved = false;
-
-      // 1) rota admin preferida
-      try {
-        await postJSON("/admin/config", payload, "POST");
-        saved = true;
-      } catch (e1) {
-        console.warn("[AdminDashboard] POST /admin/config falhou:", e1?.message || e1);
-      }
-
-      // 2) fallback: POST /config (se o seu back expõe escrita aqui)
-      if (!saved) {
-        try {
-          await postJSON("/config", payload, "POST");
-          saved = true;
-        } catch (e2) {
-          console.warn("[AdminDashboard] POST /config falhou:", e2?.message || e2);
-        }
-      }
-
-      // 3) retro-compatibilidade: ao menos salva o preço na rota antiga
-      if (!saved) {
-        await postJSON("/admin/dashboard/ticket-price", { price_cents: priceCents }, "POST");
-      }
-
+      await postJSON("/config", payload, "POST");
       await loadSummary();
       alert("Configurações atualizadas.");
     } catch (e) {
