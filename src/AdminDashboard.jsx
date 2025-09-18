@@ -46,13 +46,8 @@ const API_BASE = String(RAW_BASE).replace(/\/+$/, "");
 const apiJoin = (path) => {
   let p = path.startsWith("/") ? path : `/${path}`;
   const baseHasApi = /\/api\/?$/.test(API_BASE);
-
-  // se o BASE já termina com /api e o path começa com /api, remove a duplicidade
   if (baseHasApi && p.startsWith("/api/")) p = p.slice(4);
-
-  // se o BASE NÃO tem /api, garanta que o path tenha
   if (!baseHasApi && !p.startsWith("/api/")) p = `/api${p}`;
-
   return `${API_BASE}${p}`;
 };
 
@@ -149,7 +144,14 @@ export default function AdminDashboard() {
   const [drawId, setDrawId] = React.useState(null);
   const [sold, setSold] = React.useState(0);
   const [remaining, setRemaining] = React.useState(0);
-  const [price, setPrice] = React.useState(""); // em centavos
+
+  // preço (em centavos, como já era)
+  const [price, setPrice] = React.useState("");
+
+  // NOVOS CAMPOS
+  const [maxSelect, setMaxSelect] = React.useState(5);
+  const [bannerTitle, setBannerTitle] = React.useState("");
+
   const [loading, setLoading] = React.useState(true);
   const [saving, setSaving] = React.useState(false);
   const [creating, setCreating] = React.useState(false);
@@ -157,12 +159,37 @@ export default function AdminDashboard() {
   const loadSummary = React.useCallback(async () => {
     setLoading(true);
     try {
+      // resumo do dashboard (mantém como estava)
       const r = await getJSON("/admin/dashboard/summary");
       setDrawId(r.draw_id ?? null);
       setSold(r.sold ?? 0);
       setRemaining(r.remaining ?? 0);
-      setPrice(Number.isFinite(Number(r.price_cents)) ? String(Number(r.price_cents)) : "");
+      setPrice(
+        Number.isFinite(Number(r.price_cents)) ? String(Number(r.price_cents)) : ""
+      );
       console.log("[AdminDashboard] GET /summary", r);
+
+      // carrega configurações extras (novos campos)
+      try {
+        const cfg = await getJSON("/config");
+        // preço: se o summary não trouxe, usa daqui
+        const cfgCents =
+          cfg?.ticket_price_cents ??
+          cfg?.price_cents ??
+          cfg?.current?.price_cents ??
+          cfg?.current_draw?.price_cents ??
+          null;
+        if (!price && cfgCents != null && Number.isFinite(Number(cfgCents))) {
+          setPrice(String(Number(cfgCents)));
+        }
+        const maxSel =
+          cfg?.max_numbers_per_selection ?? cfg?.max_per_selection ?? cfg?.max_select;
+        if (maxSel != null) setMaxSelect(Number(maxSel));
+        const banner = cfg?.banner_title ?? cfg?.promo_title ?? cfg?.headline ?? "";
+        if (banner != null) setBannerTitle(String(banner));
+      } catch (e) {
+        console.warn("[AdminDashboard] GET /config opcional:", e?.message || e);
+      }
     } catch (e) {
       console.error("[AdminDashboard] GET /summary failed:", e);
       setDrawId(null);
@@ -171,18 +198,41 @@ export default function AdminDashboard() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [price]);
 
-  React.useEffect(() => { loadSummary(); }, [loadSummary]);
+  React.useEffect(() => {
+    loadSummary();
+  }, [loadSummary]);
 
+  // ATUALIZAR: agora salva os 3 campos.
   const onSavePrice = async () => {
     try {
       setSaving(true);
-      const n = Math.max(0, Math.floor(Number(price || 0)));
-      await postJSON("/admin/dashboard/ticket-price", { price_cents: n });
+
+      const n = Math.max(0, Math.floor(Number(price || 0))); // centavos já
+
+      // 1) tenta salvar tudo em /config (preferível)
+      let saved = false;
+      try {
+        await postJSON("/config", {
+          ticket_price_cents: n,
+          max_numbers_per_selection: Number(maxSelect) || 1,
+          banner_title: String(bannerTitle || ""),
+        });
+        saved = true;
+      } catch (e) {
+        console.warn("[AdminDashboard] POST /config falhou, tentando rota antiga:", e?.message || e);
+      }
+
+      // 2) compat: se /config não existir, ao menos salva o preço na rota antiga
+      if (!saved) {
+        await postJSON("/admin/dashboard/ticket-price", { price_cents: n });
+      }
+
       await loadSummary();
     } catch (e) {
-      console.error("[AdminDashboard] PATCH ticket-price failed:", e);
+      console.error("[AdminDashboard] salvar configs falhou:", e);
+      alert("Não foi possível atualizar as configurações agora.");
     } finally {
       setSaving(false);
     }
@@ -205,8 +255,15 @@ export default function AdminDashboard() {
   const open = Boolean(menuEl);
   const openMenu = (e) => setMenuEl(e.currentTarget);
   const closeMenu = () => setMenuEl(null);
-  const goPainel = () => { closeMenu(); navigate("/admin"); };
-  const doLogout = () => { closeMenu(); logout(); navigate("/"); };
+  const goPainel = () => {
+    closeMenu();
+    navigate("/admin");
+  };
+  const doLogout = () => {
+    closeMenu();
+    logout();
+    navigate("/");
+  };
 
   return (
     <ThemeProvider theme={theme}>
@@ -218,8 +275,11 @@ export default function AdminDashboard() {
             <ArrowBackIosNewRoundedIcon />
           </IconButton>
 
-          <Box component={RouterLink} to="/admin"
-               sx={{ position: "absolute", left: "50%", top: "50%", transform: "translate(-50%, -50%)" }}>
+          <Box
+            component={RouterLink}
+            to="/admin"
+            sx={{ position: "absolute", left: "50%", top: "50%", transform: "translate(-50%, -50%)" }}
+          >
             <Box component="img" src={logoNewStore} alt="NEW STORE" sx={{ height: 40 }} />
           </Box>
 
@@ -242,7 +302,14 @@ export default function AdminDashboard() {
 
       <Container maxWidth="md" sx={{ py: { xs: 4, md: 8 } }}>
         <Stack spacing={4} alignItems="center">
-          <Typography sx={{ fontWeight: 900, textAlign: "center", lineHeight: 1.1, fontSize: { xs: 28, md: 56 } }}>
+          <Typography
+            sx={{
+              fontWeight: 900,
+              textAlign: "center",
+              lineHeight: 1.1,
+              fontSize: { xs: 28, md: 56 },
+            }}
+          >
             Painel de Controle
             <br /> dos Sorteios
           </Typography>
@@ -273,20 +340,16 @@ export default function AdminDashboard() {
 
               <Box sx={{ flex: 1 }} />
 
-              <Button
-                onClick={onNewDraw}
-                disabled={creating}
-                variant="outlined"
-                sx={{ borderRadius: 999, px: 3 }}
-              >
+              <Button onClick={onNewDraw} disabled={creating} variant="outlined" sx={{ borderRadius: 999, px: 3 }}>
                 {creating ? "Criando..." : "NOVO SORTEIO"}
               </Button>
             </Stack>
 
             <Divider sx={{ my: 3 }} />
 
+            {/* Valor por Ticket (centavos) */}
             <Typography sx={{ opacity: 0.7, fontWeight: 700, mb: 1 }}>Valor por Ticket</Typography>
-            <Stack direction="row" spacing={2} alignItems="center">
+            <Stack direction="row" spacing={2} alignItems="center" sx={{ mb: 2 }}>
               <TextField
                 value={price}
                 onChange={(e) => setPrice(e.target.value)}
@@ -294,16 +357,44 @@ export default function AdminDashboard() {
                 inputProps={{ inputMode: "numeric", pattern: "[0-9]*" }}
                 sx={{ maxWidth: 320 }}
               />
-              <Button
-                onClick={onSavePrice}
-                disabled={saving}
-                variant="contained"
-                color="primary"
-                sx={{ borderRadius: 999, px: 3 }}
-              >
-                {saving ? "Salvando..." : "ATUALIZAR"}
-              </Button>
             </Stack>
+
+            {/* NOVOS CAMPOS */}
+            <Typography sx={{ opacity: 0.7, fontWeight: 700, mb: 1 }}>
+              Máximo de Tickets permitidos
+            </Typography>
+            <Stack direction="row" spacing={2} alignItems="center" sx={{ mb: 2 }}>
+              <TextField
+                type="number"
+                value={maxSelect}
+                onChange={(e) => setMaxSelect(e.target.value)}
+                placeholder="Ex.: 5"
+                inputProps={{ min: 1 }}
+                sx={{ maxWidth: 320 }}
+              />
+            </Stack>
+
+            <Typography sx={{ opacity: 0.7, fontWeight: 700, mb: 1 }}>
+              Frase promocional
+            </Typography>
+            <Stack direction="row" spacing={2} alignItems="center" sx={{ mb: 3 }}>
+              <TextField
+                value={bannerTitle}
+                onChange={(e) => setBannerTitle(e.target.value)}
+                placeholder="Ex.: Sorteio de um Watch Winder…"
+                fullWidth
+              />
+            </Stack>
+
+            <Button
+              onClick={onSavePrice}
+              disabled={saving}
+              variant="contained"
+              color="primary"
+              sx={{ borderRadius: 999, px: 3 }}
+            >
+              {saving ? "Salvando..." : "ATUALIZAR"}
+            </Button>
           </Paper>
 
           {/* As 3 listas */}
