@@ -857,6 +857,32 @@ export default function NewStorePage({
 
               <Paper variant="outlined" sx={{ p: { xs: 2, md: 3 } }}>
   <Stack spacing={1.2}>
+    <Box
+              sx={{
+                mb: 2,
+                p: { xs: 1.25, md: 1.5 },
+                borderRadius: 2,
+                border: "1px solid rgba(255,255,255,0.12)",
+                background:
+                  "linear-gradient(90deg, rgba(103,194,58,0.12), rgba(255,193,7,0.10))",
+              }}
+            >
+              <Typography
+                variant="h4"
+                sx={{
+                  fontWeight: 900,
+                  textAlign: "center",
+                  letterSpacing: 1,
+                  background: "linear-gradient(90deg, #67C23A, #FFC107)",
+                  WebkitBackgroundClip: "text",
+                  backgroundClip: "text",
+                  WebkitTextFillColor: "transparent",
+                  textShadow: "0 0 12px rgba(103,194,58,0.18)",
+                }}
+              >
+               Como Funciona Seu Cartão Presente Digital
+              </Typography>
+            </Box>
     <Typography variant="h6" fontWeight={800}>
       Como Funciona Seu Cartão Presente Digital
     </Typography>
