@@ -883,11 +883,7 @@ export default function NewStorePage({
                Como Funciona Seu Cartão Presente Digital
               </Typography>
             </Box>
-    <Typography variant="h6" fontWeight={800}>
-      Como Funciona Seu Cartão Presente Digital
-    </Typography>
-
-    <Typography variant="body1">
+      <Typography variant="body1">
       • Seu saldo cresce a cada participação: o valor de todas as suas apostas é somado automaticamente em um único cartão presente digital.
     </Typography>
 
