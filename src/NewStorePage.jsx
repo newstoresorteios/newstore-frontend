@@ -1,6 +1,4 @@
 // src/NewStorePage.jsx
-// Tamanho aproximado: ~1060 linhas (mantido o conteúdo original + ajustes de iniciais no mobile)
-
 import * as React from "react";
 import { useNavigate, Link as RouterLink } from "react-router-dom";
 import logoNewStore from "./Logo-branca-sem-fundo-768x132.png";
@@ -180,8 +178,7 @@ export default function NewStorePage({
   const [srvReservados, setSrvReservados] = React.useState([]);
   const [srvIndisponiveis, setSrvIndisponiveis] = React.useState([]);
 
-  // Iniciais dos vendidos (n -> "AB")
-  const [soldInitials, setSoldInitials] = React.useState({});
+  const [soldInitials, setSoldInitials] = React.useState({}); // ▼ NOVO: mapa n -> iniciais
 
   // Preço dinâmico
   const FALLBACK_PRICE = Number(process.env.REACT_APP_PIX_PRICE) || 55;
@@ -282,23 +279,24 @@ export default function NewStorePage({
 
         const reserv = [];
         const indis = [];
-        const initials = {};
+        const initials = {}; // ▼ NOVO: coleta de iniciais
 
         for (const it of j?.numbers || []) {
           const st = String(it.status || "").toLowerCase();
-          const num = Number(it.n);
-          if (st === "reserved") reserv.push(num);
+          if (st === "reserved") reserv.push(Number(it.n));
           if (st === "taken" || st === "sold") {
-            indis.push(num);
-            if (it.initials) {
-              initials[num] = String(it.initials).slice(0, 3).toUpperCase();
+            const n = Number(it.n);
+            indis.push(n);
+            // se o backend mandar owner_initials, guardamos para mostrar no grid
+            if (it.owner_initials) {
+              initials[n] = String(it.owner_initials).slice(0, 2).toUpperCase();
             }
           }
         }
         if (!alive) return;
         setSrvReservados(Array.from(new Set(reserv)));
         setSrvIndisponiveis(Array.from(new Set(indis)));
-        setSoldInitials(initials);
+        setSoldInitials(initials); // ▼ NOVO
       } catch {
         /* silencioso */
       }
@@ -741,107 +739,51 @@ export default function NewStorePage({
                   boxSizing: "border-box",
                 }}
               >
-                {Array.from({ length: 100 }).map((_, idx) => {
-                  const sold = isIndisponivel(idx);
-                  const ini = soldInitials[idx];
-                  return (
-                    <Box
-                      key={idx}
-                      onClick={() => handleClickNumero(idx)}
-                      sx={{
-                        ...getCellSx(idx),
-                        borderRadius: 1.2,
-                        userSelect: "none",
-                        cursor: sold ? "not-allowed" : "pointer",
-                        aspectRatio: "1 / 1",
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        fontWeight: 800,
-                        fontVariantNumeric: "tabular-nums",
-                        position: "relative", // necessário para overlays
-                        overflow: "hidden",
-                      }}
-                    >
-                      {/* Número central (desktop mantém; mobile some quando vendido) */}
+                {Array.from({ length: 100 }).map((_, idx) => (
+                  <Box
+                    key={idx}
+                    onClick={() => handleClickNumero(idx)}
+                    sx={{
+                      ...getCellSx(idx),
+                      borderRadius: 1.2,
+                      userSelect: "none",
+                      cursor: isIndisponivel(idx) ? "not-allowed" : "pointer",
+                      aspectRatio: "1 / 1",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      fontWeight: 800,
+                      fontVariantNumeric: "tabular-nums",
+                      position: "relative", // ▼ NOVO: para posicionar o selo
+                    }}
+                  >
+                    {pad2(idx)}
+
+                    {/* ▼ NOVO: selo com iniciais para números VENDIDOS (sold) */}
+                    {isIndisponivel(idx) && soldInitials[idx] && (
                       <Box
-                        component="span"
                         sx={{
-                          display: { xs: sold ? "none" : "inline", md: "inline" },
+                          position: "absolute",
+                          right: 4,
+                          bottom: 4,
+                          px: 0.5,
+                          py: 0.1,
+                          borderRadius: 0.75,
+                          fontSize: 10,
+                          fontWeight: 900,
+                          lineHeight: 1,
+                          backgroundColor: "rgba(0,0,0,0.45)",
+                          color: "#fff",
+                          letterSpacing: 0.5,
+                          pointerEvents: "none",
                         }}
                       >
-                        {pad2(idx)}
+                        {soldInitials[idx]}
                       </Box>
-
-                      {/* Número pequeno no canto (apenas mobile e quando vendido) */}
-                      {sold && (
-                        <Box
-                          sx={{
-                            position: "absolute",
-                            top: 4,
-                            left: 4,
-                            fontSize: 10,
-                            fontWeight: 900,
-                            lineHeight: 1,
-                            opacity: 0.95,
-                            display: { xs: "block", md: "none" },
-                            pointerEvents: "none",
-                            zIndex: 2,
-                          }}
-                        >
-                          {pad2(idx)}
-                        </Box>
-                      )}
-
-                      {/* Iniciais grandes centralizadas no MOBILE quando vendido */}
-                      {sold && ini && (
-                        <Box
-                          sx={{
-                            position: "absolute",
-                            inset: 0,
-                            display: { xs: "flex", md: "none" },
-                            alignItems: "center",
-                            justifyContent: "center",
-                            fontSize: 14,
-                            fontWeight: 900,
-                            letterSpacing: 0.6,
-                            color: "#ffffff",
-                            textShadow: "0 1px 2px rgba(0,0,0,0.45)",
-                            pointerEvents: "none",
-                            zIndex: 2,
-                          }}
-                        >
-                          {ini}
-                        </Box>
-                      )}
-
-                      {/* Iniciais como selo no DESKTOP quando vendido */}
-                      {sold && ini && (
-                        <Box
-                          sx={{
-                            position: "absolute",
-                            right: 4,
-                            bottom: 4,
-                            px: 0.5,
-                            py: 0.1,
-                            borderRadius: 0.75,
-                            fontSize: 10,
-                            fontWeight: 900,
-                            lineHeight: 1,
-                            backgroundColor: "rgba(0,0,0,0.45)",
-                            color: "#fff",
-                            letterSpacing: 0.5,
-                            pointerEvents: "none",
-                            display: { xs: "none", md: "inline-flex" },
-                            zIndex: 2,
-                          }}
-                        >
-                          {ini}
-                        </Box>
-                      )}
-                    </Box>
-                  );
-                })}
+                    )}
+                    {/* ▲ FIM NOVO */}
+                  </Box>
+                ))}
               </Box>
             </Box>
 
