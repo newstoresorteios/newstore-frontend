@@ -737,6 +737,7 @@ export default function NewStorePage({
               >
                 {Array.from({ length: 100 }).map((_, idx) => {
                   const sold = isIndisponivel(idx);
+                  const initials = soldInitials[idx];
                   return (
                     <Box
                       key={idx}
@@ -765,35 +766,49 @@ export default function NewStorePage({
                         {pad2(idx)}
                       </Box>
 
-                      {/* >>> MOBILE: número pequeno no canto quando VENDIDO (melhor contraste) */}
+                      {/* >>> MOBILE (xs): NÚMERO EM CIMA + INICIAIS EMBAIXO, centralizados */}
                       {sold && (
                         <Box
                           sx={{
+                            display: { xs: "flex", md: "none" },
                             position: "absolute",
-                            top: 3.5,
-                            left: 3.5,
-                            fontSize: 12,
-                            fontWeight: 900,
-                            lineHeight: 1,
-                            color: "#fff",
-                            textShadow: "0 0 3px rgba(0,0,0,0.6)",
-                            backgroundColor: "rgba(0,0,0,0.45)",
-                            px: 0.35,
-                            py: 0.1,
-                            borderRadius: 0.5,
-                            zIndex: 2,
-                            display: { xs: "block", md: "none" },
+                            inset: 0,
+                            alignItems: "center",
+                            justifyContent: "center",
+                            flexDirection: "column",
+                            gap: 0.25,
                             pointerEvents: "none",
                           }}
                         >
-                          {pad2(idx)}
+                          <Box sx={{ fontWeight: 900, lineHeight: 1 }}>
+                            {pad2(idx)}
+                          </Box>
+                          {initials && (
+                            <Box
+                              sx={{
+                                mt: 0.25,
+                                px: 0.5,
+                                py: 0.1,
+                                borderRadius: 0.75,
+                                fontSize: 10,
+                                fontWeight: 900,
+                                lineHeight: 1,
+                                backgroundColor: "rgba(0,0,0,0.45)",
+                                color: "#fff",
+                                letterSpacing: 0.5,
+                              }}
+                            >
+                              {initials}
+                            </Box>
+                          )}
                         </Box>
                       )}
 
-                      {/* Iniciais (quando vendido) */}
-                      {sold && soldInitials[idx] && (
+                      {/* >>> DESKTOP (md+): iniciais no canto inferior direito quando vendido */}
+                      {sold && initials && (
                         <Box
                           sx={{
+                            display: { xs: "none", md: "block" },
                             position: "absolute",
                             right: 4,
                             bottom: 4,
@@ -810,7 +825,7 @@ export default function NewStorePage({
                             zIndex: 2,
                           }}
                         >
-                          {soldInitials[idx]}
+                          {initials}
                         </Box>
                       )}
                     </Box>
