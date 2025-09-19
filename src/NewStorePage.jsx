@@ -1,4 +1,6 @@
 // src/NewStorePage.jsx
+// Tamanho aproximado: ~1060 linhas (mantido o conteúdo original + ajustes robustos de iniciais no mobile)
+
 import * as React from "react";
 import { useNavigate, Link as RouterLink } from "react-router-dom";
 import logoNewStore from "./Logo-branca-sem-fundo-768x132.png";
@@ -178,7 +180,8 @@ export default function NewStorePage({
   const [srvReservados, setSrvReservados] = React.useState([]);
   const [srvIndisponiveis, setSrvIndisponiveis] = React.useState([]);
 
-  const [soldInitials, setSoldInitials] = React.useState({}); // ▼ NOVO: mapa n -> iniciais
+  // Iniciais dos vendidos (n -> "AB")
+  const [soldInitials, setSoldInitials] = React.useState({});
 
   // Preço dinâmico
   const FALLBACK_PRICE = Number(process.env.REACT_APP_PIX_PRICE) || 55;
@@ -243,7 +246,7 @@ export default function NewStorePage({
           }
         }
       } catch {
-        // fica no fallback sem poluir o console
+        // fallback silencioso
       } finally {
         // também tentamos carregar o uso do limite (add=0)
         try {
@@ -252,9 +255,7 @@ export default function NewStorePage({
             drawId: currentDrawId,
           });
           if (alive) setLimitUsage({ current: info.current, max: info.max });
-        } catch {
-          /* silencioso */
-        }
+        } catch {}
       }
     })();
 
@@ -279,24 +280,30 @@ export default function NewStorePage({
 
         const reserv = [];
         const indis = [];
-        const initials = {}; // ▼ NOVO: coleta de iniciais
+        const initials = {};
 
         for (const it of j?.numbers || []) {
           const st = String(it.status || "").toLowerCase();
-          if (st === "reserved") reserv.push(Number(it.n));
+          const num = Number(it.n);
+          if (st === "reserved") reserv.push(num);
           if (st === "taken" || st === "sold") {
-            const n = Number(it.n);
-            indis.push(n);
-            // se o backend mandar owner_initials, guardamos para mostrar no grid
-            if (it.owner_initials) {
-              initials[n] = String(it.owner_initials).slice(0, 2).toUpperCase();
+            indis.push(num);
+            // 🔧 AJUSTE ROBUSTO: aceita vários nomes de campo para “iniciais”
+            const rawInit =
+              it.initials ||
+              it.owner_initials ||
+              it.ownerInitials ||
+              it.owner ||
+              it.oi;
+            if (rawInit) {
+              initials[num] = String(rawInit).slice(0, 3).toUpperCase();
             }
           }
         }
         if (!alive) return;
         setSrvReservados(Array.from(new Set(reserv)));
         setSrvIndisponiveis(Array.from(new Set(indis)));
-        setSoldInitials(initials); // ▼ NOVO
+        setSoldInitials(initials);
       } catch {
         /* silencioso */
       }
@@ -377,7 +384,6 @@ export default function NewStorePage({
   const handleIrPagamento = async () => {
     setOpen(false);
 
-    // precisa estar logado
     if (!isAuthenticated) {
       navigate("/login", { replace: false, state: { from: "/", wantPay: true } });
       return;
@@ -385,14 +391,12 @@ export default function NewStorePage({
 
     const addCount = selecionados.length || 1;
 
-    // 1) checa limite no servidor
     try {
       const { blocked, current, max } = await checkUserPurchaseLimit({
         addCount,
         drawId: currentDrawId,
       });
 
-      // mesmo se o back NÃO marcar blocked, bloqueamos no front
       const wouldBe = (current ?? 0) + addCount;
       const overByFront = Number.isFinite(max) && wouldBe > max;
 
@@ -402,16 +406,13 @@ export default function NewStorePage({
           current: current ?? limitUsage.current,
           max: max ?? limitUsage.max ?? 5,
         });
-        // atualiza banner de saldo
         setLimitUsage({ current: current ?? 0, max: max ?? 5 });
         return;
       }
     } catch (e) {
       console.warn("[limit-check] falhou, seguindo fluxo:", e);
-      // se falhar a checagem, ainda assim mantemos o teto por seleção
     }
 
-    // 2) fluxo normal de pagamento
     const amount = selecionados.length * unitPrice;
     setPixAmount(amount);
     setPixOpen(true);
@@ -428,7 +429,6 @@ export default function NewStorePage({
       });
       setPixData(data);
 
-      // se chegou aqui, já reservou => incrementa contador local (para o banner)
       setLimitUsage((old) => ({
         current:
           Number.isFinite(old.current) ? (old.current ?? 0) + addCount : old.current,
@@ -449,9 +449,7 @@ export default function NewStorePage({
       try {
         const st = await checkPixStatus(pixData.paymentId);
         if (st?.status === "approved") handlePixApproved();
-      } catch {
-        /* silencioso */
-      }
+      } catch {}
     }, 3500);
     return () => clearInterval(id);
   }, [pixOpen, pixData, pixApproved, handlePixApproved]);
@@ -466,7 +464,6 @@ export default function NewStorePage({
       const already = prev.includes(n);
       if (already) return prev.filter((x) => x !== n);
 
-      // teto por seleção (DINÂMICO)
       if (prev.length >= maxSelect) {
         openLimitModal({
           type: "selection",
@@ -476,7 +473,6 @@ export default function NewStorePage({
         return prev;
       }
 
-      // teto por saldo do servidor (se conhecido)
       if (Number.isFinite(remainingFromServer) && remainingFromServer <= prev.length) {
         openLimitModal({
           type: "purchase",
@@ -509,11 +505,11 @@ export default function NewStorePage({
       };
     }
     return {
-      border: "2px solid rgba(255,255,255,0.08)",
-      bgcolor: "primary.main",
-      color: "#0E0E0E",
-      "&:hover": { filter: "brightness(0.95)" },
-      transition: "filter 120ms ease",
+        border: "2px solid rgba(255,255,255,0.08)",
+        bgcolor: "primary.main",
+        color: "#0E0E0E",
+        "&:hover": { filter: "brightness(0.95)" },
+        transition: "filter 120ms ease",
     };
   };
 
@@ -739,69 +735,97 @@ export default function NewStorePage({
                   boxSizing: "border-box",
                 }}
               >
-                {Array.from({ length: 100 }).map((_, idx) => (
-                  <Box
-                    key={idx}
-                    onClick={() => handleClickNumero(idx)}
-                    sx={{
-                      ...getCellSx(idx),
-                      borderRadius: 1.2,
-                      userSelect: "none",
-                      cursor: isIndisponivel(idx) ? "not-allowed" : "pointer",
-                      aspectRatio: "1 / 1",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      fontWeight: 800,
-                      fontVariantNumeric: "tabular-nums",
-                      position: "relative", // ▼ NOVO: para posicionar o selo
-                    }}
-                  >
-                    {pad2(idx)}
-
-                    {/* ▼ NOVO: selo com iniciais para números VENDIDOS (sold) */}
-                    {isIndisponivel(idx) && soldInitials[idx] && (
+                {Array.from({ length: 100 }).map((_, idx) => {
+                  const sold = isIndisponivel(idx);
+                  return (
+                    <Box
+                      key={idx}
+                      onClick={() => handleClickNumero(idx)}
+                      sx={{
+                        ...getCellSx(idx),
+                        borderRadius: 1.2,
+                        userSelect: "none",
+                        cursor: sold ? "not-allowed" : "pointer",
+                        aspectRatio: "1 / 1",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        fontWeight: 800,
+                        fontVariantNumeric: "tabular-nums",
+                        position: "relative",
+                      }}
+                    >
+                      {/* Número central (esconde no mobile se vendido, para não duplicar) */}
                       <Box
+                        component="span"
                         sx={{
-                          position: "absolute",
-                          right: 4,
-                          bottom: 4,
-                          px: 0.5,
-                          py: 0.1,
-                          borderRadius: 0.75,
-                          fontSize: 10,
-                          fontWeight: 900,
-                          lineHeight: 1,
-                          backgroundColor: "rgba(0,0,0,0.45)",
-                          color: "#fff",
-                          letterSpacing: 0.5,
-                          pointerEvents: "none",
+                          display: { xs: sold ? "none" : "inline", md: "inline" },
                         }}
                       >
-                        {soldInitials[idx]}
+                        {pad2(idx)}
                       </Box>
-                    )}
-                    {/* ▲ FIM NOVO */}
-                  </Box>
-                ))}
+
+                      {/* Número pequeno no canto (apenas mobile e quando vendido) */}
+                      {sold && (
+                        <Box
+                          sx={{
+                            position: "absolute",
+                            top: 4,
+                            left: 4,
+                            fontSize: 10,
+                            fontWeight: 900,
+                            lineHeight: 1,
+                            opacity: 0.95,
+                            display: { xs: "block", md: "none" },
+                            pointerEvents: "none",
+                          }}
+                        >
+                          {pad2(idx)}
+                        </Box>
+                      )}
+
+                      {/* Iniciais (quando vendido) */}
+                      {sold && soldInitials[idx] && (
+                        <Box
+                          sx={{
+                            position: "absolute",
+                            right: 4,
+                            bottom: 4,
+                            px: 0.5,
+                            py: 0.1,
+                            borderRadius: 0.75,
+                            fontSize: 10,
+                            fontWeight: 900,
+                            lineHeight: 1,
+                            backgroundColor: "rgba(0,0,0,0.45)",
+                            color: "#fff",
+                            letterSpacing: 0.5,
+                            pointerEvents: "none",
+                            display: "block",
+                          }}
+                        >
+                          {soldInitials[idx]}
+                        </Box>
+                      )}
+                    </Box>
+                  );
+                })}
               </Box>
             </Box>
 
             {/* >>>>> LINHA INFERIOR (apenas texto adicionado) */}
             <Box sx={{ mt: 2.5, textAlign: "center" }}>
-              {
-                (() => {
-                  const d = new Date();
-                  d.setDate(d.getDate() + 7);
-                  const dia = String(d.getDate()).padStart(2, "0");
-                  return (
-                    <Typography variant="subtitle1" sx={{ opacity: 0.95, fontWeight: 800 }}>
-                      📅 Utilizaremos o sorteio do dia <strong>{dia}</strong> ou o
-                      primeiro sorteio da <strong>Lotomania</strong> após a tabela fechada. 🎯
-                    </Typography>
-                  );
-                })()
-              }
+              {(() => {
+                const d = new Date();
+                d.setDate(d.getDate() + 7);
+                const dia = String(d.getDate()).padStart(2, "0");
+                return (
+                  <Typography variant="subtitle1" sx={{ opacity: 0.95, fontWeight: 800 }}>
+                    📅 Utilizaremos o sorteio do dia <strong>{dia}</strong> ou o
+                    primeiro sorteio da <strong>Lotomania</strong> após a tabela fechada. 🎯
+                  </Typography>
+                );
+              })()}
             </Box>
           </Paper>
           {/* === FIM CARTELA === */}
