@@ -605,7 +605,7 @@ export default function NewStorePage({
                 O único sorteio que permite receber <strong>100% do valor</strong>{" "}
                 de volta em todas as participações. Além de concorrer ao prêmio,
                 você tem a <strong>vantagem de não perder o valor investido</strong>{" "}
-                — o valor vira um<strong> cupom de desconto</strong> para usar no
+                — o valor vira um<strong> cartão presente </strong> para usar no
                 site (validade de até <strong>6 meses</strong>).
               </Typography>
             </Stack>
@@ -854,9 +854,7 @@ export default function NewStorePage({
           {/* Demais seções */}
           <Paper variant="outlined" sx={{ p: { xs: 2, md: 3 } }}>
             <Stack spacing={1.5}>
-              <Typography sx={{ color: "#ff6b6b", fontWeight: 800, letterSpacing: 0.5 }}>
-                imagem ilustrativa do cartão presente
-              </Typography>
+             
               <Box
                 component="img"
                 src={imgCardExemplo}
@@ -915,16 +913,32 @@ export default function NewStorePage({
                 </Typography>
                 <Typography component="li">Não há conversão em dinheiro.</Typography>
                 <Typography component="li">
-                  Utilização em <strong>uma única compra</strong> (pode dividir em vários cartões).
+                  Utilização em <strong>uma única compra</strong> (pode dividir em vários cartões).Solicitar no grupo 
                 </Typography>
+                 <Button
+                    component="a"
+                    href={groupUrl}
+                    target="_blank"
+                    rel="noopener"
+                    size="large"
+                    variant="contained"
+                    color="success"
+                    sx={{ px: 4, py: 1.5, fontWeight: 800, letterSpacing: 0.5 }}
+                  >
+                    SIM, EU QUERO PARTICIPAR!
+                  </Button>
                 <Typography component="li">Validade: <strong>6 meses</strong>.</Typography>
                 <Typography component="li">
                   Sem responsabilidade por extravio/furto/perda/validade expirada.
                 </Typography>
                 <Typography component="li">
-                  Considerar o <strong>valor cheio do produto</strong> (tabela abaixo).
+                  Considere o valor do produto no credito para aplicação dos cartões cartões presente, sempre respeitando a tabela de utilização do cartão presente. (tabela abaixo). 
                 </Typography>
                 <Typography component="li">Não soma com outros cupons.</Typography>
+                 <Typography component="li">
+                  Cartões presente não se somam a outras promoções.  
+O Valor do premio do sorteio pode ser utilizado em todo o site sem descriminação. 
+                </Typography>
               </Stack>
               <Box
                 component="img"
@@ -933,16 +947,18 @@ export default function NewStorePage({
                 sx={{ width: "100%", maxWidth: 900, mx: "auto", display: "block", borderRadius: 2, mt: 1 }}
               />
               <Typography align="center" sx={{ mt: 1.5, fontWeight: 700, letterSpacing: 1 }}>
-                CONSIDERAR O VALOR CHEIO DO PRODUTO
+                CONSIDERAR VALOR DO PRODUTO NO CREDITO PARA APLICAÇÃO DOS CARTÕES CARTÃO PRESENTE
               </Typography>
+             
             </Stack>
           </Paper>
 
           <Paper variant="outlined" sx={{ p: { xs: 2, md: 3 } }}>
             <Stack spacing={1.5}>
               <Typography>
-                Dica: ao <strong>juntar cartões</strong>, a validade passa a ser a do cartão{" "}
-                <strong>mais recente</strong>.
+                Dica: A cada participação o valor investido se soma ao 
+                valor investido no sorteio anterior e sua validade é automaticamente renovada.
+
               </Typography>
               <Stack
                 direction={{ xs: "column", md: "row" }}
