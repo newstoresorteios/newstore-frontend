@@ -912,21 +912,17 @@ export default function NewStorePage({
                   Não é possível comprar outro cartão-presente com cartão-presente.
                 </Typography>
                 <Typography component="li">Não há conversão em dinheiro.</Typography>
-                <Typography component="li">
-                  Utilização em <strong>uma única compra</strong> (pode dividir em vários cartões).Solicitar no grupo 
-                </Typography>
-                 <Button
-                    component="a"
-                    href={groupUrl}
+               <Typography component="li">
+                  Utilização em <strong>uma única compra</strong> (pode dividir em vários cartões).
+                  <Link
+                    href="https://chat.whatsapp.com/GdosYmyW2Jj1mDXNDTFt6F"
                     target="_blank"
-                    rel="noopener"
-                    size="large"
-                    variant="contained"
-                    color="success"
-                    sx={{ px: 4, py: 1.5, fontWeight: 800, letterSpacing: 0.5 }}
+                    rel="noopener noreferrer"
                   >
-                    SIM, EU QUERO PARTICIPAR!
-                  </Button>
+                    {" "}Solicitar no grupo
+                  </Link>
+                </Typography>
+                
                 <Typography component="li">Validade: <strong>6 meses</strong>.</Typography>
                 <Typography component="li">
                   Sem responsabilidade por extravio/furto/perda/validade expirada.
