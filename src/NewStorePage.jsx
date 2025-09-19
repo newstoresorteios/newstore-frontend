@@ -854,6 +854,31 @@ export default function NewStorePage({
           {/* Demais seções */}
           <Paper variant="outlined" sx={{ p: { xs: 2, md: 3 } }}>
             <Stack spacing={1.5}>
+
+              <Paper variant="outlined" sx={{ p: { xs: 2, md: 3 } }}>
+  <Stack spacing={1.2}>
+    <Typography variant="h6" fontWeight={800}>
+      Como Funciona Seu Cartão Presente Digital
+    </Typography>
+
+    <Typography variant="body1">
+      • Seu saldo cresce a cada participação: o valor de todas as suas apostas é somado automaticamente em um único cartão presente digital.
+    </Typography>
+
+    <Typography variant="body1">
+      • <em>Validade renovada automaticamente:</em> a cada nova participação, a data de validade do seu saldo é renovada. Assim, você não precisa se preocupar em perder nada.
+    </Typography>
+
+    <Typography variant="body1">
+      • <em>Programe sua compra:</em> é a maneira perfeita de guardar um crédito para aquela compra especial em nosso site!
+    </Typography>
+
+    <Typography variant="body1">
+      • <em>Mantenha seu código em segurança:</em> o código do cartão é a chave para usar seu desconto. <em>Guarde-o com cuidado e nunca o compartilhe em público.</em>
+    </Typography>
+  </Stack>
+</Paper>
+
              
               <Box
                 component="img"
