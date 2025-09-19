@@ -1,5 +1,5 @@
 // src/NewStorePage.jsx
-// Tamanho aproximado: ~1060 linhas (mantido o conteúdo original + ajustes robustos de iniciais no mobile)
+// Tamanho aproximado: ~1060 linhas (mantido o conteúdo original + iniciais + fix de número no mobile)
 
 import * as React from "react";
 import { useNavigate, Link as RouterLink } from "react-router-dom";
@@ -288,7 +288,7 @@ export default function NewStorePage({
           if (st === "reserved") reserv.push(num);
           if (st === "taken" || st === "sold") {
             indis.push(num);
-            // 🔧 AJUSTE ROBUSTO: aceita vários nomes de campo para “iniciais”
+            // aceita vários nomes de campo para “iniciais”
             const rawInit =
               it.initials ||
               it.owner_initials ||
@@ -410,7 +410,7 @@ export default function NewStorePage({
         return;
       }
     } catch (e) {
-      console.warn("[limit-check] falhou, seguindo fluxo:", e);
+      console.warn("[limit-check] falhou, seguindo fluxo]:", e);
     }
 
     const amount = selecionados.length * unitPrice;
@@ -505,11 +505,11 @@ export default function NewStorePage({
       };
     }
     return {
-        border: "2px solid rgba(255,255,255,0.08)",
-        bgcolor: "primary.main",
-        color: "#0E0E0E",
-        "&:hover": { filter: "brightness(0.95)" },
-        transition: "filter 120ms ease",
+      border: "2px solid rgba(255,255,255,0.08)",
+      bgcolor: "primary.main",
+      color: "#0E0E0E",
+      "&:hover": { filter: "brightness(0.95)" },
+      transition: "filter 120ms ease",
     };
   };
 
@@ -752,7 +752,7 @@ export default function NewStorePage({
                         justifyContent: "center",
                         fontWeight: 800,
                         fontVariantNumeric: "tabular-nums",
-                        position: "relative",
+                        position: "relative", // overlays
                       }}
                     >
                       {/* Número central (esconde no mobile se vendido, para não duplicar) */}
@@ -765,17 +765,23 @@ export default function NewStorePage({
                         {pad2(idx)}
                       </Box>
 
-                      {/* Número pequeno no canto (apenas mobile e quando vendido) */}
+                      {/* >>> MOBILE: número pequeno no canto quando VENDIDO (melhor contraste) */}
                       {sold && (
                         <Box
                           sx={{
                             position: "absolute",
-                            top: 4,
-                            left: 4,
-                            fontSize: 10,
+                            top: 3.5,
+                            left: 3.5,
+                            fontSize: 12,
                             fontWeight: 900,
                             lineHeight: 1,
-                            opacity: 0.95,
+                            color: "#fff",
+                            textShadow: "0 0 3px rgba(0,0,0,0.6)",
+                            backgroundColor: "rgba(0,0,0,0.45)",
+                            px: 0.35,
+                            py: 0.1,
+                            borderRadius: 0.5,
+                            zIndex: 2,
                             display: { xs: "block", md: "none" },
                             pointerEvents: "none",
                           }}
@@ -801,7 +807,7 @@ export default function NewStorePage({
                             color: "#fff",
                             letterSpacing: 0.5,
                             pointerEvents: "none",
-                            display: "block",
+                            zIndex: 2,
                           }}
                         >
                           {soldInitials[idx]}
