@@ -15,26 +15,19 @@ const theme = createTheme({
   typography: { fontFamily: ["Inter", "system-ui", "Segoe UI", "Roboto", "Arial"].join(",") },
 });
 
-/* ---------- API base normalizada ---------- */
+/* ---------- API base ---------- */
 const RAW_BASE =
   process.env.REACT_APP_API_BASE_URL ||
   process.env.REACT_APP_API_BASE ||
   "";
-
 const API_BASE = String(RAW_BASE).replace(/\/+$/, "");
 const apiJoin = (path) => {
   let p = path.startsWith("/") ? path : `/${path}`;
   const baseEndsApi = API_BASE.endsWith("/api");
   const pathStartsApi = p.startsWith("/api/");
-
-  // se não tem base (usar relativo), garanta prefixo /api
   if (!API_BASE) return pathStartsApi ? p : `/api${p}`;
-
-  // evita /api duplicado
   if (baseEndsApi && pathStartsApi) p = p.slice(4);
-  // insere /api se a base não termina com /api
   if (!baseEndsApi && !pathStartsApi) p = `/api${p}`;
-
   return `${API_BASE}${p}`;
 };
 
@@ -61,12 +54,53 @@ const authHeaders = () => {
 
 async function getJSON(pathOrUrl) {
   const url = /^https?:\/\//i.test(pathOrUrl) ? pathOrUrl : apiJoin(pathOrUrl);
-  const r = await fetch(url, { headers: { "Content-Type": "application/json", ...authHeaders() }, credentials: "include" });
+  const r = await fetch(url, {
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    credentials: "include"
+  });
   if (!r.ok) throw new Error(`${r.status}`);
   return r.json();
 }
 
-/* ---------- fallback (agregação no front) ---------- */
+/* ---------- helpers cupom ---------- */
+const extractCoupon = (obj) =>
+  String(
+    obj?.coupon ??
+    obj?.coupon_code ??
+    obj?.discount_coupon ??
+    obj?.discount_code ??
+    obj?.referral_code ??
+    obj?.invite_code ??
+    obj?.cupom ??
+    obj?.cupom_codigo ??
+    obj?.codigo_cupom ??
+    obj?.code ??
+    obj?.coupon?.code ??
+    obj?.cupom?.code ??
+    ""
+  ).trim() || null;
+
+/** Busca o cupom de UM usuário (forçando no-cache para evitar 304). */
+async function fetchCouponByUser(userId) {
+  if (!userId) return null;
+  const url = apiJoin(`/admin/clients/${userId}/coupon?ts=${Date.now()}`);
+  try {
+    const r = await fetch(url, {
+      headers: { ...authHeaders(), "Cache-Control": "no-cache" },
+      credentials: "include",
+      cache: "no-store",
+    });
+    if (r.status === 304 || r.status === 204 || r.status === 404) return null;
+    if (!r.ok) return null;
+    const j = await r.json().catch(() => null);
+    // aceita {code}, {coupon_code} ou {coupon: {code}}
+    return extractCoupon(j) || null;
+  } catch {
+    return null;
+  }
+}
+
+/* ---------- fallback de agregação ---------- */
 function normalizeArray(payload, keys) {
   if (Array.isArray(payload)) return payload;
   for (const k of keys) if (Array.isArray(payload?.[k])) return payload[k];
@@ -104,10 +138,11 @@ function buildRowsFallback({ usersPayload, paymentsPayload, drawsPayload }) {
       name: (u.name ?? u.full_name ?? u.display_name ?? "").trim(),
       email: (u.email ?? u.mail ?? "").trim(),
       created_at: u.created_at ?? u.createdAt ?? u.cadastro ?? null,
+      coupon: extractCoupon(u),
     });
   }
 
-  const acc = new Map(); // userId -> { compras, total, last }
+  const acc = new Map();
   for (const p of pays) {
     const status = String(p.status || p.state || "").trim().toLowerCase();
     if (status !== "approved") continue;
@@ -129,10 +164,9 @@ function buildRowsFallback({ usersPayload, paymentsPayload, drawsPayload }) {
     wins.set(uid, (wins.get(uid) || 0) + 1);
   }
 
-  const now = new Date();
   const rows = [];
   for (const [uid, info] of acc) {
-    const u = uById.get(uid) || { id: uid, name: "", email: "", created_at: null };
+    const u = uById.get(uid) || { id: uid, name: "", email: "", created_at: null, coupon: null };
     const nome = (u.name || "").trim() || u.email || "—";
     const cadastro = fmtDate(u.created_at);
 
@@ -141,10 +175,11 @@ function buildRowsFallback({ usersPayload, paymentsPayload, drawsPayload }) {
 
     const exp = addMonths(lastBuy, 6);
     const dias = exp ? Math.max(0, daysDiff(new Date(), exp) ?? 0) : "-";
-    if (!exp || exp <= new Date()) continue; // só saldo ativo
+    if (!exp || exp <= new Date()) continue;
 
     rows.push({
       key: `${uid}-${info.last}`,
+      user_id: uid,
       nome,
       cadastro,
       compras: info.compras,
@@ -152,6 +187,7 @@ function buildRowsFallback({ usersPayload, paymentsPayload, drawsPayload }) {
       ultima: fmtDate(info.last),
       vezes: wins.get(uid) || 0,
       dias,
+      cupom: extractCoupon(u) || null,
     });
   }
   return rows.sort((a, b) => (a.dias ?? 999999) - (b.dias ?? 999999) || (b.total - a.total));
@@ -168,13 +204,14 @@ export default function AdminClientes() {
     let alive = true;
     (async () => {
       try {
-        // 1) endpoint agregado do backend
+        // 1) agregado
         try {
-          const payload = await getJSON("/admin/clients/active"); // apiJoin garante /api
+          const payload = await getJSON("/admin/clients/active");
           const list = normalizeArray(payload, ["clients", "items", "list"]);
           if (alive && list.length) {
-            setRows(list.map(c => ({
+            const mapped = list.map(c => ({
               key: c.user_id,
+              user_id: Number(c.user_id ?? c.id) || null,
               nome: (c.name || "").trim() || c.email || "—",
               cadastro: fmtDate(c.created_at),
               compras: c.purchases_count || 0,
@@ -182,12 +219,39 @@ export default function AdminClientes() {
               ultima: fmtDate(c.last_buy),
               vezes: c.wins || 0,
               dias: c.days_to_expire ?? "-",
-            })));
+              cupom: extractCoupon(c) || null, // tenta vir do payload
+            }));
+            setRows(mapped);
+
+            // Buscar cupom só para quem ainda não tem
+            const ids = [...new Set(mapped.filter(r => !r.cupom && r.user_id).map(r => r.user_id))];
+            if (ids.length) {
+              const pairs = await Promise.all(
+                ids.map(async (id) => [id, await fetchCouponByUser(id)])
+              );
+              const byId = new Map(pairs.filter(([, code]) => !!code));
+              if (alive && byId.size) {
+                setRows(prev =>
+                  prev.map(r =>
+                    (!r.cupom && r.user_id && byId.has(r.user_id))
+                      ? { ...r, cupom: byId.get(r.user_id) }
+                      : r
+                  )
+                );
+              }
+            }
             return;
           }
-        } catch {}
+        } catch (err) {
+          const code = String(err?.message || "");
+          if (alive && /^(401|403|404)$/.test(code)) {
+            setRows([]);
+            setLoading(false);
+            return;
+          }
+        }
 
-        // 2) fallback: agrega no front
+        // 2) fallback
         const [usersPayload, paymentsPayload, drawsPayload] = await Promise.all([
           getJSON("/admin/users").catch(() => getJSON("/users")),
           getJSON("/admin/payments?status=approved")
@@ -200,7 +264,23 @@ export default function AdminClientes() {
         ]);
 
         const lines = buildRowsFallback({ usersPayload, paymentsPayload, drawsPayload });
-        if (alive) setRows(lines);
+        setRows(lines);
+
+        // Completar com cupons (no-cache)
+        const ids = [...new Set(lines.filter(r => !r.cupom && r.user_id).map(r => r.user_id))];
+        if (alive && ids.length) {
+          const pairs = await Promise.all(ids.map(async (id) => [id, await fetchCouponByUser(id)]));
+          const byId = new Map(pairs.filter(([, code]) => !!code));
+          if (alive && byId.size) {
+            setRows(prev =>
+              prev.map(r =>
+                (!r.cupom && r.user_id && byId.has(r.user_id))
+                  ? { ...r, cupom: byId.get(r.user_id) }
+                  : r
+              )
+            );
+          }
+        }
       } catch (e) {
         console.error("[AdminClientes] fetch error:", e);
         if (alive) setRows([]);
@@ -264,15 +344,16 @@ export default function AdminClientes() {
                   <TableCell sx={{ fontWeight: 800 }}>VALOR TOTAL INVESTIDO</TableCell>
                   <TableCell sx={{ fontWeight: 800 }}>ÚLTIMA COMPRA</TableCell>
                   <TableCell sx={{ fontWeight: 800 }}>VEZES CONTEMPLADO</TableCell>
+                  <TableCell sx={{ fontWeight: 800 }}>CUPOM</TableCell>
                   <TableCell sx={{ fontWeight: 800 }}>DIAS PARA EXPIRAÇÃO</TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
                 {loading && (
-                  <TableRow><TableCell colSpan={7}>Carregando…</TableCell></TableRow>
+                  <TableRow><TableCell colSpan={8}>Carregando…</TableCell></TableRow>
                 )}
                 {!loading && rows.length === 0 && (
-                  <TableRow><TableCell colSpan={7} sx={{ color: "#bbb" }}>Nenhum cliente com saldo ativo.</TableCell></TableRow>
+                  <TableRow><TableCell colSpan={8} sx={{ color: "#bbb" }}>Nenhum cliente com saldo ativo.</TableCell></TableRow>
                 )}
                 {rows.map((r) => (
                   <TableRow key={r.key} hover>
@@ -282,6 +363,7 @@ export default function AdminClientes() {
                     <TableCell>{fmtBRL(r.total)}</TableCell>
                     <TableCell>{r.ultima}</TableCell>
                     <TableCell>{r.vezes}</TableCell>
+                    <TableCell>{r.cupom || "-"}</TableCell>
                     <TableCell sx={{ color: "success.main", fontWeight: 800 }}>{r.dias}</TableCell>
                   </TableRow>
                 ))}
