@@ -4,7 +4,7 @@ import { useNavigate, Link as RouterLink } from "react-router-dom";
 import {
   AppBar, Box, Container, CssBaseline, IconButton, Menu, MenuItem, Divider,
   Paper, Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
-  ThemeProvider, Toolbar, Typography, createTheme
+  ThemeProvider, Toolbar, Typography, createTheme, TextField, Button
 } from "@mui/material";
 import ArrowBackIosNewRoundedIcon from "@mui/icons-material/ArrowBackIosNewRounded";
 import AccountCircleRoundedIcon from "@mui/icons-material/AccountCircleRounded";
@@ -28,7 +28,6 @@ const RAW_BASE =
 const API_BASE = String(RAW_BASE).replace(/\/+$/, "");
 const apiJoin = (path) => {
   let p = path.startsWith("/") ? path : `/${path}`;
-  // evita .../api + /api/...
   if (API_BASE.endsWith("/api") && p.startsWith("/api/")) p = p.slice(4);
   return `${API_BASE}${p}`;
 };
@@ -45,10 +44,20 @@ const authHeaders = () => {
 };
 async function getJSON(pathOrUrl) {
   const url = /^https?:\/\//i.test(pathOrUrl) ? pathOrUrl : apiJoin(pathOrUrl);
-  console.info("[AdminVencedores] GET", url); // LOG
   const r = await fetch(url, {
     headers: { "Content-Type": "application/json", ...authHeaders() },
     credentials: "include",
+  });
+  if (!r.ok) throw new Error(`${r.status}`);
+  return r.json();
+}
+async function patchJSON(path, body) {
+  const url = apiJoin(path);
+  const r = await fetch(url, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    credentials: "include",
+    body: JSON.stringify(body || {}),
   });
   if (!r.ok) throw new Error(`${r.status}`);
   return r.json();
@@ -68,23 +77,26 @@ export default function AdminVencedores() {
 
   const [rows, setRows] = React.useState([]);
   const [loading, setLoading] = React.useState(true);
+  const [savingId, setSavingId] = React.useState(null);
 
   React.useEffect(() => {
     let alive = true;
     (async () => {
       try {
-        // **FORÇAR /api** para funcionar em qualquer BASE
-        const payload = await getJSON("/api/admin/winners"); // -> { winners: [...] }
+        const payload = await getJSON("/api/admin/winners");
         const list = Array.isArray(payload?.winners) ? payload.winners : [];
 
         const lines = list.map((w) => ({
           key: `${w.draw_id}-${w.realized_at}`,
+          drawId: w.draw_id,
           nome: w.winner_name || "-",
           numero: w.draw_id,
-          numeroVencedor: (w.winner_number ?? "") === "" || w.winner_number == null ? "-" : w.winner_number, // <=== NOVO
+          numeroVencedor: (w.winner_number ?? "") === "" || w.winner_number == null ? "-" : w.winner_number,
           data: fmtDate(w.realized_at),
           status: w.status || (w.redeemed ? "RESGATADO" : "NÃO RESGATADO"),
           dias: w.days_since ?? "-",
+          productName: w.product_name || "",
+          productLink: w.product_link || "",
         }));
 
         if (alive) setRows(lines);
@@ -95,10 +107,37 @@ export default function AdminVencedores() {
         if (alive) setLoading(false);
       }
     })();
-    return () => {
-      alive = false;
-    };
+    return () => { /* cleanup */ };
   }, []);
+
+  const updateField = (key, field, value) => {
+    setRows((prev) =>
+      prev.map((r) => (r.key === key ? { ...r, [field]: value } : r))
+    );
+  };
+
+  const saveRow = async (row) => {
+    try {
+      setSavingId(row.drawId);
+      const resp = await patchJSON(`/api/admin/winners/${row.drawId}`, {
+        product_name: row.productName,
+        product_link: row.productLink,
+      });
+      // garante sincronização local
+      setRows((prev) =>
+        prev.map((r) =>
+          r.drawId === row.drawId
+            ? { ...r, productName: resp.product_name || "", productLink: resp.product_link || "" }
+            : r
+        )
+      );
+    } catch (e) {
+      console.error("[AdminVencedores] save error:", e);
+      alert("Não foi possível salvar os dados do produto.");
+    } finally {
+      setSavingId(null);
+    }
+  };
 
   // menu
   const [menuEl, setMenuEl] = React.useState(null);
@@ -155,32 +194,73 @@ export default function AdminVencedores() {
 
         <Paper variant="outlined">
           <TableContainer sx={{ overflowX: "auto" }}>
-            <Table sx={{ minWidth: 900 }}>
+            <Table sx={{ minWidth: 1100 }}>
               <TableHead>
                 <TableRow>
                   <TableCell sx={{ fontWeight: 800 }}>NOME DO USUÁRIO</TableCell>
                   <TableCell sx={{ fontWeight: 800 }}>Nº SORTEIO</TableCell>
-                  <TableCell sx={{ fontWeight: 800 }}>NÚMERO VENCEDOR</TableCell>{/* <=== NOVO */}
+                  <TableCell sx={{ fontWeight: 800 }}>NÚMERO VENCEDOR</TableCell>
                   <TableCell sx={{ fontWeight: 800 }}>DATA DO SORTEIO</TableCell>
                   <TableCell sx={{ fontWeight: 800 }}>SITUAÇÃO DO PRÊMIO</TableCell>
                   <TableCell sx={{ fontWeight: 800 }}>DIAS CONTEMPLADO</TableCell>
+
+                  {/* NOVAS COLUNAS EDITÁVEIS */}
+                  <TableCell sx={{ fontWeight: 800, minWidth: 220 }}>PRODUTO</TableCell>
+                  <TableCell sx={{ fontWeight: 800, minWidth: 260 }}>LINK DO PRODUTO</TableCell>
+                  <TableCell sx={{ fontWeight: 800 }} align="right">AÇÕES</TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
-                {loading && <TableRow><TableCell colSpan={6}>Carregando…</TableCell></TableRow>}
+                {loading && (
+                  <TableRow><TableCell colSpan={9}>Carregando…</TableCell></TableRow>
+                )}
                 {!loading && rows.length === 0 && (
-                  <TableRow><TableCell colSpan={6} sx={{ color: "#bbb" }}>Nenhum vencedor encontrado.</TableCell></TableRow>
+                  <TableRow><TableCell colSpan={9} sx={{ color: "#bbb" }}>Nenhum vencedor encontrado.</TableCell></TableRow>
                 )}
                 {rows.map((w) => (
                   <TableRow key={w.key} hover>
                     <TableCell>{w.nome}</TableCell>
                     <TableCell>{pad3(w.numero)}</TableCell>
-                    <TableCell>{w.numeroVencedor}</TableCell>{/* <=== NOVO */}
+                    <TableCell>{w.numeroVencedor}</TableCell>
                     <TableCell>{w.data}</TableCell>
                     <TableCell sx={{ color: w.status === "RESGATADO" ? "success.main" : "error.main", fontWeight: 800 }}>
                       {w.status}
                     </TableCell>
                     <TableCell>{w.dias}</TableCell>
+
+                    {/* PRODUTO (editável) */}
+                    <TableCell>
+                      <TextField
+                        size="small"
+                        placeholder="Nome do produto"
+                        value={w.productName}
+                        onChange={(e) => updateField(w.key, "productName", e.target.value)}
+                        fullWidth
+                      />
+                    </TableCell>
+
+                    {/* LINK DO PRODUTO (editável) */}
+                    <TableCell>
+                      <TextField
+                        size="small"
+                        placeholder="https://…"
+                        value={w.productLink}
+                        onChange={(e) => updateField(w.key, "productLink", e.target.value)}
+                        fullWidth
+                      />
+                    </TableCell>
+
+                    {/* AÇÕES */}
+                    <TableCell align="right">
+                      <Button
+                        variant="contained"
+                        size="small"
+                        onClick={() => saveRow(w)}
+                        disabled={savingId === w.drawId}
+                      >
+                        {savingId === w.drawId ? "Salvando…" : "Salvar"}
+                      </Button>
+                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>

@@ -61,11 +61,12 @@ async function postJson(path, body) {
 }
 
 // tenta rotas comuns de registro (a 1ª deve funcionar)
-async function registerRequest({ name, email, password }) {
+async function registerRequest({ name, email, password, phone }) {
   const payload = {
     name: String(name || '').trim() || 'Cliente',
     email: String(email || '').trim().toLowerCase(),
     password,
+    phone: String(phone || '').trim() || null,
   };
 
   const paths = ['/auth/register', '/register', '/users/register'];
@@ -82,7 +83,7 @@ async function registerRequest({ name, email, password }) {
 
 export default function RegisterPage() {
   const navigate = useNavigate();
-  const [form, setForm] = React.useState({ name: '', email: '', password: '' });
+  const [form, setForm] = React.useState({ name: '', email: '', password: '', phone: '' });
   const [loading, setLoading] = React.useState(false);
 
   const onChange = (e) => {
@@ -147,6 +148,14 @@ export default function RegisterPage() {
                   onChange={onChange}
                   fullWidth
                   required
+                />
+                <TextField
+                  label="Celular"
+                  name="phone"
+                  value={form.phone}
+                  onChange={onChange}
+                  placeholder="(DDD) 9 9999-9999"
+                  fullWidth
                 />
                 <TextField
                   label="Senha"

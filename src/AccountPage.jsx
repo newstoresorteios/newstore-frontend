@@ -327,6 +327,16 @@ export default function AccountPage() {
     try { return JSON.parse(localStorage.getItem("me") || "null"); } catch { return null; }
   }, []);
 
+  // ▶︎ AJUSTE: navegar para a grade do sorteio quando PAGO + FECHADO
+  function onRowClick(row) {
+    const pago = /^(approved|paid|pago)$/i.test(String(row.pagamento || ""));
+    const fechado = /(closed|fechado)/i.test(String(row.resultado || ""));
+    const drawId = Number(row.draw_id ?? row.sorteio);
+    if (pago && fechado && Number.isFinite(drawId)) {
+      navigate(`/me/draw/${drawId}`);
+    }
+  }
+
   React.useEffect(() => {
     let alive = true;
     (async () => {
@@ -737,8 +747,17 @@ export default function AccountPage() {
                       const isPending = /pendente|pending|await|aguard|open/i.test(
                         String(row.pagamento || "")
                       );
+                      const isPaid   = /^(approved|paid|pago)$/i.test(String(row.pagamento || ""));
+                      const isClosed = /(closed|fechado)/i.test(String(row.resultado || ""));
+                      const clickable = isPaid && isClosed && (row.draw_id != null || row.sorteio);
+
                       return (
-                        <TableRow key={`${row.sorteio}-${row.numero}-${idx}`} hover>
+                        <TableRow
+                          key={`${row.sorteio}-${row.numero}-${idx}`}
+                          hover
+                          onClick={clickable ? () => onRowClick(row) : undefined}
+                          sx={{ cursor: clickable ? "pointer" : "default" }}
+                        >
                           <TableCell sx={{ width: 100, fontWeight: 700 }}>{String(row.sorteio || "--")}</TableCell>
                           <TableCell sx={{ width: 90, fontWeight: 700 }}>{pad2(row.numero)}</TableCell>
                           <TableCell sx={{ width: 140 }}>{row.dia}</TableCell>
