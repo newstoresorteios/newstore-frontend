@@ -14,6 +14,11 @@ import ArrowBackIosNewRoundedIcon from "@mui/icons-material/ArrowBackIosNewRound
 import AccountCircleRoundedIcon from "@mui/icons-material/AccountCircleRounded";
 import { apiJoin, authHeaders, getJSON } from "./lib/api";
 
+// ▼ PIX
+import PixModal from "./PixModal";
+import { checkPixStatus } from "./services/pix";
+// ▲ PIX
+
 const theme = createTheme({
   palette: {
     mode: "dark",
@@ -30,7 +35,6 @@ const theme = createTheme({
 
 const pad2 = (n) => String(n).padStart(2, "0");
 const ADMIN_EMAIL = "admin@newstore.com.br";
-// TTL de expiração de reserva (minutos). Ajuste por env: REACT_APP_RESERVATION_TTL_MINUTES
 const TTL_MINUTES = Number(process.env.REACT_APP_RESERVATION_TTL_MINUTES || 15);
 
 // chips
@@ -78,7 +82,7 @@ async function tryManyPost(paths, body) {
 
 // normaliza payloads diferentes para um único formato
 function normalizeToEntries(payPayload, reservationsPayload) {
-  // payments: [{ draw_id, numbers:[...], status, paid_at, amount_cents }]
+  // payments: [{ id, draw_id, numbers:[...], status, paid_at, amount_cents }]
   if (payPayload) {
     const list = Array.isArray(payPayload)
       ? payPayload
@@ -89,6 +93,7 @@ function normalizeToEntries(payPayload, reservationsPayload) {
       const payStatus = p.status || p.paymentStatus || "pending";
       const when = p.paid_at || p.created_at || p.updated_at || null;
       return numbers.map(n => ({
+        payment_id: p.id ?? p.payment_id ?? null,
         draw_id: drawId,
         number: Number(n),
         status: payStatus,
@@ -98,10 +103,11 @@ function normalizeToEntries(payPayload, reservationsPayload) {
     });
   }
 
-  // reservations: { reservations:[{ draw_id, n, status, created_at, paid_at, reserved_until/expires_at }] }
+  // reservations: { reservations:[{ id, draw_id, n, status, created_at, paid_at, reserved_until/expires_at }] }
   if (reservationsPayload) {
     const list = reservationsPayload.reservations || reservationsPayload.items || [];
     return list.map(r => ({
+      reservation_id: r.id ?? r.reservation_id ?? null,
       draw_id: r.draw_id ?? r.sorteio_id ?? null,
       number: r.n ?? r.number ?? r.numero,
       status: (String(r.status || "").toLowerCase() === "sold") ? "approved" : "pending",
@@ -134,6 +140,184 @@ export default function AccountPage() {
     banner_title: "",
     max_numbers_per_selection: 5,
   });
+
+  // ▼ PIX state
+  const [pixOpen, setPixOpen] = React.useState(false);
+  const [pixLoading, setPixLoading] = React.useState(false);
+  const [pixData, setPixData] = React.useState(null);
+  const [pixAmount, setPixAmount] = React.useState(null);
+  const [pixMsg, setPixMsg] = React.useState("");
+
+  function extractPayloadFromRow(row) {
+    if (row.reservation_id) return { reservation_id: row.reservation_id };
+    const drawId = row.draw_id ?? row.sorteio ?? row.draw ?? row.id ?? null;
+    const number = row.number ?? row.numero ?? row.num ?? null;
+    if (row.payment_id) return { payment_id: row.payment_id };
+    if (drawId != null && number != null) return { draw_id: Number(drawId), numbers: [Number(number)] };
+    if (drawId != null && Array.isArray(row.numbers) && row.numbers.length > 0) {
+      return { draw_id: Number(drawId), numbers: row.numbers.map(n => Number(n)) };
+    }
+    return null;
+  }
+
+  // Busca uma reserva ativa do usuário para (drawId, number)
+  async function findExistingReservation(drawId, number) {
+    const endpoints = [
+      "/me/reservations?active=1",
+      "/me/reservations",
+      "/reservations/me?active=1",
+      "/reservations/me",
+    ];
+    for (const base of endpoints) {
+      const url = `${base}${base.includes("?") ? "&" : "?"}_=${Date.now()}`;
+      try {
+        const r = await fetch(apiJoin(url), {
+          headers: { "Content-Type": "application/json", ...authHeaders() },
+          credentials: "include",
+          cache: "no-store",
+        });
+        if (!r.ok) continue;
+        const j = await r.json().catch(() => ({}));
+        const list = Array.isArray(j) ? j : (j.reservations || j.items || []);
+        const hit = (list || []).find(x => {
+          const d = Number(x?.draw_id ?? x?.sorteio_id);
+          const ns = Array.isArray(x?.numbers) ? x.numbers.map(n => Number(n)) : [];
+          const nSingle = Number(x?.n ?? x?.number ?? x?.numero);
+          return d === Number(drawId) && (ns.includes(Number(number)) || nSingle === Number(number));
+        });
+        if (hit) return hit.id ?? hit.reservation_id ?? hit.reservationId ?? null;
+      } catch {}
+    }
+    return null;
+  }
+
+  // Procura payment pendente p/ (drawId, number)
+  async function findPendingPayment(drawId, number) {
+    try {
+      const url = `/payments/me?_=${Date.now()}`;
+      const r = await fetch(apiJoin(url), {
+        headers: { "Content-Type": "application/json", ...authHeaders() },
+        credentials: "include",
+        cache: "no-store",
+      });
+      if (!r.ok) return null;
+      const j = await r.json().catch(() => ({}));
+      const list = Array.isArray(j) ? j : (j.payments || j.items || []);
+      return (list || []).find(p => {
+        const d = Number(p?.draw_id ?? p?.drawId ?? p?.sorteio_id);
+        const ns = Array.isArray(p?.numbers) ? p.numbers.map(n => Number(n)) : [];
+        const status = String(p?.status || "").toLowerCase();
+        return d === Number(drawId) && ns.includes(Number(number)) && status === "pending";
+      }) || null;
+    } catch {
+      return null;
+    }
+  }
+
+  // --------- GERAR PIX (corrigido para /payments/pix + reservationId) ----------
+  async function handleGeneratePix(row) {
+    setPixMsg("Gerando PIX…");
+    setPixOpen(true);
+    setPixLoading(true);
+
+    try {
+      const drawId = Number(row?.draw_id ?? row?.sorteio ?? row?.draw ?? row?.id);
+      const number = Number(row?.number ?? row?.numero ?? row?.num);
+
+      // 1) Reaproveita um payment pendente com QR já criado
+      const already = await findPendingPayment(drawId, number);
+      if (already && (already.qr_code || already.qr_code_base64)) {
+        setPixData(already);
+        const cents = already?.amount_cents ?? null;
+        setPixAmount(typeof cents === "number" ? cents / 100 : null);
+        setPixMsg(already?.status ? `Status: ${already.status}` : "PIX pendente recuperado.");
+        return;
+      }
+
+      // 2) Descobre/garante a reserva ativa
+      let reservationId = row?.reservation_id ?? null;
+      if (!reservationId && Number.isFinite(drawId) && Number.isFinite(number)) {
+        reservationId = await findExistingReservation(drawId, number);
+      }
+      if (!reservationId) {
+        setPixMsg("Não foi possível localizar a sua reserva/pagamento para este número. Atualize a página ou tente novamente.");
+        return;
+      }
+
+      // 3) Gera o PIX no backend (rota correta)
+      const r = await fetch(apiJoin("/payments/pix"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeaders() },
+        credentials: "include",
+        cache: "no-store",
+        // Envia ambas as chaves para não depender de convenção
+        body: JSON.stringify({ reservationId, reservation_id: reservationId }),
+      });
+
+      if (!r.ok) {
+        if (r.status === 400) {
+          const j = await r.json().catch(() => ({}));
+          const msg = j?.error || j?.message || "Requisição inválida (400).";
+          setPixMsg(`Falha ao gerar PIX: ${msg}`);
+        } else if (r.status === 404) {
+          setPixMsg("Falha ao gerar PIX (rota não encontrada no servidor).");
+        } else {
+          setPixMsg(`Falha ao gerar PIX (HTTP ${r.status}).`);
+        }
+        return;
+      }
+
+      const created = await r.json().catch(() => ({}));
+      setPixData(created);
+
+      // 4) Valor no momento da geração
+      let amountCents =
+        (typeof created?.amount_cents === "number" && created.amount_cents) ||
+        (typeof created?.payment?.amount_cents === "number" && created.payment.amount_cents) ||
+        null;
+
+      if (amountCents == null) {
+        const nowPending = await findPendingPayment(drawId, number);
+        if (nowPending?.amount_cents != null) amountCents = nowPending.amount_cents;
+      }
+      if (amountCents == null) {
+        const id = created?.paymentId || created?.id || created?.txid || created?.e2eid;
+        if (id) {
+          try {
+            const det = await checkPixStatus(id);
+            if (det?.amount_cents != null) amountCents = det.amount_cents;
+          } catch {}
+        }
+      }
+
+      setPixAmount(amountCents != null ? amountCents / 100 : null);
+      setPixMsg(created?.status ? `Status: ${created.status}` : "");
+    } catch (e) {
+      console.error("[AccountPage] createPixPayment error:", e);
+      setPixMsg("Falha ao gerar PIX.");
+    } finally {
+      setPixLoading(false);
+    }
+  }
+
+  async function refreshPix() {
+    try {
+      const txid = pixData?.txid || pixData?.id || pixData?.e2eid || pixData?.paymentId;
+      if (!txid) return;
+      const r = await checkPixStatus(txid);
+      setPixData(prev => ({ ...(prev || {}), ...(r || {}) }));
+      if (r?.status) setPixMsg(`Status: ${r.status}`);
+      if (typeof r?.amount_cents === "number") setPixAmount(r.amount_cents / 100);
+    } catch (e) {
+      console.error("[AccountPage] checkPixStatus error:", e);
+    }
+  }
+
+  function copyPix() {
+    const key = pixData?.copy || pixData?.copy_paste || pixData?.copy_paste_code || pixData?.emv || pixData?.qr_code || "";
+    if (key) navigator.clipboard.writeText(key).catch(() => {});
+  }
+  // ▲ PIX
 
   const isLoggedIn = !!(user?.email || user?.id);
   const logoTo = isLoggedIn ? "/conta" : "/";
@@ -181,30 +365,43 @@ export default function AccountPage() {
             from !== "/payments/me" ? pay : null
           );
 
-          // —— filtro: remover reservas expiradas ——
+          // —— filtro: remover reservas expiradas —— (mantém pagos)
           const now = Date.now();
           const ttlMs = TTL_MINUTES * 60 * 1000;
           const filtered = entries.filter(e => {
             const st = String(e.status || "").toLowerCase();
-            // Pagos/histórico sempre aparecem
             if (["approved","paid","pago"].includes(st)) return true;
-
-            // Pendentes expiram por campo explícito…
             if (e.expires_at) {
               const expMs = new Date(e.expires_at).getTime();
               if (!isNaN(expMs)) return expMs > now;
             }
-            // …ou por TTL contado a partir de 'when'
             if (e.when) {
               const whenMs = new Date(e.when).getTime();
               if (!isNaN(whenMs)) return (whenMs + ttlMs) > now;
             }
-            // Sem data → mantém (para não esconder algo válido por erro de payload)
             return true;
           });
 
-          // monta linhas
-          const tableRows = filtered.map(e => ({
+          // —— DEDUPE: 1 linha por (draw_id, number). Preferir pendente; desempate pelo 'when' mais recente.
+          const byKey = new Map();
+          const priority = (st) => /pending|pendente|await|aguard/i.test(String(st || "")) ? 2 : 1;
+          for (const e of filtered) {
+            const key = `${Number(e.draw_id)}|${Number(e.number)}`;
+            const cur = byKey.get(key);
+            if (!cur) { byKey.set(key, e); continue; }
+            const pNew = priority(e.status), pOld = priority(cur.status);
+            if (pNew > pOld) byKey.set(key, e);
+            else if (pNew === pOld) {
+              const tNew = e.when ? new Date(e.when).getTime() : 0;
+              const tOld = cur.when ? new Date(cur.when).getTime() : 0;
+              if (tNew >= tOld) byKey.set(key, e);
+            }
+          }
+          const deduped = Array.from(byKey.values());
+
+          // monta linhas mantendo ids (reservation_id/payment_id)
+          const tableRows = deduped.map(e => ({
+            ...e,
             sorteio: e.draw_id != null ? String(e.draw_id) : "--",
             numero: Number(e.number),
             dia: e.when ? new Date(e.when).toLocaleDateString("pt-BR") : "--/--/----",
@@ -214,8 +411,8 @@ export default function AccountPage() {
 
           // pendentes primeiro
           tableRows.sort((a, b) => {
-            const ap = String(a.pagamento).toLowerCase() === "pending";
-            const bp = String(b.pagamento).toLowerCase() === "pending";
+            const ap = /pending|pendente/i.test(String(a.pagamento));
+            const bp = /pending|pendente/i.test(String(b.pagamento));
             if (ap && !bp) return -1;
             if (!ap && bp) return 1;
             return 0;
@@ -529,21 +726,38 @@ export default function AccountPage() {
                       <TableCell sx={{ fontWeight: 800, whiteSpace: "nowrap" }}>DIA</TableCell>
                       <TableCell sx={{ fontWeight: 800, whiteSpace: "nowrap" }}>PAGAMENTO</TableCell>
                       <TableCell sx={{ fontWeight: 800, whiteSpace: "nowrap" }}>RESULTADO</TableCell>
+                      <TableCell sx={{ fontWeight: 800, whiteSpace: "nowrap" }} align="right">PAGAR</TableCell>
                     </TableRow>
                   </TableHead>
                   <TableBody>
                     {rows.length === 0 && (
-                      <TableRow><TableCell colSpan={5} sx={{ color: "#bbb" }}>Nenhuma participação encontrada.</TableCell></TableRow>
+                      <TableRow><TableCell colSpan={6} sx={{ color: "#bbb" }}>Nenhuma participação encontrada.</TableCell></TableRow>
                     )}
-                    {rows.map((row, idx) => (
-                      <TableRow key={`${row.sorteio}-${row.numero}-${idx}`} hover>
-                        <TableCell sx={{ width: 100, fontWeight: 700 }}>{String(row.sorteio || "--")}</TableCell>
-                        <TableCell sx={{ width: 90, fontWeight: 700 }}>{pad2(row.numero)}</TableCell>
-                        <TableCell sx={{ width: 140 }}>{row.dia}</TableCell>
-                        <TableCell><PayChip status={row.pagamento} /></TableCell>
-                        <TableCell><ResultChip result={row.resultado} /></TableCell>
-                      </TableRow>
-                    ))}
+                    {rows.map((row, idx) => {
+                      const isPending = /pendente|pending|await|aguard|open/i.test(
+                        String(row.pagamento || "")
+                      );
+                      return (
+                        <TableRow key={`${row.sorteio}-${row.numero}-${idx}`} hover>
+                          <TableCell sx={{ width: 100, fontWeight: 700 }}>{String(row.sorteio || "--")}</TableCell>
+                          <TableCell sx={{ width: 90, fontWeight: 700 }}>{pad2(row.numero)}</TableCell>
+                          <TableCell sx={{ width: 140 }}>{row.dia}</TableCell>
+                          <TableCell><PayChip status={row.pagamento} /></TableCell>
+                          <TableCell><ResultChip result={row.resultado} /></TableCell>
+                          <TableCell align="right" sx={{ width: 120 }}>
+                            {isPending ? (
+                              <Button
+                                size="small"
+                                variant="contained"
+                                onClick={(e) => { e.stopPropagation(); handleGeneratePix(row); }}
+                              >
+                                Gerar PIX
+                              </Button>
+                            ) : null}
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
                   </TableBody>
                 </Table>
               </TableContainer>
@@ -560,6 +774,18 @@ export default function AccountPage() {
           </Paper>
         </Stack>
       </Container>
+
+      {/* Modal de PIX */}
+      <PixModal
+        open={pixOpen}
+        onClose={() => setPixOpen(false)}
+        loading={pixLoading}
+        data={pixData}
+        amount={pixAmount}
+        inlineMessage={pixMsg}
+        onCopy={copyPix}
+        onRefresh={refreshPix}
+      />
     </ThemeProvider>
   );
 }

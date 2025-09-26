@@ -140,5 +140,6 @@ export async function createPixPayment({
     amount,
     expires_in: data.expires_in ?? 30 * 60,
     reservationId: rid,
+    amount_cents: typeof data.amount_cents === 'number' ? data.amount_cents : undefined,
   };
 }
