@@ -17,6 +17,7 @@ import AdminDashboard from "./AdminDashboard";
 import AdminSorteios from "./AdminSorteios";
 import AdminClientes from "./AdminClientes";
 import AdminVencedores from "./AdminVencedores";
+import AdminUsersPage from "./AdminUsersPage";
 
 export default function App() {
   const [selecionados, setSelecionados] = React.useState([]);
@@ -85,6 +86,7 @@ export default function App() {
                 </AdminRoute>
               }
             />
+            <Route path="/admin/AdminClientesUser" element={<AdminUsersPage />} />
           </Routes>
         </BrowserRouter>
       </SelectionContext.Provider>
