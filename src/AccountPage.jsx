@@ -1,4 +1,3 @@
-// src/AccountPage.jsx
 import * as React from "react";
 import { useNavigate, Link as RouterLink } from "react-router-dom";
 import logoNewStore from "./Logo-branca-sem-fundo-768x132.png";
@@ -8,7 +7,7 @@ import {
   AppBar, Box, Button, Chip, Container, CssBaseline, IconButton, Menu, MenuItem,
   Divider, Paper, Stack, ThemeProvider, Toolbar, Typography, createTheme,
   Table, TableBody, TableCell, TableContainer, TableHead, TableRow, LinearProgress,
-  TextField, Alert
+  TextField, Alert, Dialog, DialogTitle, DialogContent, DialogActions
 } from "@mui/material";
 import ArrowBackIosNewRoundedIcon from "@mui/icons-material/ArrowBackIosNewRounded";
 import AccountCircleRoundedIcon from "@mui/icons-material/AccountCircleRounded";
@@ -18,6 +17,7 @@ import { apiJoin, authHeaders, getJSON } from "./lib/api";
 import PixModal from "./PixModal";
 import { checkPixStatus } from "./services/pix";
 // ▲ PIX
+import AutoPaySection from "./AutoPaySection";
 
 const theme = createTheme({
   palette: {
@@ -147,6 +147,20 @@ export default function AccountPage() {
   const [pixData, setPixData] = React.useState(null);
   const [pixAmount, setPixAmount] = React.useState(null);
   const [pixMsg, setPixMsg] = React.useState("");
+
+  // ▶︎ NOVO: modal AutoPay + claims da “tabela cativa”
+  const [autoOpen, setAutoOpen] = React.useState(false);
+  const [claims, setClaims] = React.useState({ taken: [], mine: [] });
+  async function loadClaims() {
+    try {
+      const j = await getJSON("/autopay/claims");
+      setClaims({
+        taken: Array.isArray(j?.taken) ? j.taken : [],
+        mine: Array.isArray(j?.mine) ? j.mine : [],
+      });
+    } catch {}
+  }
+  React.useEffect(() => { loadClaims(); }, []);
 
   function extractPayloadFromRow(row) {
     if (row.reservation_id) return { reservation_id: row.reservation_id };
@@ -722,6 +736,70 @@ export default function AccountPage() {
             </Paper>
           </Box>
 
+          {/* ====== Números cativos ====== */}
+          <Paper variant="outlined" sx={{ p: { xs: 2, md: 3 } }}>
+            <Stack spacing={1.5}>
+              <Typography variant="h6" fontWeight={900}>Números cativos</Typography>
+              <Typography variant="body2" sx={{ opacity: .8 }}>
+                Garanta seus números preferidos em todo sorteio novo. Configure um cartão e o sistema compra automaticamente quando o sorteio abre.
+              </Typography>
+
+              {/* legenda */}
+              <Stack direction="row" spacing={1} alignItems="center" sx={{ mt: .5, flexWrap: "wrap" }}>
+                <Chip size="small" label="Seu cativo" sx={{ bgcolor:"#10233a", color:"#cbe6ff", border:"1px solid #9bd1ff" }} />
+                <Chip size="small" label="Ocupado" sx={{ bgcolor:"#2a1c1c", color:"#ffb3b3", border:"1px solid #ff8a8a" }} />
+                <Chip size="small" label="Livre" variant="outlined" />
+              </Stack>
+
+              {/* mini grade 00..99 (responsiva) */}
+              <Box
+                sx={{
+                  display: "grid",
+                  gridTemplateColumns: {
+                    xs: "repeat(8, 1fr)",
+                    sm: "repeat(12, 1fr)",
+                    md: "repeat(20, 1fr)",
+                  },
+                  gap: .5,
+                  mt: 1,
+                }}
+              >
+                {Array.from({ length: 100 }, (_, n) => {
+                  const isMine  = claims.mine.includes(n);
+                  const isTaken = claims.taken.includes(n);
+                  const bg = isMine ? "#10233a" : isTaken ? "#2a1c1c" : "transparent";
+                  const bd = isMine ? "1px solid #9bd1ff" : isTaken ? "1px solid #ff8a8a" : "1px solid rgba(255,255,255,.14)";
+                  const fg = isMine ? "#cbe6ff" : isTaken ? "#ffb3b3" : "inherit";
+                  return (
+                    <Box
+                      key={n}
+                      sx={{
+                        userSelect: "none",
+                        textAlign: "center",
+                        py: .6,
+                        borderRadius: 999,
+                        fontWeight: 800,
+                        letterSpacing: .5,
+                        fontSize: 12,
+                        border: bd,
+                        bgcolor: bg,
+                        color: fg,
+                      }}
+                    >
+                      {String(n).padStart(2, "0")}
+                    </Box>
+                  );
+                })}
+              </Box>
+
+              <Stack direction={{ xs: "column", sm: "row" }} justifyContent="flex-end" sx={{ mt: 1 }}>
+                <Button variant="contained" onClick={() => setAutoOpen(true)}>
+                  Configurar número cativo
+                </Button>
+              </Stack>
+            </Stack>
+          </Paper>
+
           {/* Tabela */}
           <Paper variant="outlined" sx={{ p: { xs: 1, md: 2 } }}>
             {loading ? (
@@ -805,6 +883,22 @@ export default function AccountPage() {
         onCopy={copyPix}
         onRefresh={refreshPix}
       />
+
+      {/* Modal: configuração de compra automática (cartão + números cativos) */}
+      <Dialog open={autoOpen} onClose={() => setAutoOpen(false)} fullWidth maxWidth="md">
+        <DialogTitle sx={{ fontWeight: 900 }}>Compra automática — número cativo</DialogTitle>
+        <DialogContent dividers sx={{ p: 0 }}>
+          <AutoPaySection />
+        </DialogContent>
+        <DialogActions sx={{ px: 2, py: 1.5 }}>
+          <Button
+            variant="contained"
+            onClick={async () => { await loadClaims(); setAutoOpen(false); }}
+          >
+            Fechar
+          </Button>
+        </DialogActions>
+      </Dialog>
     </ThemeProvider>
   );
 }
