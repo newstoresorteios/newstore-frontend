@@ -4,10 +4,12 @@ import { useNavigate, Link as RouterLink } from "react-router-dom";
 import {
   AppBar, Box, Container, CssBaseline, IconButton, Menu, MenuItem, Divider,
   Paper, Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
-  ThemeProvider, Toolbar, Typography, createTheme
+  ThemeProvider, Toolbar, Typography, createTheme, Collapse, Stack, Chip
 } from "@mui/material";
 import ArrowBackIosNewRoundedIcon from "@mui/icons-material/ArrowBackIosNewRounded";
 import AccountCircleRoundedIcon from "@mui/icons-material/AccountCircleRounded";
+import ExpandMoreRoundedIcon from "@mui/icons-material/ExpandMoreRounded";
+import ExpandLessRoundedIcon from "@mui/icons-material/ExpandLessRounded";
 import logoNewStore from "./Logo-branca-sem-fundo-768x132.png";
 import { useAuth } from "./authContext";
 
@@ -101,7 +103,6 @@ function buildRows(payload) {
       const winner =
         it.winner_name ??
         it.vencedor_nome ??
-        it.winner_name ??
         it.winner?.name ??
         it.usuario_vencedor ??
         "-";
@@ -124,6 +125,33 @@ function buildRows(payload) {
     .sort((a, b) => Number(b.n || 0) - Number(a.n || 0));
 }
 
+/** Agrupa participantes por usuário -> lista de números */
+function groupParticipants(list) {
+  const map = new Map();
+  for (const p of list || []) {
+    const key = p.user_id ?? p.user_name ?? "—";
+    const name = p.user_name || "—";
+    const number = p.number ?? p.numero ?? null;
+    const status = p.status ?? null;
+    if (!map.has(key)) map.set(key, { name, numbers: [], statuses: new Set() });
+    if (number != null) map.get(key).numbers.push(Number(number));
+    if (status) map.get(key).statuses.add(String(status));
+  }
+  // ordena números e transforma statuses em string curta
+  const rows = [];
+  for (const [, v] of map.entries()) {
+    v.numbers.sort((a, b) => a - b);
+    rows.push({
+      name: v.name,
+      numbers: v.numbers,
+      statusLabel: [...v.statuses].join(", "),
+      qty: v.numbers.length,
+    });
+  }
+  rows.sort((a, b) => a.name.localeCompare(b.name, "pt-BR"));
+  return rows;
+}
+
 export default function AdminSorteios() {
   const navigate = useNavigate();
   const { logout } = useAuth();
@@ -137,6 +165,10 @@ export default function AdminSorteios() {
 
   const [rows, setRows] = React.useState([]);
   const [loading, setLoading] = React.useState(true);
+
+  // estado de expansão e cache de participantes por draw_id
+  const [expanded, setExpanded] = React.useState({});           // { [drawId]: boolean }
+  const [partsCache, setPartsCache] = React.useState({});       // { [drawId]: { loading, error, items } }
 
   React.useEffect(() => {
     let alive = true;
@@ -160,6 +192,33 @@ export default function AdminSorteios() {
     })();
     return () => { alive = false; };
   }, []);
+
+  async function ensureParticipants(drawId) {
+    if (partsCache[drawId]?.items || partsCache[drawId]?.loading) return;
+    setPartsCache((s) => ({ ...s, [drawId]: { loading: true, error: null, items: null } }));
+    try {
+      const payload = await getFirst([
+        `/admin/draws/${drawId}/participants`,
+        `/draws/${drawId}/participants`,
+        `/admin/draws/${drawId}/players`,
+        `/draws/${drawId}/players`,
+      ]);
+      const list = payload?.participants || payload?.items || payload || [];
+      setPartsCache((s) => ({ ...s, [drawId]: { loading: false, error: null, items: list } }));
+    } catch (e) {
+      console.error("[participants] fetch error:", e);
+      setPartsCache((s) => ({ ...s, [drawId]: { loading: false, error: String(e?.message || e), items: [] } }));
+    }
+  }
+
+  function toggleExpand(drawId) {
+    setExpanded((s) => {
+      const next = { ...s, [drawId]: !s[drawId] };
+      return next;
+    });
+    // carrega sob demanda
+    ensureParticipants(drawId);
+  }
 
   return (
     <ThemeProvider theme={theme}>
@@ -210,31 +269,98 @@ export default function AdminSorteios() {
                   <TableCell sx={{ fontWeight: 800 }}>DIAS ABERTO</TableCell>
                   <TableCell sx={{ fontWeight: 800 }}>DATA REALIZAÇÃO</TableCell>
                   <TableCell sx={{ fontWeight: 800 }}>USUÁRIO VENCEDOR</TableCell>
+                  <TableCell sx={{ fontWeight: 800 }} align="right">Detalhes</TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
                 {loading && (
                   <TableRow>
-                    <TableCell colSpan={6}>Carregando…</TableCell>
+                    <TableCell colSpan={7}>Carregando…</TableCell>
                   </TableRow>
                 )}
                 {!loading && rows.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={6} sx={{ color: "#bbb" }}>
+                    <TableCell colSpan={7} sx={{ color: "#bbb" }}>
                       Nenhum sorteio encontrado.
                     </TableCell>
                   </TableRow>
                 )}
-                {rows.map((d) => (
-                  <TableRow key={d.n} hover>
-                    <TableCell>{pad3(d.n)}</TableCell>
-                    <TableCell>{d.abertura}</TableCell>
-                    <TableCell>{d.fechamento}</TableCell>
-                    <TableCell>{d.dias}</TableCell>
-                    <TableCell>{d.realizacao}</TableCell>
-                    <TableCell>{d.vencedor}</TableCell>
-                  </TableRow>
-                ))}
+
+                {!loading && rows.map((d) => {
+                  const drawId = Number(d.n);
+                  const isOpen = !!expanded[drawId];
+                  const partState = partsCache[drawId];
+                  const grouped = groupParticipants(partState?.items);
+
+                  return (
+                    <React.Fragment key={drawId}>
+                      <TableRow
+                        hover
+                        onClick={() => toggleExpand(drawId)}
+                        sx={{ cursor: "pointer" }}
+                      >
+                        <TableCell>{pad3(drawId)}</TableCell>
+                        <TableCell>{d.abertura}</TableCell>
+                        <TableCell>{d.fechamento}</TableCell>
+                        <TableCell>{d.dias}</TableCell>
+                        <TableCell>{d.realizacao}</TableCell>
+                        <TableCell>{d.vencedor}</TableCell>
+                        <TableCell align="right" sx={{ width: 56 }}>
+                          {isOpen ? <ExpandLessRoundedIcon /> : <ExpandMoreRoundedIcon />}
+                        </TableCell>
+                      </TableRow>
+
+                      <TableRow>
+                        <TableCell colSpan={7} sx={{ p: 0, borderBottom: 0 }}>
+                          <Collapse in={isOpen} timeout="auto" unmountOnExit>
+                            <Box sx={{ px: 2, py: 2, bgcolor: "rgba(255,255,255,0.03)", borderTop: "1px solid rgba(255,255,255,0.06)" }}>
+                              <Typography variant="subtitle1" sx={{ fontWeight: 800, mb: 1 }}>
+                                Participantes & Números do Sorteio #{pad3(drawId)}
+                              </Typography>
+
+                              {!partState || partState.loading ? (
+                                <Typography variant="body2" sx={{ color: "#bbb" }}>Carregando participantes…</Typography>
+                              ) : partState.error ? (
+                                <Typography variant="body2" color="error">Erro ao carregar participantes: {partState.error}</Typography>
+                              ) : grouped.length === 0 ? (
+                                <Typography variant="body2" sx={{ color: "#bbb" }}>Nenhum participante encontrado.</Typography>
+                              ) : (
+                                <Table size="small" sx={{ bgcolor: "transparent" }}>
+                                  <TableHead>
+                                    <TableRow>
+                                      <TableCell sx={{ fontWeight: 700 }}>Usuário</TableCell>
+                                      <TableCell sx={{ fontWeight: 700 }}>Qtd</TableCell>
+                                      <TableCell sx={{ fontWeight: 700 }}>Números</TableCell>
+                                      <TableCell sx={{ fontWeight: 700 }}>Status</TableCell>
+                                    </TableRow>
+                                  </TableHead>
+                                  <TableBody>
+                                    {grouped.map((p, idx) => (
+                                      <TableRow key={idx} hover>
+                                        <TableCell>{p.name}</TableCell>
+                                        <TableCell>{p.qty}</TableCell>
+                                        <TableCell>
+                                          <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+                                            {p.numbers.map((n) => (
+                                              <Chip key={n} size="small" label={String(n).padStart(2, "0")} />
+                                            ))}
+                                          </Stack>
+                                        </TableCell>
+                                        <TableCell sx={{ color: "#bbb" }}>
+                                          {p.statusLabel || "-"}
+                                        </TableCell>
+                                      </TableRow>
+                                    ))}
+                                  </TableBody>
+                                </Table>
+                              )}
+                            </Box>
+                          </Collapse>
+                        </TableCell>
+                      </TableRow>
+                    </React.Fragment>
+                  );
+                })}
               </TableBody>
             </Table>
           </TableContainer>

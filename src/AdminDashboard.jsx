@@ -387,7 +387,19 @@ export default function AdminDashboard() {
           </Paper>
 
           {/* As 3 listas */}
-          <Stack spacing={3} sx={{ width: "100%" }}>
+          <Stack  spacing={3} sx={{ width: "100%" }}>
+             <BigCard color="green"  onClick={() => navigate("")}>
+              CADASTRO NOVOS
+              <br /> CLIENTES
+            </BigCard>
+
+               <BigCard color="blue" onClick={() => navigate("")}>
+              COMPLEMENTAR CADASTRO
+              <br /> (SALDO,CUPOM,CEL)
+            </BigCard>
+            <br />
+            <Divider sx={{ my: 3, borderColor: "rgba(255,255,255,0.18)", borderBottomWidth: 2 }} />
+            <br />
             <BigCard outlined onClick={() => navigate("/admin/sorteios")}>
               LISTA DE SORTEIOS
               <br /> REALIZADOS

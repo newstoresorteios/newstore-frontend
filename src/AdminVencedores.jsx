@@ -81,6 +81,7 @@ export default function AdminVencedores() {
           key: `${w.draw_id}-${w.realized_at}`,
           nome: w.winner_name || "-",
           numero: w.draw_id,
+          numeroVencedor: (w.winner_number ?? "") === "" || w.winner_number == null ? "-" : w.winner_number, // <=== NOVO
           data: fmtDate(w.realized_at),
           status: w.status || (w.redeemed ? "RESGATADO" : "NÃO RESGATADO"),
           dias: w.days_since ?? "-",
@@ -154,25 +155,27 @@ export default function AdminVencedores() {
 
         <Paper variant="outlined">
           <TableContainer sx={{ overflowX: "auto" }}>
-            <Table sx={{ minWidth: 800 }}>
+            <Table sx={{ minWidth: 900 }}>
               <TableHead>
                 <TableRow>
                   <TableCell sx={{ fontWeight: 800 }}>NOME DO USUÁRIO</TableCell>
                   <TableCell sx={{ fontWeight: 800 }}>Nº SORTEIO</TableCell>
+                  <TableCell sx={{ fontWeight: 800 }}>NÚMERO VENCEDOR</TableCell>{/* <=== NOVO */}
                   <TableCell sx={{ fontWeight: 800 }}>DATA DO SORTEIO</TableCell>
                   <TableCell sx={{ fontWeight: 800 }}>SITUAÇÃO DO PRÊMIO</TableCell>
                   <TableCell sx={{ fontWeight: 800 }}>DIAS CONTEMPLADO</TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
-                {loading && <TableRow><TableCell colSpan={5}>Carregando…</TableCell></TableRow>}
+                {loading && <TableRow><TableCell colSpan={6}>Carregando…</TableCell></TableRow>}
                 {!loading && rows.length === 0 && (
-                  <TableRow><TableCell colSpan={5} sx={{ color: "#bbb" }}>Nenhum vencedor encontrado.</TableCell></TableRow>
+                  <TableRow><TableCell colSpan={6} sx={{ color: "#bbb" }}>Nenhum vencedor encontrado.</TableCell></TableRow>
                 )}
                 {rows.map((w) => (
                   <TableRow key={w.key} hover>
                     <TableCell>{w.nome}</TableCell>
                     <TableCell>{pad3(w.numero)}</TableCell>
+                    <TableCell>{w.numeroVencedor}</TableCell>{/* <=== NOVO */}
                     <TableCell>{w.data}</TableCell>
                     <TableCell sx={{ color: w.status === "RESGATADO" ? "success.main" : "error.main", fontWeight: 800 }}>
                       {w.status}
