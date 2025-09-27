@@ -45,11 +45,19 @@ const PayChip = ({ status }) => {
   }
   return <Chip label="PENDENTE" sx={{ bgcolor: "warning.main", color: "#000", fontWeight: 800, borderRadius: 999, px: 1.5 }} />;
 };
+
+// ▼ AJUSTE: tratar também 'sorteado'
 const ResultChip = ({ result }) => {
   const r = String(result || "").toLowerCase();
-  if (r.includes("contempla") || r.includes("win")) return <Chip label="CONTEMPLADO" sx={{ bgcolor: "success.main", color: "#fff", fontWeight: 800, borderRadius: 999, px: 1.5 }} />;
-  if (r.includes("não") || r.includes("nao") || r.includes("n_contempla")) return <Chip label="NÃO CONTEMPLADO" sx={{ bgcolor: "error.main", color: "#fff", fontWeight: 800, borderRadius: 999, px: 1.5 }} />;
-  if (r.includes("closed") || r.includes("fechado")) return <Chip label="FECHADO" sx={{ bgcolor: "secondary.main", color: "#000", fontWeight: 800, borderRadius: 999, px: 1.5 }} />;
+  if (r.includes("contempla") || r.includes("win")) {
+    return <Chip label="CONTEMPLADO" sx={{ bgcolor: "success.main", color: "#fff", fontWeight: 800, borderRadius: 999, px: 1.5 }} />;
+  }
+  if (r.includes("não") || r.includes("nao") || r.includes("n_contempla")) {
+    return <Chip label="NÃO CONTEMPLADO" sx={{ bgcolor: "error.main", color: "#fff", fontWeight: 800, borderRadius: 999, px: 1.5 }} />;
+  }
+  if (/(sorteado|closed|fechado)/.test(r)) {
+    return <Chip label={r.includes("sorteado") ? "SORTEADO" : "FECHADO"} sx={{ bgcolor: "secondary.main", color: "#000", fontWeight: 800, borderRadius: 999, px: 1.5 }} />;
+  }
   return <Chip label="ABERTO" sx={{ bgcolor: "primary.main", color: "#0E0E0E", fontWeight: 800, borderRadius: 999, px: 1.5 }} />;
 };
 
@@ -341,10 +349,10 @@ export default function AccountPage() {
     try { return JSON.parse(localStorage.getItem("me") || "null"); } catch { return null; }
   }, []);
 
-  // ▶︎ AJUSTE: navegar para a grade do sorteio quando PAGO + FECHADO
+  // ▶︎ AJUSTE: navegar para a grade do sorteio quando PAGO + FECHADO/SORTEADO
   function onRowClick(row) {
     const pago = /^(approved|paid|pago)$/i.test(String(row.pagamento || ""));
-    const fechado = /(closed|fechado)/i.test(String(row.resultado || ""));
+    const fechado = /(closed|fechado|sorteado)/i.test(String(row.resultado || ""));
     const drawId = Number(row.draw_id ?? row.sorteio);
     if (pago && fechado && Number.isFinite(drawId)) {
       navigate(`/me/draw/${drawId}`);
@@ -826,7 +834,7 @@ export default function AccountPage() {
                         String(row.pagamento || "")
                       );
                       const isPaid   = /^(approved|paid|pago)$/i.test(String(row.pagamento || ""));
-                      const isClosed = /(closed|fechado)/i.test(String(row.resultado || ""));
+                      const isClosed = /(closed|fechado|sorteado)/i.test(String(row.resultado || "")); // ← AJUSTE
                       const clickable = isPaid && isClosed && (row.draw_id != null || row.sorteio);
 
                       return (

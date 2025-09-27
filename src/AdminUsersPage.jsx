@@ -191,6 +191,8 @@ export default function AdminUsersPage() {
   async function handleSave() {
     try {
       setSaving(true);
+      const creating = !form.id;
+
       const payload = {
         name: String(form.name || "").trim(),
         email: String(form.email || "").trim(),
@@ -198,6 +200,8 @@ export default function AdminUsersPage() {
         is_admin: !!form.is_admin,
         coupon_code: String(form.coupon_code || "").trim(),
         coupon_value_cents: brlStringToCents(saldoStr),
+        // dica para o backend (inofensivo se ignorado):
+        ...(creating ? { set_default_password: true } : {}),
       };
       const url = form.id ? `/admin/users/${form.id}` : "/admin/users";
       const method = form.id ? "PUT" : "POST";
@@ -223,7 +227,11 @@ export default function AdminUsersPage() {
       });
       setForm(saved);
       setSaldoStr(centsToBRLString(saved.coupon_value_cents || 0));
-      setToast({ open: true, sev: "success", msg: "Salvo com sucesso." });
+      setToast({
+        open: true,
+        sev: "success",
+        msg: creating ? "Salvo com sucesso. Senha padrão: newstore" : "Salvo com sucesso."
+      });
     } catch {
       setToast({ open: true, sev: "error", msg: "Não foi possível salvar." });
     } finally {
