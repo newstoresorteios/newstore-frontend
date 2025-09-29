@@ -41,10 +41,9 @@ const RAW =
 const ROOT = String(RAW).replace(/\/+$/, '');
 const API_BASE = /\/api$/i.test(ROOT) ? ROOT : `${ROOT}/api`;
 
-// monta URL garantindo que não duplica /api
 function apiUrl(path) {
   let p = path.startsWith('/') ? path : `/${path}`;
-  if (API_BASE.endsWith('/api') && p.startsWith('/api/')) p = p.slice(4); // remove "/api" extra
+  if (API_BASE.endsWith('/api') && p.startsWith('/api/')) p = p.slice(4);
   return `${API_BASE}${p}`;
 }
 
@@ -60,13 +59,12 @@ async function postJson(path, body) {
   return data;
 }
 
-// tenta rotas comuns de registro (a 1ª deve funcionar)
 async function registerRequest({ name, email, password, phone }) {
   const payload = {
-    name: String(name || '').trim() || 'Cliente',
+    name: String(name || '').trim(),
     email: String(email || '').trim().toLowerCase(),
-    password,
-    phone: String(phone || '').trim() || null,
+    password: String(password || ''),
+    phone: String(phone || '').trim(),
   };
 
   const paths = ['/auth/register', '/register', '/users/register'];
@@ -81,18 +79,38 @@ async function registerRequest({ name, email, password, phone }) {
   throw lastErr || new Error('Falha ao registrar');
 }
 
+/* ===================== Página ===================== */
+
 export default function RegisterPage() {
   const navigate = useNavigate();
   const [form, setForm] = React.useState({ name: '', email: '', password: '', phone: '' });
+  const [errors, setErrors] = React.useState({});
   const [loading, setLoading] = React.useState(false);
 
   const onChange = (e) => {
     const { name, value } = e.target;
     setForm((f) => ({ ...f, [name]: value }));
+    setErrors((prev) => ({ ...prev, [name]: undefined }));
   };
+
+  const emailOk = (v) => /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/i.test(String(v).trim());
+  const phoneDigits = (v) => String(v || '').replace(/\D+/g, '');
+  const phoneOk = (v) => phoneDigits(v).length >= 10; // DDD + número (10 ou 11 dígitos)
+
+  function validateAll() {
+    const err = {};
+    if (!form.name.trim()) err.name = 'Informe seu nome completo.';
+    if (!emailOk(form.email)) err.email = 'E-mail inválido.';
+    if (!phoneOk(form.phone)) err.phone = 'Informe um telefone válido com DDD.';
+    if (!form.password) err.password = 'Informe uma senha.';
+    setErrors(err);
+    return Object.keys(err).length === 0;
+  }
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (!validateAll()) return;
+
     setLoading(true);
     try {
       await registerRequest(form);
@@ -104,6 +122,9 @@ export default function RegisterPage() {
       setLoading(false);
     }
   };
+
+  const canSubmit =
+    form.name.trim() && emailOk(form.email) && phoneOk(form.phone) && form.password && !loading;
 
   return (
     <ThemeProvider theme={theme}>
@@ -130,7 +151,7 @@ export default function RegisterPage() {
               Use seus dados para acessar a área do cliente.
             </Typography>
 
-            <Box component="form" onSubmit={handleSubmit}>
+            <Box component="form" onSubmit={handleSubmit} noValidate>
               <Stack spacing={2}>
                 <TextField
                   label="Nome completo"
@@ -139,7 +160,10 @@ export default function RegisterPage() {
                   onChange={onChange}
                   fullWidth
                   required
+                  error={!!errors.name}
+                  helperText={errors.name}
                 />
+
                 <TextField
                   label="E-mail"
                   type="email"
@@ -148,15 +172,23 @@ export default function RegisterPage() {
                   onChange={onChange}
                   fullWidth
                   required
+                  error={!!errors.email}
+                  helperText={errors.email}
                 />
+
                 <TextField
-                  label="Celular"
+                  label="Celular (com DDD)"
                   name="phone"
                   value={form.phone}
                   onChange={onChange}
-                  placeholder="(DDD) 9 9999-9999"
+                  placeholder="(11) 90000-0000"
+                  inputMode="tel"
                   fullWidth
+                  required
+                  error={!!errors.phone}
+                  helperText={errors.phone}
                 />
+
                 <TextField
                   label="Senha"
                   type="password"
@@ -165,13 +197,15 @@ export default function RegisterPage() {
                   onChange={onChange}
                   fullWidth
                   required
+                  error={!!errors.password}
+                  helperText={errors.password}
                 />
 
                 <Button
                   type="submit"
                   variant="contained"
                   size="large"
-                  disabled={loading}
+                  disabled={!canSubmit}
                   sx={{ py: 1.2, fontWeight: 700 }}
                 >
                   {loading ? 'Criando...' : 'Criar conta'}
