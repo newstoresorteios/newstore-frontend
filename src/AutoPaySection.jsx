@@ -21,9 +21,17 @@ function parseExpiry(exp) {
   return { mm, yyyy };
 }
 
-/** Carrega o SDK v2 do Mercado Pago se ainda não estiver presente.
- *  Usa um singleton em window para evitar múltiplos loads.
- */
+/** Lê a public key do ambiente (ou da window como fallback). */
+function getMpPublicKey() {
+  return (
+    process.env.REACT_APP_MP_PUBLIC_KEY ||
+    process.env.REACT_APP_MERCADOPAGO_PUBLIC_KEY ||
+    window.MP_PUBLIC_KEY ||
+    ""
+  );
+}
+
+/** Carrega o SDK v2 do Mercado Pago apenas uma vez (se necessário). */
 async function loadMpSdkOnce() {
   if (window.MercadoPago) return true;
   if (window.__mpSdkPromise) return window.__mpSdkPromise;
@@ -41,7 +49,7 @@ async function loadMpSdkOnce() {
     await window.__mpSdkPromise;
     return true;
   } catch (e) {
-    window.__mpSdkPromise = null;
+    window.__mpSdkPromise = null; // deixa tentar de novo no futuro
     throw e;
   }
 }
@@ -49,7 +57,6 @@ async function loadMpSdkOnce() {
 export default function AutoPaySection() {
   const [loading, setLoading] = React.useState(true);
   const [saving, setSaving]   = React.useState(false);
-  const [canceling, setCanceling] = React.useState(false); // NOVO
   const [active, setActive]   = React.useState(true);
   const [numbers, setNumbers] = React.useState([]);
   const [card, setCard]       = React.useState({ brand: null, last4: null, has_card: false });
@@ -85,7 +92,7 @@ export default function AutoPaySection() {
     );
   }
 
-  // Gera token via SDK do Mercado Pago (se disponível)
+  /** Tenta tokenizar via SDK; se indisponível, cai para o endpoint /v1/card_tokens (CORS). */
   async function createMpTokenOrFail() {
     const num = onlyDigits(cardNumber);
     const { mm, yyyy } = parseExpiry(expiry);
@@ -93,47 +100,68 @@ export default function AutoPaySection() {
     const holderName = (holder || "").trim();
     const docDigits  = onlyDigits(doc);
 
+    // valida mínimos
     if (!num || !mm || !yyyy || !sc || !holderName || !docDigits) {
       throw new Error("Dados do cartão incompletos.");
     }
 
-    await loadMpSdkOnce();
+    const PK = getMpPublicKey();
+    if (!PK) throw new Error("Chave pública do Mercado Pago não configurada.");
 
-    const PK =
-      process.env.REACT_APP_MP_PUBLIC_KEY ||
-      process.env.REACT_APP_MERCADOPAGO_PUBLIC_KEY ||
-      window.MP_PUBLIC_KEY;
-
-    if (!PK) {
-      throw new Error("Chave pública do Mercado Pago não configurada (REACT_APP_MP_PUBLIC_KEY).");
+    // ——— 1) tenta SDK v2
+    let tokenId = null;
+    try {
+      await loadMpSdkOnce();
+      if (window.MercadoPago) {
+        const mp = new window.MercadoPago(PK, { locale: "pt-BR" });
+        if (mp?.cardToken?.create) {
+          const resp = await mp.cardToken.create({
+            cardNumber: num,
+            securityCode: sc,
+            expirationMonth: mm,
+            expirationYear: yyyy,
+            cardholder: {
+              name: holderName,
+              identification: { type: guessDocType(docDigits), number: docDigits },
+            },
+          });
+          tokenId = resp?.id || resp?.data?.id || resp?.token || null;
+        }
+      }
+    } catch (e) {
+      // mantém silêncio; faremos fallback
+      // console.warn("SDK tokenization failed:", e);
     }
-    if (!(window.MercadoPago)) {
-      throw new Error("SDK do Mercado Pago não pôde ser carregado.");
+
+    // ——— 2) fallback para REST (CORS) se o SDK não produziu token
+    if (!tokenId) {
+      const url = `https://api.mercadopago.com/v1/card_tokens?public_key=${encodeURIComponent(PK)}`;
+      const r = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({
+          card_number: num,
+          security_code: sc,
+          expiration_month: mm,
+          expiration_year: yyyy,
+          cardholder: {
+            name: holderName,
+            identification: { type: guessDocType(docDigits), number: docDigits },
+          },
+        }),
+      });
+
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || !(j?.id)) {
+        const msg =
+          j?.message || j?.error || j?.cause?.[0]?.description || "Falha ao gerar token do cartão.";
+        throw new Error(msg);
+      }
+      tokenId = j.id;
     }
 
-    const mp = new window.MercadoPago(PK, { locale: "pt-BR" });
-    if (!mp?.cardToken?.create) {
-      throw new Error("Função de tokenização indisponível.");
-    }
-
-    const payload = {
-      cardNumber: num,
-      securityCode: sc,
-      expirationMonth: mm,
-      expirationYear: yyyy,
-      cardholder: {
-        name: holderName,
-        identification: {
-          type: guessDocType(docDigits),
-          number: docDigits,
-        },
-      },
-    };
-
-    const resp = await mp.cardToken.create(payload);
-    const tok = resp?.id || resp?.data?.id || resp?.token;
-    if (!tok) throw new Error("Falha ao gerar token do cartão.");
-    return tok;
+    if (!tokenId) throw new Error("Função de tokenização indisponível.");
+    return tokenId;
   }
 
   async function save() {
@@ -146,8 +174,7 @@ export default function AutoPaySection() {
         doc_number: doc,
       };
 
-      const wantsCardUpdate =
-        cardNumber || expiry || cvv || holder || doc;
+      const wantsCardUpdate = cardNumber || expiry || cvv || holder || doc;
 
       if (wantsCardUpdate && (cardNumber || expiry || cvv)) {
         const token = await createMpTokenOrFail();
@@ -160,7 +187,7 @@ export default function AutoPaySection() {
         credentials: "include",
         body: JSON.stringify(body),
       });
-      const j = await r.json();
+      const j = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(j?.error || "save_failed");
 
       setCard(j.card || { has_card: false });
@@ -177,13 +204,11 @@ export default function AutoPaySection() {
     }
   }
 
-  // NOVO: cancelar (desativar, limpar números e remover cartão salvo)
-  async function cancelAutopay() {
-    if (!window.confirm("Deseja cancelar a compra automática, remover o cartão salvo e limpar os números cativos?")) {
-      return;
-    }
-    setCanceling(true);
+  /** Cancela o perfil de compra automática e remove cartão/números. */
+  async function cancelAutoPay() {
+    if (!window.confirm("Cancelar a compra automática e remover o cartão salvo?")) return;
     try {
+      setSaving(true);
       const r = await fetch(apiJoin("/api/me/autopay/cancel"), {
         method: "POST",
         headers: { "Content-Type": "application/json", ...authHeaders() },
@@ -192,20 +217,20 @@ export default function AutoPaySection() {
       });
       const j = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(j?.error || "cancel_failed");
-
-      // Reflete no estado local
+      // limpa estado local
       setActive(false);
       setNumbers([]);
-      setCard({ has_card: false, brand: null, last4: null });
-      // limpa campos do formulário
+      setCard({ brand: null, last4: null, has_card: false });
       setCardNumber("");
       setExpiry("");
       setCvv("");
+      setHolder("");
+      setDoc("");
       alert("Compra automática cancelada.");
     } catch (e) {
-      alert(e?.message || "Não foi possível cancelar agora. Tente novamente.");
+      alert(e?.message || "Não foi possível cancelar agora.");
     } finally {
-      setCanceling(false);
+      setSaving(false);
     }
   }
 
@@ -245,7 +270,7 @@ export default function AutoPaySection() {
           </Typography>
         </Box>
 
-        {/* Atualizar/Salvar cartão (sem exibir token) */}
+        {/* Atualizar/Salvar cartão (opcional) */}
         <Stack spacing={1}>
           <Typography variant="subtitle2" sx={{ opacity: .85 }}>
             Atualizar cartão (opcional)
@@ -255,14 +280,12 @@ export default function AutoPaySection() {
             <TextField
               label="Número do cartão"
               inputMode="numeric"
-              autoComplete="cc-number"
               value={cardNumber}
               onChange={(e) => setCardNumber(onlyDigits(e.target.value).slice(0, 19))}
               fullWidth
             />
             <TextField
               label="Nome impresso no cartão"
-              autoComplete="cc-name"
               value={holder}
               onChange={(e) => setHolder(e.target.value)}
               fullWidth
@@ -279,7 +302,6 @@ export default function AutoPaySection() {
             <TextField
               label="Validade (MM/AA)"
               placeholder="ex.: 04/27"
-              autoComplete="cc-exp"
               value={expiry}
               onChange={(e) => setExpiry(e.target.value)}
               sx={{ maxWidth: 180 }}
@@ -287,7 +309,6 @@ export default function AutoPaySection() {
             <TextField
               label="CVV"
               inputMode="numeric"
-              autoComplete="cc-csc"
               value={cvv}
               onChange={(e) => setCvv(onlyDigits(e.target.value).slice(0, 4))}
               sx={{ maxWidth: 140 }}
@@ -331,23 +352,26 @@ export default function AutoPaySection() {
           })}
         </Box>
 
-        <Stack direction={{ xs: "column", sm: "row" }} spacing={1} justifyContent="flex-end">
+        <Stack direction={{ xs: "column", sm: "row" }} spacing={1} justifyContent="space-between">
           <Button
             variant="outlined"
             color="error"
-            onClick={cancelAutopay}
-            disabled={canceling || saving || loading}
+            onClick={cancelAutoPay}
+            sx={{ borderWidth: 2 }}
           >
-            {canceling ? "Cancelando…" : "Cancelar compra automática"}
+            Cancelar compra automática
           </Button>
-          <Button
-            variant="contained"
-            startIcon={<AutorenewRoundedIcon />}
-            onClick={save}
-            disabled={saving || loading}
-          >
-            {saving ? "Salvando…" : "Salvar preferências"}
-          </Button>
+
+          <Box sx={{ display: "flex", gap: 1 }}>
+            <Button
+              variant="contained"
+              startIcon={<AutorenewRoundedIcon />}
+              onClick={save}
+              disabled={saving || loading}
+            >
+              {saving ? "Salvando…" : "Salvar preferências"}
+            </Button>
+          </Box>
         </Stack>
       </Stack>
     </Paper>
