@@ -145,7 +145,7 @@ export default function DrawBoardPage() {
       fontWeight: 800,
       letterSpacing: 0.4,
       py: { xs: 1, sm: 1.1 },
-      minHeight: { xs: 44, sm: 52 }, // espaço para o nome
+      minHeight: { xs: 44, sm: 52 }, // espaço para número + nome
       color,
       border,
       backgroundImage,
@@ -172,53 +172,13 @@ export default function DrawBoardPage() {
             "linear-gradient(180deg, rgba(18,18,18,.9) 0%, rgba(18,18,18,.6) 100%)",
         }}
       >
-        <Toolbar sx={{ minHeight: { xs: 56, md: 64 }, gap: 1 }}>
+        <Toolbar sx={{ minHeight: { xs: 56, md: 64 } }}>
           <IconButton edge="start" color="inherit" onClick={() => navigate(-1)}>
             <ArrowBackIosNewRoundedIcon />
           </IconButton>
-
-          {/* Título: product_name + link */}
-          <Stack
-            direction="row"
-            spacing={1}
-            alignItems="center"
-            sx={{ overflow: "hidden" }}
-          >
-            <Typography
-              sx={{
-                fontWeight: 900,
-                letterSpacing: 0.5,
-                whiteSpace: "nowrap",
-                textOverflow: "ellipsis",
-                overflow: "hidden",
-                maxWidth: { xs: "58vw", md: "70vw" },
-              }}
-              title={
-                data?.draw?.product_name ||
-                `Detalhes do Sorteio #${String(id).padStart(3, "0")}`
-              }
-            >
-              {data?.draw?.product_name ||
-                `Detalhes do Sorteio #${String(id).padStart(3, "0")}`}
-            </Typography>
-
-            {data?.draw?.product_link && (
-              <Typography
-                component="a"
-                href={data.draw.product_link}
-                target="_blank"
-                rel="noopener noreferrer"
-                sx={{
-                  color: "primary.main",
-                  fontWeight: 800,
-                  textDecoration: "none",
-                  flexShrink: 0,
-                }}
-              >
-                link
-              </Typography>
-            )}
-          </Stack>
+          <Typography sx={{ fontWeight: 900, letterSpacing: 0.5 }}>
+            Detalhes do Sorteio #{String(id).padStart(3, "0")}
+          </Typography>
         </Toolbar>
       </AppBar>
 
@@ -233,6 +193,7 @@ export default function DrawBoardPage() {
 
           {!loading && data && (
             <>
+              {/* status + legendas */}
               <Stack
                 direction={{ xs: "column", md: "row" }}
                 spacing={1.5}
@@ -342,7 +303,7 @@ export default function DrawBoardPage() {
                       {cell.label}
                     </Typography>
 
-                    {/* Nome do vencedor abaixo do número */}
+                    {/* Nome do vencedor abaixo do número vencedor */}
                     {cell.isWinner && !!winnerName && (
                       <Typography
                         variant="caption"
@@ -355,7 +316,7 @@ export default function DrawBoardPage() {
                           whiteSpace: "nowrap",
                           overflow: "hidden",
                           textOverflow: "ellipsis",
-                          color: "#000", // contraste no dourado
+                          color: "#000",
                         }}
                         title={winnerName}
                       >
@@ -366,10 +327,51 @@ export default function DrawBoardPage() {
                 ))}
               </Box>
 
+              {/* Produto (nome + link) — agora acima de "Seus números" */}
+              {(data.draw?.product_name || data.draw?.product_link) && (
+                <Box
+                  sx={{
+                    mt: { xs: 2.5, md: 3 },
+                    px: { xs: 1.5, md: 2 },
+                  }}
+                >
+                  <Stack direction="row" spacing={1} alignItems="baseline" flexWrap="wrap">
+                    {!!data.draw?.product_name && (
+                      <Typography
+                        variant="h6"
+                        sx={{
+                          fontWeight: 900,
+                          letterSpacing: 0.3,
+                          mr: 1,
+                        }}
+                      >
+                        {data.draw.product_name}
+                      </Typography>
+                    )}
+
+                    {!!data.draw?.product_link && (
+                      <Typography
+                        component="a"
+                        href={data.draw.product_link}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        sx={{
+                          color: "primary.main",
+                          fontWeight: 800,
+                          textDecoration: "none",
+                        }}
+                      >
+                        link
+                      </Typography>
+                    )}
+                  </Stack>
+                </Box>
+              )}
+
               {/* Seus números */}
               <Box
                 sx={{
-                  mt: { xs: 2.5, md: 3 },
+                  mt: { xs: 1.5, md: 2 },
                   p: { xs: 1.5, md: 2 },
                   borderRadius: 3,
                   border: "1px solid rgba(255,255,255,.08)",
