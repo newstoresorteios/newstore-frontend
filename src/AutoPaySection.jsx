@@ -21,9 +21,35 @@ function parseExpiry(exp) {
   return { mm, yyyy };
 }
 
+/** Carrega o SDK v2 do Mercado Pago se ainda não estiver presente.
+ *  Usa um singleton em window para evitar múltiplos loads.
+ */
+async function loadMpSdkOnce() {
+  if (window.MercadoPago) return true;
+  if (window.__mpSdkPromise) return window.__mpSdkPromise;
+
+  window.__mpSdkPromise = new Promise((resolve, reject) => {
+    const s = document.createElement("script");
+    s.src = "https://sdk.mercadopago.com/js/v2";
+    s.async = true;
+    s.onload = () => resolve(true);
+    s.onerror = () => reject(new Error("Falha ao carregar o SDK do Mercado Pago."));
+    document.head.appendChild(s);
+  });
+
+  try {
+    await window.__mpSdkPromise;
+    return true;
+  } catch (e) {
+    window.__mpSdkPromise = null;
+    throw e;
+  }
+}
+
 export default function AutoPaySection() {
   const [loading, setLoading] = React.useState(true);
   const [saving, setSaving]   = React.useState(false);
+  const [canceling, setCanceling] = React.useState(false); // NOVO
   const [active, setActive]   = React.useState(true);
   const [numbers, setNumbers] = React.useState([]);
   const [card, setCard]       = React.useState({ brand: null, last4: null, has_card: false });
@@ -67,21 +93,25 @@ export default function AutoPaySection() {
     const holderName = (holder || "").trim();
     const docDigits  = onlyDigits(doc);
 
-    // valida mínimos
     if (!num || !mm || !yyyy || !sc || !holderName || !docDigits) {
       throw new Error("Dados do cartão incompletos.");
     }
+
+    await loadMpSdkOnce();
 
     const PK =
       process.env.REACT_APP_MP_PUBLIC_KEY ||
       process.env.REACT_APP_MERCADOPAGO_PUBLIC_KEY ||
       window.MP_PUBLIC_KEY;
 
-    if (!(window.MercadoPago && PK)) {
-      throw new Error("SDK do Mercado Pago não está carregado no front-end.");
+    if (!PK) {
+      throw new Error("Chave pública do Mercado Pago não configurada (REACT_APP_MP_PUBLIC_KEY).");
+    }
+    if (!(window.MercadoPago)) {
+      throw new Error("SDK do Mercado Pago não pôde ser carregado.");
     }
 
-    const mp = new window.MercadoPago(PK);
+    const mp = new window.MercadoPago(PK, { locale: "pt-BR" });
     if (!mp?.cardToken?.create) {
       throw new Error("Função de tokenização indisponível.");
     }
@@ -120,7 +150,6 @@ export default function AutoPaySection() {
         cardNumber || expiry || cvv || holder || doc;
 
       if (wantsCardUpdate && (cardNumber || expiry || cvv)) {
-        // Se qualquer campo de cartão foi preenchido, precisamos tokenizar
         const token = await createMpTokenOrFail();
         body.card_token = token;
       }
@@ -136,7 +165,6 @@ export default function AutoPaySection() {
 
       setCard(j.card || { has_card: false });
       if (j.card?.has_card) {
-        // limpa campos sensíveis
         setCardNumber("");
         setExpiry("");
         setCvv("");
@@ -146,6 +174,38 @@ export default function AutoPaySection() {
       alert(e?.message || "Falha ao salvar. Verifique os dados do cartão e tente novamente.");
     } finally {
       setSaving(false);
+    }
+  }
+
+  // NOVO: cancelar (desativar, limpar números e remover cartão salvo)
+  async function cancelAutopay() {
+    if (!window.confirm("Deseja cancelar a compra automática, remover o cartão salvo e limpar os números cativos?")) {
+      return;
+    }
+    setCanceling(true);
+    try {
+      const r = await fetch(apiJoin("/api/me/autopay/cancel"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeaders() },
+        credentials: "include",
+        body: JSON.stringify({}),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j?.error || "cancel_failed");
+
+      // Reflete no estado local
+      setActive(false);
+      setNumbers([]);
+      setCard({ has_card: false, brand: null, last4: null });
+      // limpa campos do formulário
+      setCardNumber("");
+      setExpiry("");
+      setCvv("");
+      alert("Compra automática cancelada.");
+    } catch (e) {
+      alert(e?.message || "Não foi possível cancelar agora. Tente novamente.");
+    } finally {
+      setCanceling(false);
     }
   }
 
@@ -195,12 +255,14 @@ export default function AutoPaySection() {
             <TextField
               label="Número do cartão"
               inputMode="numeric"
+              autoComplete="cc-number"
               value={cardNumber}
               onChange={(e) => setCardNumber(onlyDigits(e.target.value).slice(0, 19))}
               fullWidth
             />
             <TextField
               label="Nome impresso no cartão"
+              autoComplete="cc-name"
               value={holder}
               onChange={(e) => setHolder(e.target.value)}
               fullWidth
@@ -217,6 +279,7 @@ export default function AutoPaySection() {
             <TextField
               label="Validade (MM/AA)"
               placeholder="ex.: 04/27"
+              autoComplete="cc-exp"
               value={expiry}
               onChange={(e) => setExpiry(e.target.value)}
               sx={{ maxWidth: 180 }}
@@ -224,6 +287,7 @@ export default function AutoPaySection() {
             <TextField
               label="CVV"
               inputMode="numeric"
+              autoComplete="cc-csc"
               value={cvv}
               onChange={(e) => setCvv(onlyDigits(e.target.value).slice(0, 4))}
               sx={{ maxWidth: 140 }}
@@ -267,7 +331,15 @@ export default function AutoPaySection() {
           })}
         </Box>
 
-        <Stack direction="row" spacing={1} justifyContent="flex-end">
+        <Stack direction={{ xs: "column", sm: "row" }} spacing={1} justifyContent="flex-end">
+          <Button
+            variant="outlined"
+            color="error"
+            onClick={cancelAutopay}
+            disabled={canceling || saving || loading}
+          >
+            {canceling ? "Cancelando…" : "Cancelar compra automática"}
+          </Button>
           <Button
             variant="contained"
             startIcon={<AutorenewRoundedIcon />}
