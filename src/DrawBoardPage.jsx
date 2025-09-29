@@ -2,8 +2,20 @@
 import * as React from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
-  AppBar, Toolbar, IconButton, CssBaseline, Box, Container, Paper,
-  Typography, Stack, Chip, createTheme, ThemeProvider, CircularProgress, Divider
+  AppBar,
+  Toolbar,
+  IconButton,
+  CssBaseline,
+  Box,
+  Container,
+  Paper,
+  Typography,
+  Stack,
+  Chip,
+  createTheme,
+  ThemeProvider,
+  CircularProgress,
+  Divider,
 } from "@mui/material";
 import ArrowBackIosNewRoundedIcon from "@mui/icons-material/ArrowBackIosNewRounded";
 import CheckCircleRoundedIcon from "@mui/icons-material/CheckCircleRounded";
@@ -21,7 +33,7 @@ const theme = createTheme({
   },
   shape: { borderRadius: 14 },
   typography: {
-    fontFamily: ["Inter","system-ui","Segoe UI","Roboto","Arial"].join(","),
+    fontFamily: ["Inter", "system-ui", "Segoe UI", "Roboto", "Arial"].join(","),
     fontWeightBold: 800,
   },
   components: {
@@ -30,16 +42,16 @@ const theme = createTheme({
         root: {
           backgroundImage:
             "radial-gradient(70% 140% at 10% 30%, rgba(103,194,58,.08), transparent 60%), radial-gradient(80% 160% at 120% -10%, rgba(255,213,79,.05), transparent 60%)",
-          borderColor: "rgba(255,255,255,.08)"
-        }
-      }
-    }
-  }
+          borderColor: "rgba(255,255,255,.08)",
+        },
+      },
+    },
+  },
 });
 
-const API =
-  (process.env.REACT_APP_API_BASE_URL || process.env.REACT_APP_API_BASE || "/api")
-    .replace(/\/+$/, "");
+const API = (process.env.REACT_APP_API_BASE_URL ||
+  process.env.REACT_APP_API_BASE ||
+  "/api").replace(/\/+$/, "");
 
 const authHeaders = () => {
   const tk =
@@ -48,7 +60,9 @@ const authHeaders = () => {
     localStorage.getItem("token") ||
     localStorage.getItem("access_token") ||
     sessionStorage.getItem("token");
-  return tk ? { Authorization: `Bearer ${String(tk).replace(/^Bearer\s+/i,"")}` } : {};
+  return tk
+    ? { Authorization: `Bearer ${String(tk).replace(/^Bearer\s+/i, "")}` }
+    : {};
 };
 
 export default function DrawBoardPage() {
@@ -63,7 +77,7 @@ export default function DrawBoardPage() {
       try {
         const r = await fetch(`${API}/api/me/draws/${id}/board`, {
           headers: { "Content-Type": "application/json", ...authHeaders() },
-          credentials: "include"
+          credentials: "include",
         });
         const j = await r.json();
         if (!r.ok) throw new Error(j?.error || "fetch_failed");
@@ -74,16 +88,17 @@ export default function DrawBoardPage() {
         if (alive) setLoading(false);
       }
     })();
-    return () => { alive = false; };
+    return () => {
+      alive = false;
+    };
   }, [id]);
 
-  // === NOVO: todos “preenchidos” com degradê por estado ===
+  // Estilo das células do tabuleiro
   const getCellSx = (cell) => {
     const isWinner = !!cell.isWinner;
-    const isMine   = !!cell.isMine;
-    const state    = String(cell.state || "");
+    const isMine = !!cell.isMine;
+    const state = String(cell.state || "");
 
-    // base preenchido (cinza) com highlight superior
     let color = "#FFFFFF";
     let border = "1px solid rgba(255,255,255,.18)";
     let backgroundImage =
@@ -91,7 +106,6 @@ export default function DrawBoardPage() {
     let boxShadow = "0 0 0 0 rgba(0,0,0,0)";
 
     if (state === "taken") {
-      // indisponível (vermelho preenchido)
       color = "#FFD6D6";
       border = "1px solid rgba(255,138,138,.7)";
       backgroundImage =
@@ -99,7 +113,6 @@ export default function DrawBoardPage() {
     }
 
     if (state === "reserved") {
-      // reservado (âmbar preenchido)
       color = "#FFE7A1";
       border = "1px solid rgba(255,214,102,.75)";
       backgroundImage =
@@ -107,7 +120,6 @@ export default function DrawBoardPage() {
     }
 
     if (isMine) {
-      // meus números (azulado preenchido)
       color = "#D6EBFF";
       border = "1px solid #9BD1FF";
       backgroundImage =
@@ -116,7 +128,6 @@ export default function DrawBoardPage() {
     }
 
     if (isWinner) {
-      // vencedor (dourado) — mantém bem destacado
       color = "#000";
       border = "0 solid transparent";
       backgroundImage =
@@ -127,22 +138,26 @@ export default function DrawBoardPage() {
     return {
       userSelect: "none",
       display: "flex",
+      flexDirection: "column", // número + nome do vencedor
       alignItems: "center",
       justifyContent: "center",
       borderRadius: 999,
       fontWeight: 800,
       letterSpacing: 0.4,
       py: { xs: 1, sm: 1.1 },
-      minHeight: { xs: 36, sm: 44 },
+      minHeight: { xs: 44, sm: 52 }, // espaço para o nome
       color,
       border,
       backgroundImage,
       backgroundBlendMode: "overlay, normal",
       boxShadow,
-      transition: "transform .15s ease, box-shadow .2s ease, border-color .2s ease, background .2s ease",
-      "&:active": { transform: "scale(.98)" }
+      transition:
+        "transform .15s ease, box-shadow .2s ease, border-color .2s ease, background .2s ease",
+      "&:active": { transform: "scale(.98)" },
     };
   };
+
+  const winnerName = data?.draw?.winner_name || null;
 
   return (
     <ThemeProvider theme={theme}>
@@ -154,16 +169,56 @@ export default function DrawBoardPage() {
           borderBottom: "1px solid rgba(255,255,255,.08)",
           backdropFilter: "saturate(160%) blur(8px)",
           background:
-            "linear-gradient(180deg, rgba(18,18,18,.9) 0%, rgba(18,18,18,.6) 100%)"
+            "linear-gradient(180deg, rgba(18,18,18,.9) 0%, rgba(18,18,18,.6) 100%)",
         }}
       >
-        <Toolbar sx={{ minHeight: { xs: 56, md: 64 } }}>
+        <Toolbar sx={{ minHeight: { xs: 56, md: 64 }, gap: 1 }}>
           <IconButton edge="start" color="inherit" onClick={() => navigate(-1)}>
             <ArrowBackIosNewRoundedIcon />
           </IconButton>
-          <Typography sx={{ fontWeight: 900, letterSpacing: .5 }}>
-            Detalhes do Sorteio #{String(id).padStart(3, "0")}
-          </Typography>
+
+          {/* Título: product_name + link */}
+          <Stack
+            direction="row"
+            spacing={1}
+            alignItems="center"
+            sx={{ overflow: "hidden" }}
+          >
+            <Typography
+              sx={{
+                fontWeight: 900,
+                letterSpacing: 0.5,
+                whiteSpace: "nowrap",
+                textOverflow: "ellipsis",
+                overflow: "hidden",
+                maxWidth: { xs: "58vw", md: "70vw" },
+              }}
+              title={
+                data?.draw?.product_name ||
+                `Detalhes do Sorteio #${String(id).padStart(3, "0")}`
+              }
+            >
+              {data?.draw?.product_name ||
+                `Detalhes do Sorteio #${String(id).padStart(3, "0")}`}
+            </Typography>
+
+            {data?.draw?.product_link && (
+              <Typography
+                component="a"
+                href={data.draw.product_link}
+                target="_blank"
+                rel="noopener noreferrer"
+                sx={{
+                  color: "primary.main",
+                  fontWeight: 800,
+                  textDecoration: "none",
+                  flexShrink: 0,
+                }}
+              >
+                link
+              </Typography>
+            )}
+          </Stack>
         </Toolbar>
       </AppBar>
 
@@ -172,7 +227,7 @@ export default function DrawBoardPage() {
           {loading && (
             <Stack alignItems="center" py={6} gap={1}>
               <CircularProgress />
-              <Typography sx={{ opacity: .7 }}>Carregando grade…</Typography>
+              <Typography sx={{ opacity: 0.7 }}>Carregando grade…</Typography>
             </Stack>
           )}
 
@@ -185,38 +240,89 @@ export default function DrawBoardPage() {
                 justifyContent="space-between"
                 sx={{ mb: { xs: 1.5, md: 2 } }}
               >
-                <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
+                <Stack
+                  direction="row"
+                  spacing={1}
+                  alignItems="center"
+                  flexWrap="wrap"
+                >
                   <Chip
                     icon={<CheckCircleRoundedIcon />}
                     label={String(data.draw?.status || "").toUpperCase()}
-                    color={String(data.draw?.status).toLowerCase() === "closed" ? "success" : "default"}
+                    color={
+                      String(data.draw?.status).toLowerCase() === "closed"
+                        ? "success"
+                        : "default"
+                    }
                     variant="outlined"
-                    sx={{ fontWeight: 800, "& .MuiChip-icon": { color: "success.main" } }}
+                    sx={{
+                      fontWeight: 800,
+                      "& .MuiChip-icon": { color: "success.main" },
+                    }}
                   />
                   {!!data.draw?.winner_number && (
                     <Chip
                       icon={<StarRoundedIcon />}
-                      label={`Número vencedor: ${String(data.draw.winner_number).padStart(2,"0")}`}
-                      sx={{ fontWeight: 900, color: "#000", bgcolor: "warning.main", boxShadow: "0 4px 18px rgba(255,213,79,.25)" }}
-                  />
+                      label={`Número vencedor: ${String(
+                        data.draw.winner_number
+                      ).padStart(2, "0")}`}
+                      sx={{
+                        fontWeight: 900,
+                        color: "#000",
+                        bgcolor: "warning.main",
+                        boxShadow: "0 4px 18px rgba(255,213,79,.25)",
+                      }}
+                    />
                   )}
                 </Stack>
 
                 <Stack direction="row" spacing={0.8} flexWrap="wrap">
-                  <Chip size="small" label="Seu número"
-                        sx={{ bgcolor: "#183051", color: "#9BD1FF", border: "1px solid #9BD1FF" }} />
-                  <Chip size="small" icon={<LockRoundedIcon sx={{ fontSize: 16 }} />} label="Indisponível"
-                        sx={{ bgcolor: "#472427", color: "#FFB3B3", border: "1px solid #FF8A8A" }} />
-                  <Chip size="small" icon={<ScheduleRoundedIcon sx={{ fontSize: 16 }} />} label="Reservado"
-                        sx={{ bgcolor: "#3A2E12", color: "#FFE7A1", border: "1px solid #FFD666" }} />
-                  <Chip size="small" icon={<StarRoundedIcon sx={{ fontSize: 16 }} />} label="Vencedor"
-                        sx={{ bgcolor: "warning.main", color: "#000", fontWeight: 900 }} />
+                  <Chip
+                    size="small"
+                    label="Seu número"
+                    sx={{
+                      bgcolor: "#183051",
+                      color: "#9BD1FF",
+                      border: "1px solid #9BD1FF",
+                    }}
+                  />
+                  <Chip
+                    size="small"
+                    icon={<LockRoundedIcon sx={{ fontSize: 16 }} />}
+                    label="Indisponível"
+                    sx={{
+                      bgcolor: "#472427",
+                      color: "#FFB3B3",
+                      border: "1px solid #FF8A8A",
+                    }}
+                  />
+                  <Chip
+                    size="small"
+                    icon={<ScheduleRoundedIcon sx={{ fontSize: 16 }} />}
+                    label="Reservado"
+                    sx={{
+                      bgcolor: "#3A2E12",
+                      color: "#FFE7A1",
+                      border: "1px solid #FFD666",
+                    }}
+                  />
+                  <Chip
+                    size="small"
+                    icon={<StarRoundedIcon sx={{ fontSize: 16 }} />}
+                    label="Vencedor"
+                    sx={{ bgcolor: "warning.main", color: "#000", fontWeight: 900 }}
+                  />
                 </Stack>
               </Stack>
 
-              <Divider sx={{ mb: { xs: 1.5, md: 2 }, borderColor: "rgba(255,255,255,.08)" }} />
+              <Divider
+                sx={{
+                  mb: { xs: 1.5, md: 2 },
+                  borderColor: "rgba(255,255,255,.08)",
+                }}
+              />
 
-              {/* 5/8/10 colunas responsivas, todas preenchidas agora */}
+              {/* Grade 00..99 */}
               <Box
                 role="grid"
                 aria-label="Números do sorteio"
@@ -232,20 +338,55 @@ export default function DrawBoardPage() {
               >
                 {data.board.map((cell) => (
                   <Box key={cell.n} role="gridcell" sx={getCellSx(cell)}>
-                    {cell.label}
+                    <Typography component="span" sx={{ lineHeight: 1 }}>
+                      {cell.label}
+                    </Typography>
+
+                    {/* Nome do vencedor abaixo do número */}
+                    {cell.isWinner && !!winnerName && (
+                      <Typography
+                        variant="caption"
+                        sx={{
+                          mt: 0.3,
+                          px: 0.6,
+                          maxWidth: "100%",
+                          fontWeight: 900,
+                          lineHeight: 1.1,
+                          whiteSpace: "nowrap",
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          color: "#000", // contraste no dourado
+                        }}
+                        title={winnerName}
+                      >
+                        {winnerName}
+                      </Typography>
+                    )}
                   </Box>
                 ))}
               </Box>
 
-              <Box sx={{ mt: { xs: 2.5, md: 3 }, p: { xs: 1.5, md: 2 }, borderRadius: 3,
-                         border: "1px solid rgba(255,255,255,.08)",
-                         background: "linear-gradient(180deg, rgba(25,25,25,.8) 0%, rgba(25,25,25,.6) 100%)" }}>
-                <Typography sx={{ fontWeight: 900, mb: .5, letterSpacing: .4, opacity: .9 }}>
+              {/* Seus números */}
+              <Box
+                sx={{
+                  mt: { xs: 2.5, md: 3 },
+                  p: { xs: 1.5, md: 2 },
+                  borderRadius: 3,
+                  border: "1px solid rgba(255,255,255,.08)",
+                  background:
+                    "linear-gradient(180deg, rgba(25,25,25,.8) 0%, rgba(25,25,25,.6) 100%)",
+                }}
+              >
+                <Typography
+                  sx={{ fontWeight: 900, mb: 0.5, letterSpacing: 0.4, opacity: 0.9 }}
+                >
                   Seus números
                 </Typography>
-                <Typography sx={{ opacity: .9 }}>
+                <Typography sx={{ opacity: 0.9 }}>
                   {data.my_numbers?.length
-                    ? data.my_numbers.map(n => String(n).padStart(2,"0")).join(", ")
+                    ? data.my_numbers
+                        .map((n) => String(n).padStart(2, "0"))
+                        .join(", ")
                     : "-"}
                 </Typography>
               </Box>
