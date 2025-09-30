@@ -327,14 +327,26 @@ export default function DrawBoardPage() {
                 ))}
               </Box>
 
-              {/* Produto (nome + link) — agora acima de "Seus números" */}
-              {(data.draw?.product_name || data.draw?.product_link) && (
-                <Box
+              {/* Prêmio do sorteio (título + nome + link) */}
+              <Box
+                sx={{
+                  mt: { xs: 2.5, md: 3 },
+                  px: { xs: 1.5, md: 2 },
+                }}
+              >
+                <Typography
                   sx={{
-                    mt: { xs: 2.5, md: 3 },
-                    px: { xs: 1.5, md: 2 },
+                    fontWeight: 900,
+                    letterSpacing: 0.4,
+                    mb: 0.5,
                   }}
                 >
+                  {(data.draw?.product_name || data.draw?.product_link)
+                    ? "Premio do sorteio foi o item abaixo"
+                    : "O premio do sorteio será indicado em breve"}
+                </Typography>
+
+                {(data.draw?.product_name || data.draw?.product_link) && (
                   <Stack direction="row" spacing={1} alignItems="baseline" flexWrap="wrap">
                     {!!data.draw?.product_name && (
                       <Typography
@@ -365,8 +377,8 @@ export default function DrawBoardPage() {
                       </Typography>
                     )}
                   </Stack>
-                </Box>
-              )}
+                )}
+              </Box>
 
               {/* Seus números */}
               <Box

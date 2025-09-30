@@ -142,6 +142,24 @@ async function fetchJsonLoose(url, options) {
   }
 }
 
+// ▸▸ helpers para sincronizar o cupom com novas compras
+function asTime(v) {
+  const t = Date.parse(v || "");
+  return Number.isFinite(t) ? t : 0;
+}
+
+async function postIncrementCoupon({ addCents, newTotalCents, lastPaymentSyncAt }) {
+  const payload = {
+    add_cents: Number(addCents) || 0,
+    coupon_value_cents: Number(newTotalCents) || 0,
+    last_payment_sync_at: lastPaymentSyncAt,
+  };
+  return await tryManyPost(
+    ["/coupons/sync", "/me/coupons/sync", "/coupons/update", "/me/coupon", "/coupon/update"],
+    payload
+  );
+}
+
 export default function AccountPage() {
   const navigate = useNavigate();
   const { selecionados } = React.useContext(SelectionContext);
@@ -362,30 +380,77 @@ export default function AccountPage() {
   // ---- RELOAD BALANCES (composição base + compras aprovadas) ----
   const reloadBalances = React.useCallback(async () => {
     try {
+      // 1) Cupom atual
       const mine = await fetchJsonLoose("/coupons/mine", {
         headers: { ...authHeaders() }, credentials: "include",
       });
+
+      let currentCents = 0;
+      let code = null;
+
       if (mine) {
-        const centsNum = Number(mine.cents ?? mine.coupon_value_cents ?? mine.value_cents ?? 0);
-        if (Number.isFinite(centsNum) && centsNum >= 0) setBaseCents(centsNum);
-        const code = mine.code || mine.coupon_code;
-        if (code) setCupom(String(code));
+        currentCents = Number(mine.cents ?? mine.coupon_value_cents ?? mine.value_cents ?? 0) || 0;
+        code = mine.code || mine.coupon_code || null;
+      }
+      if (Number.isFinite(currentCents) && currentCents >= 0) setBaseCents(currentCents);
+      if (code) setCupom(String(code));
+
+      // carimbo de sincronização
+      let lastSyncMs =
+        asTime(mine?.last_payment_sync_at) ||
+        asTime(mine?.coupon_updated_at) ||
+        asTime(mine?.updated_at);
+
+      const uid = (mine?.id || ctxUser?.id || "").toString();
+      const lsKey = uid ? `ns_coupon_last_sync_${uid}` : null;
+      if (!lastSyncMs && lsKey) {
+        lastSyncMs = Number(localStorage.getItem(lsKey) || 0) || 0;
       }
 
-      // ⚠️ UI NÃO SOMA PAGAMENTOS para evitar dobrar o saldo: mantemos 0.
-      setPaidCents(0);
-      // (mantive o resto da estrutura para não remover nada)
+      // 2) Delta de pagamentos aprovados após o carimbo
+      let deltaCents = 0;
       try {
         const r = await fetch(apiJoin("/payments/me?_=" + Date.now()), {
           headers: { ...authHeaders(), "Content-Type": "application/json" },
           credentials: "include",
         });
-        if (r.ok) { await r.json().catch(() => ({})); /* ignorado intencionalmente */ }
+        if (r.ok) {
+          const j = await r.json().catch(() => ({}));
+          const list = Array.isArray(j) ? j : (j.payments || j.items || []);
+          for (const p of (list || [])) {
+            const status = String(p?.status || "").toLowerCase();
+            if (status !== "approved" && status !== "paid" && status !== "pago") continue;
+            const whenMs = asTime(p?.paid_at) || asTime(p?.updated_at) || asTime(p?.created_at);
+            if (!whenMs) continue;
+            if (lastSyncMs && whenMs <= lastSyncMs) continue;
+            deltaCents += Number(p?.amount_cents || 0);
+          }
+        }
       } catch {}
+
+      // 3) Incremento no backend
+      if (deltaCents > 0) {
+        const newTotal = currentCents + deltaCents;
+        const nowIso = new Date().toISOString();
+        try {
+          await postIncrementCoupon({
+            addCents: deltaCents,
+            newTotalCents: newTotal,
+            lastPaymentSyncAt: nowIso,
+          });
+          setBaseCents(newTotal);
+          if (lsKey) localStorage.setItem(lsKey, String(Date.parse(nowIso)));
+        } catch (e) {
+          console.warn("[coupon.increment] falhou ao persistir incremento:", e?.message || e);
+        }
+      }
+
+      // não somar pagamentos diretamente na UI
+      setPaidCents(0);
     } catch (e) {
       console.warn("[reloadBalances] erro silencioso:", e?.message || e);
     }
-  }, []);
+  }, [ctxUser?.id]);
 
   // efeito principal
   React.useEffect(() => {
