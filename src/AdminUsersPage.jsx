@@ -3,7 +3,7 @@ import * as React from "react";
 import {
   AppBar, Toolbar, IconButton, Typography, Container, CssBaseline, Paper, Stack,
   TextField, Button, Table, TableHead, TableBody, TableRow, TableCell, TableContainer,
-  Checkbox, Divider, Snackbar, Alert, CircularProgress, createTheme, ThemeProvider
+  Checkbox, Divider, Snackbar, Alert, CircularProgress, createTheme, ThemeProvider, Box, Chip
 } from "@mui/material";
 import ArrowBackIosNewRoundedIcon from "@mui/icons-material/ArrowBackIosNewRounded";
 import SearchRoundedIcon from "@mui/icons-material/SearchRounded";
@@ -101,6 +101,103 @@ async function fetchAllUsersPaged(bases, pageSize = 500) {
   return [];
 }
 
+/* ------------------------------ Auxiliares de Draw ------------------------------ */
+async function safeJSON(path) {
+  try {
+    const r = await fetch(apiJoin(path), {
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      credentials: "include",
+      cache: "no-store",
+    });
+    if (!r.ok) return null;
+    return await r.json().catch(() => null);
+  } catch {
+    return null;
+  }
+}
+
+function normalizeList(obj) {
+  if (!obj) return [];
+  if (Array.isArray(obj)) return obj;
+  return obj.draws || obj.items || obj.list || obj.data || [];
+}
+
+/** Tenta descobrir o sorteio aberto (vigente) e devolve o id. */
+async function findOpenDrawId() {
+  const candidates = [
+    "/admin/draws?status=open",
+    "/draws?status=open",
+    "/admin/draws/open",
+    "/draws/open",
+    "/admin/draws",
+    "/draws",
+  ];
+  for (const p of candidates) {
+    const j = await safeJSON(p);
+    if (!j) continue;
+
+    // pode vir lista ou objeto único
+    const arr = normalizeList(j);
+    if (arr.length) {
+      const open = arr.find(d => /^(open|aberto)$/i.test(String(d?.status || d?.state || ""))) || arr[0];
+      if (open?.id != null) return Number(open.id);
+    } else if (j?.id != null) {
+      // ex.: /draws/open retorna um único
+      return Number(j.id);
+    }
+  }
+  return null;
+}
+
+/** Normaliza payload do board para [{ n, label, state }] */
+function normalizeBoardPayload(payload) {
+  let raw = [];
+  if (Array.isArray(payload)) raw = payload;
+  else raw = payload?.board || payload?.cells || payload?.items || [];
+
+  if (Array.isArray(raw) && raw.length) {
+    return raw.map((c, idx) => {
+      const n = Number(c?.n ?? c?.number ?? c?.num ?? c?.index ?? idx);
+      const s = String(c?.state ?? c?.status ?? "").toLowerCase();
+      let state = "open";
+      if (/taken|sold|indispon|ocupad|closed|fechado/.test(s)) state = "taken";
+      else if (/reserv|hold|pending/.test(s)) state = "reserved";
+      return { n, label: String(n).padStart(2, "0"), state, isWinner: !!c?.isWinner, isMine: !!c?.isMine };
+    }).filter(c => Number.isInteger(c.n) && c.n >= 0 && c.n <= 99);
+  }
+
+  // Outros formatos: listas de reservados/vendidos
+  const reserved = new Set((payload?.reserved_numbers || payload?.reservations || []).map(Number));
+  const taken = new Set((payload?.taken_numbers || payload?.sold_numbers || []).map(Number));
+
+  const out = [];
+  for (let n = 0; n < 100; n++) {
+    let state = "open";
+    if (taken.has(n)) state = "taken";
+    else if (reserved.has(n)) state = "reserved";
+    out.push({ n, label: String(n).padStart(2, "0"), state });
+  }
+  return out;
+}
+
+/** Busca a grade (board) para um sorteio. */
+async function fetchBoard(drawId) {
+  const paths = [
+    `/me/draws/${drawId}/board`,
+    `/admin/draws/${drawId}/board`,
+    `/draws/${drawId}/board`,
+    `/draws/${drawId}`, // às vezes devolve { board: [...] }
+  ];
+  for (const p of paths) {
+    const j = await safeJSON(p);
+    if (!j) continue;
+    const board = normalizeBoardPayload(j);
+    if (board.length) return board;
+  }
+  // fallback: grade "vazia" (tudo livre)
+  return Array.from({ length: 100 }, (_, n) => ({ n, label: String(n).padStart(2, "0"), state: "open" }));
+}
+
 /* -------------------------------- Normalizadores -------------------------------- */
 function normalizeUsers(payload) {
   const list = Array.isArray(payload)
@@ -143,21 +240,49 @@ export default function AdminUsersPage() {
   const [numbersCsv, setNumbersCsv] = React.useState("");
   const [assigning, setAssigning] = React.useState(false);
 
+  // board (referência)
+  const [board, setBoard] = React.useState([]);
+  const [boardLoading, setBoardLoading] = React.useState(false);
+
   React.useEffect(() => {
     let alive = true;
     (async () => {
       setLoading(true);
-      // Usa somente o novo backend; mantém assinatura de função inalterada
-      const list = await fetchAllUsersPaged(
-        ["/admin/users"], 500
-      );
+      const list = await fetchAllUsersPaged(["/admin/users"], 500);
       if (alive) {
         setUsers(list);
         setLoading(false);
       }
     })();
+
+    // descobrir sorteio aberto e preencher o campo
+    (async () => {
+      const id = await findOpenDrawId();
+      if (id != null) {
+        setDrawId(String(id));
+        setBoardLoading(true);
+        const b = await fetchBoard(id);
+        setBoard(b);
+        setBoardLoading(false);
+      }
+    })();
+
     return () => { alive = false; };
   }, []);
+
+  // quando o id digitado mudar, recarrega a grade (se número válido)
+  React.useEffect(() => {
+    const idNum = Number(drawId);
+    if (!Number.isInteger(idNum) || idNum <= 0) return;
+    let cancel = false;
+    (async () => {
+      setBoardLoading(true);
+      const b = await fetchBoard(idNum);
+      if (!cancel) setBoard(b);
+      setBoardLoading(false);
+    })();
+    return () => { cancel = true; };
+  }, [drawId]);
 
   const filtered = React.useMemo(() => {
     const s = q.trim().toLowerCase();
@@ -200,7 +325,6 @@ export default function AdminUsersPage() {
         is_admin: !!form.is_admin,
         coupon_code: String(form.coupon_code || "").trim(),
         coupon_value_cents: brlStringToCents(saldoStr),
-        // dica para o backend (inofensivo se ignorado):
         ...(creating ? { set_default_password: true } : {}),
       };
       const url = form.id ? `/admin/users/${form.id}` : "/admin/users";
@@ -288,14 +412,45 @@ export default function AdminUsersPage() {
       });
       if (!r.ok) throw new Error("assign_failed");
       setToast({ open: true, sev: "success", msg: "Números atribuídos com sucesso." });
-      setDrawId("");
       setNumbersCsv("");
+
+      // atualiza a referência do board
+      setBoardLoading(true);
+      const b = await fetchBoard(d);
+      setBoard(b);
+      setBoardLoading(false);
     } catch {
       setToast({ open: true, sev: "error", msg: "Falha ao atribuir números." });
     } finally {
       setAssigning(false);
     }
   }
+
+  /* ---- estilo das células (simples e responsivo) ---- */
+  const getCellSx = (state) => {
+    if (state === "taken") {
+      return {
+        color: "#FFB3B3",
+        border: "1px solid #FF8A8A",
+        background:
+          "linear-gradient(180deg, #472427 0%, #2B1517 100%)",
+      };
+    }
+    if (state === "reserved") {
+      return {
+        color: "#FFE7A1",
+        border: "1px solid #FFD666",
+        background:
+          "linear-gradient(180deg, #3A2E12 0%, #2A230D 100%)",
+      };
+    }
+    return {
+      color: "#0E0E0E",
+      border: "1px solid rgba(255,255,255,.2)",
+      background:
+        "linear-gradient(180deg, #67C23A 0%, #58A834 100%)",
+    };
+  };
 
   return (
     <ThemeProvider theme={theme}>
@@ -392,7 +547,7 @@ export default function AdminUsersPage() {
             <Typography variant="subtitle1" fontWeight={800} sx={{ mb: 1 }}>
               Atribuir números ao cliente selecionado
             </Typography>
-            <Stack direction={{ xs: "column", md: "row" }} spacing={2}>
+            <Stack direction={{ xs: "column", md: "row" }} spacing={2} alignItems={{ xs: "stretch", md: "center" }}>
               <TextField
                 label="Sorteio (ID)"
                 value={drawId}
@@ -405,16 +560,93 @@ export default function AdminUsersPage() {
                 onChange={(e) => setNumbersCsv(e.target.value)}
                 fullWidth
               />
-              <Button
-                variant="contained"
-                color="primary"
-                startIcon={assigning ? <CircularProgress size={18} /> : <SendRoundedIcon />}
-                onClick={handleAssign}
-                disabled={assigning}
-              >
-                Atribuir
-              </Button>
+              <Stack direction="row" spacing={1}>
+                <Button
+                  variant="outlined"
+                  onClick={async () => {
+                    const id = await findOpenDrawId();
+                    if (id != null) setDrawId(String(id));
+                  }}
+                >
+                  Carregar sorteio aberto
+                </Button>
+                <Button
+                  variant="contained"
+                  color="primary"
+                  startIcon={assigning ? <CircularProgress size={18} /> : <SendRoundedIcon />}
+                  onClick={handleAssign}
+                  disabled={assigning}
+                >
+                  Atribuir
+                </Button>
+              </Stack>
             </Stack>
+
+            {/* Referência do board (desktop e mobile) */}
+            <Box sx={{ mt: 2.5 }}>
+              <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 1 }}>
+                <Typography variant="subtitle2" sx={{ fontWeight: 800 }}>Situação do sorteio</Typography>
+                <Chip size="small" label="Disponível" sx={{ bgcolor: "#67C23A", color: "#0E0E0E", fontWeight: 800 }} />
+                <Chip size="small" label="Reservado"  sx={{ bgcolor: "#FFD54F", color: "#000", fontWeight: 800 }} />
+                <Chip size="small" label="Indisponível" sx={{ bgcolor: "#E57373", color: "#000", fontWeight: 800 }} />
+                <Box sx={{ flex: 1 }} />
+                <Button size="small" onClick={async () => {
+                  const idNum = Number(drawId);
+                  if (!Number.isInteger(idNum) || idNum <= 0) return;
+                  setBoardLoading(true);
+                  const b = await fetchBoard(idNum);
+                  setBoard(b);
+                  setBoardLoading(false);
+                }}>
+                  Atualizar grade
+                </Button>
+              </Stack>
+
+              <Paper variant="outlined" sx={{ p: { xs: 1, md: 1.5 } }}>
+                {boardLoading ? (
+                  <Stack alignItems="center" py={3} gap={1}>
+                    <CircularProgress />
+                    <Typography sx={{ opacity: .8 }}>Carregando grade…</Typography>
+                  </Stack>
+                ) : (
+                  <Box
+                    role="grid"
+                    aria-label="Números do sorteio (referência)"
+                    sx={{
+                      display: "grid",
+                      gridTemplateColumns: {
+                        xs: "repeat(5, minmax(40px, 1fr))",
+                        sm: "repeat(8, minmax(44px, 1fr))",
+                        md: "repeat(10, minmax(46px, 1fr))",
+                      },
+                      gap: { xs: .6, sm: .7, md: .8 },
+                    }}
+                  >
+                    {board.map((c) => (
+                      <Box
+                        key={c.n}
+                        sx={{
+                          userSelect: "none",
+                          textAlign: "center",
+                          py: .7,
+                          borderRadius: 999,
+                          fontWeight: 900,
+                          letterSpacing: .4,
+                          fontSize: { xs: 12, sm: 13 },
+                          ...getCellSx(c.state),
+                        }}
+                        title={
+                          c.state === "taken" ? "Indisponível" :
+                          c.state === "reserved" ? "Reservado" : "Disponível"
+                        }
+                      >
+                        {c.label}
+                      </Box>
+                    ))}
+                  </Box>
+                )}
+              </Paper>
+            </Box>
           </Paper>
 
           {/* Busca */}

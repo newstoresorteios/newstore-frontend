@@ -1,3 +1,4 @@
+// src/AdminClientes.jsx
 import * as React from "react";
 import { useNavigate, Link as RouterLink } from "react-router-dom";
 import {
@@ -80,37 +81,17 @@ const extractCoupon = (obj) =>
     ""
   ).trim() || null;
 
-/** Busca o cupom de UM usuário (forçando no-cache para evitar 304). */
-async function fetchCouponByUser(userId) {
-  if (!userId) return null;
-  const url = apiJoin(`/admin/clients/${userId}/coupon?ts=${Date.now()}`);
-  try {
-    const r = await fetch(url, {
-      headers: { ...authHeaders(), "Cache-Control": "no-cache" },
-      credentials: "include",
-      cache: "no-store",
-    });
-    if (r.status === 304 || r.status === 204 || r.status === 404) return null;
-    if (!r.ok) return null;
-    const j = await r.json().catch(() => null);
-    // aceita {code}, {coupon_code} ou {coupon: {code}}
-    return extractCoupon(j) || null;
-  } catch {
-    return null;
-  }
-}
+/** Fallback local: usa SOMENTE coupon_value_cents do payload de usuários */
+const readCouponValueCentsOnly = (u) => {
+  const n = Number(u?.coupon_value_cents);
+  return Number.isFinite(n) ? n : 0;
+};
 
-/* ---------- fallback de agregação ---------- */
+/* ---------- fallback de agregação (caso o endpoint agregado falhe) ---------- */
 function normalizeArray(payload, keys) {
   if (Array.isArray(payload)) return payload;
   for (const k of keys) if (Array.isArray(payload?.[k])) return payload[k];
   return [];
-}
-function pickAmount(row) {
-  const cents = row.amount_cents ?? row.total_cents ?? row.price_cents ?? row.valor_centavos ?? null;
-  if (cents != null) return Number(cents) / 100;
-  const real = row.amount ?? row.total ?? row.value ?? row.valor ?? row.price ?? null;
-  return Number.isFinite(Number(real)) ? Number(real) : 0;
 }
 function addMonths(d, months) {
   const dt = new Date(d);
@@ -130,29 +111,16 @@ function buildRowsFallback({ usersPayload, paymentsPayload, drawsPayload }) {
   const pays  = normalizeArray(paymentsPayload, ["payments", "items", "list"]);
   const draws = normalizeArray(drawsPayload, ["draws", "history", "items", "list"]);
 
-  const uById = new Map();
-  for (const u of users) {
-    const id = u.id ?? u.user_id ?? u.uid; if (id == null) continue;
-    uById.set(Number(id), {
-      id: Number(id),
-      name: (u.name ?? u.full_name ?? u.display_name ?? "").trim(),
-      email: (u.email ?? u.mail ?? "").trim(),
-      created_at: u.created_at ?? u.createdAt ?? u.cadastro ?? null,
-      coupon: extractCoupon(u),
-    });
-  }
-
+  // mapa de última compra e contagem
   const acc = new Map();
   for (const p of pays) {
     const status = String(p.status || p.state || "").trim().toLowerCase();
     if (status !== "approved") continue;
     const uid = Number(p.user_id ?? p.uid ?? p.customer_id ?? p.userId);
     if (!Number.isFinite(uid)) continue;
-    const val = pickAmount(p);
     const when = p.created_at ?? p.paid_at ?? p.approved_at ?? p.createdAt ?? p.data;
-    const it = acc.get(uid) || { compras: 0, total: 0, last: null };
+    const it = acc.get(uid) || { compras: 0, last: null };
     it.compras += 1;
-    it.total += Number.isFinite(val) ? val : 0;
     if (when && (!it.last || new Date(when) > new Date(it.last))) it.last = when;
     acc.set(uid, it);
   }
@@ -164,32 +132,37 @@ function buildRowsFallback({ usersPayload, paymentsPayload, drawsPayload }) {
     wins.set(uid, (wins.get(uid) || 0) + 1);
   }
 
+  // Apenas usuários com coupon_value_cents > 0
   const rows = [];
-  for (const [uid, info] of acc) {
-    const u = uById.get(uid) || { id: uid, name: "", email: "", created_at: null, coupon: null };
-    const nome = (u.name || "").trim() || u.email || "—";
-    const cadastro = fmtDate(u.created_at);
+  for (const u of users) {
+    const uid = Number(u.id ?? u.user_id ?? u.uid);
+    if (!Number.isFinite(uid)) continue;
 
-    const lastBuy = info.last ? new Date(info.last) : null;
-    if (!lastBuy || Number.isNaN(lastBuy.getTime())) continue;
+    const cents = readCouponValueCentsOnly(u);
+    if (cents <= 0) continue; // NÃO lista saldo zerado
 
-    const exp = addMonths(lastBuy, 6);
+    const nome = String(u.name ?? u.full_name ?? u.display_name ?? "").trim() || u.email || "—";
+    const cadastro = fmtDate(u.created_at ?? u.createdAt ?? u.cadastro ?? null);
+    const info = acc.get(uid);
+    const last = info?.last || null;
+
+    const exp = addMonths(last || new Date(), 6);
     const dias = exp ? Math.max(0, daysDiff(new Date(), exp) ?? 0) : "-";
-    if (!exp || exp <= new Date()) continue;
 
     rows.push({
-      key: `${uid}-${info.last}`,
+      key: `${uid}-cv`,
       user_id: uid,
       nome,
       cadastro,
-      compras: info.compras,
-      total: Number(info.total.toFixed(2)),
-      ultima: fmtDate(info.last),
+      compras: info?.compras || 0,
+      total: +(cents / 100).toFixed(2), // SOMENTE coupon_value_cents
+      ultima: fmtDate(last),
       vezes: wins.get(uid) || 0,
       dias,
       cupom: extractCoupon(u) || null,
     });
   }
+
   return rows.sort((a, b) => (a.dias ?? 999999) - (b.dias ?? 999999) || (b.total - a.total));
 }
 
@@ -204,7 +177,7 @@ export default function AdminClientes() {
     let alive = true;
     (async () => {
       try {
-        // 1) agregado
+        // 1) usa o agregado do back (já filtra por coupon_value_cents > 0)
         try {
           const payload = await getJSON("/admin/clients/active");
           const list = normalizeArray(payload, ["clients", "items", "list"]);
@@ -215,31 +188,13 @@ export default function AdminClientes() {
               nome: (c.name || "").trim() || c.email || "—",
               cadastro: fmtDate(c.created_at),
               compras: c.purchases_count || 0,
-              total: c.total_brl || 0,
+              total: c.total_brl || 0, // saldo = coupon_value_cents/100
               ultima: fmtDate(c.last_buy),
               vezes: c.wins || 0,
               dias: c.days_to_expire ?? "-",
-              cupom: extractCoupon(c) || null, // tenta vir do payload
+              cupom: extractCoupon(c) || null,
             }));
             setRows(mapped);
-
-            // Buscar cupom só para quem ainda não tem
-            const ids = [...new Set(mapped.filter(r => !r.cupom && r.user_id).map(r => r.user_id))];
-            if (ids.length) {
-              const pairs = await Promise.all(
-                ids.map(async (id) => [id, await fetchCouponByUser(id)])
-              );
-              const byId = new Map(pairs.filter(([, code]) => !!code));
-              if (alive && byId.size) {
-                setRows(prev =>
-                  prev.map(r =>
-                    (!r.cupom && r.user_id && byId.has(r.user_id))
-                      ? { ...r, cupom: byId.get(r.user_id) }
-                      : r
-                  )
-                );
-              }
-            }
             return;
           }
         } catch (err) {
@@ -251,7 +206,7 @@ export default function AdminClientes() {
           }
         }
 
-        // 2) fallback
+        // 2) fallback local (SOMENTE coupon_value_cents)
         const [usersPayload, paymentsPayload, drawsPayload] = await Promise.all([
           getJSON("/admin/users").catch(() => getJSON("/users")),
           getJSON("/admin/payments?status=approved")
@@ -264,23 +219,7 @@ export default function AdminClientes() {
         ]);
 
         const lines = buildRowsFallback({ usersPayload, paymentsPayload, drawsPayload });
-        setRows(lines);
-
-        // Completar com cupons (no-cache)
-        const ids = [...new Set(lines.filter(r => !r.cupom && r.user_id).map(r => r.user_id))];
-        if (alive && ids.length) {
-          const pairs = await Promise.all(ids.map(async (id) => [id, await fetchCouponByUser(id)]));
-          const byId = new Map(pairs.filter(([, code]) => !!code));
-          if (alive && byId.size) {
-            setRows(prev =>
-              prev.map(r =>
-                (!r.cupom && r.user_id && byId.has(r.user_id))
-                  ? { ...r, cupom: byId.get(r.user_id) }
-                  : r
-              )
-            );
-          }
-        }
+        if (alive) setRows(lines);
       } catch (e) {
         console.error("[AdminClientes] fetch error:", e);
         if (alive) setRows([]);
@@ -341,7 +280,7 @@ export default function AdminClientes() {
                   <TableCell sx={{ fontWeight: 800 }}>NOME DO CLIENTE</TableCell>
                   <TableCell sx={{ fontWeight: 800 }}>DATA DE CADASTRO</TableCell>
                   <TableCell sx={{ fontWeight: 800 }}>QUANTIDADE DE COMPRAS</TableCell>
-                  <TableCell sx={{ fontWeight: 800 }}>VALOR TOTAL INVESTIDO</TableCell>
+                  <TableCell sx={{ fontWeight: 800 }}>VALOR (saldo do cupom)</TableCell>
                   <TableCell sx={{ fontWeight: 800 }}>ÚLTIMA COMPRA</TableCell>
                   <TableCell sx={{ fontWeight: 800 }}>VEZES CONTEMPLADO</TableCell>
                   <TableCell sx={{ fontWeight: 800 }}>CUPOM</TableCell>
