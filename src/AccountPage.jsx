@@ -36,6 +36,8 @@ const theme = createTheme({
 const pad2 = (n) => String(n).padStart(2, "0");
 const ADMIN_EMAIL = "admin@newstore.com.br";
 const TTL_MINUTES = Number(process.env.REACT_APP_RESERVATION_TTL_MINUTES || 15);
+// ▼ NOVO: validade do cupom (em dias)
+const COUPON_VALIDITY_DAYS = Number(process.env.REACT_APP_COUPON_VALIDITY_DAYS || 180);
 
 // chips
 const PayChip = ({ status }) => {
@@ -138,7 +140,8 @@ export default function AccountPage() {
   const [rows, setRows] = React.useState([]);
   const [valorAcumulado, setValorAcumulado] = React.useState(0);
   const [cupom, setCupom] = React.useState("CUPOMAQUI");
-  const [validade] = React.useState("28/10/25");
+  // ▼ AJUSTE: validade dinâmica calculada pela última compra
+  const [validade, setValidade] = React.useState("--/--/--");
   const [syncing, setSyncing] = React.useState(false);
 
   // estado das configurações (apenas admin)
@@ -236,7 +239,7 @@ export default function AccountPage() {
     }
   }
 
-  // --------- GERAR PIX (corrigido para /payments/pix + reservationId) ----------
+  // --------- GERAR PIX (suporta linhas agrupadas) ----------
   async function handleGeneratePix(row) {
     setPixMsg("Gerando PIX…");
     setPixOpen(true);
@@ -244,7 +247,10 @@ export default function AccountPage() {
 
     try {
       const drawId = Number(row?.draw_id ?? row?.sorteio ?? row?.draw ?? row?.id);
-      const number = Number(row?.number ?? row?.numero ?? row?.num);
+      // se for agrupado, tenta o primeiro número
+      const number = Array.isArray(row?.numeros) && row.numeros.length
+        ? Number(row.numeros[0])
+        : Number(row?.number ?? row?.numero ?? row?.num);
 
       // 1) Reaproveita um payment pendente com QR já criado
       const already = await findPendingPayment(drawId, number);
@@ -272,7 +278,6 @@ export default function AccountPage() {
         headers: { "Content-Type": "application/json", ...authHeaders() },
         credentials: "include",
         cache: "no-store",
-        // Envia ambas as chaves para não depender de convenção
         body: JSON.stringify({ reservationId, reservation_id: reservationId }),
       });
 
@@ -349,13 +354,16 @@ export default function AccountPage() {
     try { return JSON.parse(localStorage.getItem("me") || "null"); } catch { return null; }
   }, []);
 
-  // ▶︎ AJUSTE: navegar para a grade do sorteio quando PAGO + FECHADO/SORTEADO
+  // ▶︎ AJUSTE DE NAVEGAÇÃO: pago+fechado → grade do sorteio; aberto → página principal
   function onRowClick(row) {
     const pago = /^(approved|paid|pago)$/i.test(String(row.pagamento || ""));
     const fechado = /(closed|fechado|sorteado)/i.test(String(row.resultado || ""));
+    const aberto = /(open|aberto)/i.test(String(row.resultado || ""));
     const drawId = Number(row.draw_id ?? row.sorteio);
     if (pago && fechado && Number.isFinite(drawId)) {
       navigate(`/me/draw/${drawId}`);
+    } else if (aberto) {
+      navigate("/");
     }
   }
 
@@ -414,7 +422,7 @@ export default function AccountPage() {
             return true;
           });
 
-          // —— DEDUPE: 1 linha por (draw_id, number). Preferir pendente; desempate pelo 'when' mais recente.
+          // —— DEDUPE por (draw_id, number)
           const byKey = new Map();
           const priority = (st) => /pending|pendente|await|aguard/i.test(String(st || "")) ? 2 : 1;
           for (const e of filtered) {
@@ -431,18 +439,44 @@ export default function AccountPage() {
           }
           const deduped = Array.from(byKey.values());
 
-          // monta linhas mantendo ids (reservation_id/payment_id)
-          const tableRows = deduped.map(e => ({
-            ...e,
-            sorteio: e.draw_id != null ? String(e.draw_id) : "--",
-            numero: Number(e.number),
-            dia: e.when ? new Date(e.when).toLocaleDateString("pt-BR") : "--/--/----",
-            pagamento: e.status,
-            resultado: drawsMap.get(Number(e.draw_id)) || "aberto",
-          }));
+          // ===== AGRUPAR NÚMEROS POR SORTEIO =====
+          const byDraw = new Map();
+          for (const e of deduped) {
+            const id = Number(e.draw_id);
+            if (!byDraw.has(id)) {
+              byDraw.set(id, {
+                draw_id: id,
+                numeros: [],
+                when: e.when ? new Date(e.when).getTime() : 0,
+                // status agregado: pendente tem prioridade
+                pagamento: e.status,
+              });
+            }
+            const g = byDraw.get(id);
+            g.numeros.push(Number(e.number));
+            g.when = Math.max(g.when, e.when ? new Date(e.when).getTime() : 0);
+            const st = String(e.status || "").toLowerCase();
+            const gst = String(g.pagamento || "").toLowerCase();
+            g.pagamento =
+              /pending|pendente|await|aguard/.test(st) || /pending|pendente|await|aguard/.test(gst)
+                ? "pending"
+                : (["approved","paid","pago"].includes(st) ? "approved" : g.pagamento);
+          }
+
+          const grouped = Array.from(byDraw.values()).map(g => {
+            const whenDate = g.when ? new Date(g.when) : null;
+            return {
+              draw_id: g.draw_id,
+              sorteio: g.draw_id != null ? String(g.draw_id) : "--",
+              numeros: Array.from(new Set(g.numeros)).sort((a,b)=>a-b),
+              dia: whenDate ? whenDate.toLocaleDateString("pt-BR") : "--/--/----",
+              pagamento: g.pagamento,
+              resultado: drawsMap.get(Number(g.draw_id)) || "aberto",
+            };
+          });
 
           // pendentes primeiro
-          tableRows.sort((a, b) => {
+          grouped.sort((a, b) => {
             const ap = /pending|pendente/i.test(String(a.pagamento));
             const bp = /pending|pendente/i.test(String(b.pagamento));
             if (ap && !bp) return -1;
@@ -450,16 +484,39 @@ export default function AccountPage() {
             return 0;
           });
 
-          setRows(tableRows);
+          setRows(grouped);
 
           // total acumulado (apenas payments aprovados)
           let totalCents = 0;
+          let lastApprovedAtMs = null; // ▼ para calcular validade
           if (from === "/payments/me") {
             const list = Array.isArray(pay) ? pay : (pay.payments || []);
-            totalCents = list.reduce((acc, p) =>
-              String(p.status).toLowerCase() === "approved" ? acc + Number(p.amount_cents || 0) : acc, 0);
+            for (const p of list) {
+              if (String(p.status).toLowerCase() === "approved") {
+                const t = Date.parse(p.paid_at || p.updated_at || p.created_at || "");
+                if (!isNaN(t)) lastApprovedAtMs = Math.max(lastApprovedAtMs ?? 0, t);
+                totalCents += Number(p.amount_cents || 0);
+              }
+            }
+          } else {
+            // fallback quando só temos 'entries'
+            for (const e of deduped) {
+              if (String(e.status).toLowerCase() === "approved") {
+                const t = Date.parse(e.when || "");
+                if (!isNaN(t)) lastApprovedAtMs = Math.max(lastApprovedAtMs ?? 0, t);
+              }
+            }
           }
           setValorAcumulado((totalCents || 0) / 100);
+
+          // ▼ calcula "VÁLIDO ATÉ" (última compra + COUPON_VALIDITY_DAYS)
+          if (lastApprovedAtMs) {
+            const exp = new Date(lastApprovedAtMs + COUPON_VALIDITY_DAYS * 24 * 60 * 60 * 1000);
+            const yy = String(exp.getFullYear()).slice(-2);
+            setValidade(`${pad2(exp.getDate())}/${pad2(exp.getMonth()+1)}/${yy}`);
+          } else {
+            setValidade("--/--/--");
+          }
         }
       } finally {
         if (alive) setLoading(false);
@@ -525,6 +582,15 @@ export default function AccountPage() {
   const cardEmail = u.email || (u.username?.includes?.("@") ? u.username : headingName);
   const couponCode = u?.coupon_code || cupom || "CUPOMAQUI";
   const isAdminUser = !!(u?.is_admin || u?.role === "admin" || (u?.email && u.email.toLowerCase() === ADMIN_EMAIL));
+
+  // ► POSIÇÕES no cartão (quantidade distinta de números)
+  const posicoes = React.useMemo(() => {
+    const s = new Set();
+    for (const r of rows) {
+      if (Array.isArray(r?.numeros)) r.numeros.forEach(n => s.add(Number(n)));
+    }
+    return s.size;
+  }, [rows]);
 
   // salvar config
   async function handleSaveConfig() {
@@ -646,100 +712,91 @@ export default function AccountPage() {
             </Paper>
           )}
 
-          {/* Cartão */}
+          {/* Cartão — layout do anexo (responsivo) */}
           <Box sx={{ width: "100%", display: "flex", justifyContent: "center" }}>
             <Paper
               elevation={0}
               sx={{
-                width: { xs: "min(94vw, 420px)", sm: "min(88vw, 520px)", md: 560 },
-                aspectRatio: { xs: "0.85 / 1", sm: "3.586 / 1" },
-                borderRadius: 5, position: "relative", overflow: "hidden",
-                p: { xs: 1.25, sm: 2, md: 2.2 }, bgcolor: "#181818",
+                width: { xs: "min(96vw, 680px)", md: 860 },
+                aspectRatio: { xs: "16/9", md: "21/9" },
+                borderRadius: 6, position: "relative", overflow: "hidden",
+                p: { xs: 2.2, md: 3 },
+                bgcolor: "#0E0E0E",
                 border: "1px solid rgba(255,255,255,0.08)",
                 backgroundImage: `
-                  radial-gradient(70% 120% at 35% 65%, rgba(255,255,255,0.20), transparent 60%),
-                  radial-gradient(60% 120% at 80% 20%, rgba(255,255,255,0.10), transparent 60%),
-                  radial-gradient(100% 140% at -10% 120%, rgba(0,0,0,0.45), transparent 60%)
+                  radial-gradient(90% 130% at 15% 20%, rgba(255,255,255,0.08), transparent 60%),
+                  radial-gradient(70% 120% at 80% 70%, rgba(255,255,255,0.06), transparent 60%)
                 `,
-                backgroundBlendMode: "screen, lighten, normal",
+                backgroundBlendMode: "screen, lighten",
               }}
             >
-              <Box sx={{
-                pointerEvents: "none", position: "absolute", inset: 0, opacity: 0.08,
-                backgroundImage:
-                  "radial-gradient(rgba(255,255,255,0.5) 1px, transparent 1px), radial-gradient(rgba(255,255,255,0.35) 1px, transparent 1px)",
-                backgroundSize: "3px 3px, 5px 5px", backgroundPosition: "0 0, 10px 5px",
-              }} />
-              <Stack
-                direction={{ xs: "column", sm: "row" }}
-                justifyContent="space-between"
-                alignItems={{ xs: "stretch", sm: "flex-start" }}
-                gap={1}
-                sx={{ position: "relative", height: "100%" }}
+              {/* Top-left texts */}
+              <Stack spacing={0.4} sx={{ position: "absolute", left: { xs: 16, md: 28 }, top: { xs: 14, md: 18 } }}>
+                <Typography sx={{ fontFamily: 'ui-monospace, Menlo, Consolas, monospace', fontSize: { xs: 10, md: 12 }, letterSpacing: 1.2, color: "#EDE8C9" }}>
+                  PRÊMIO: VOUCHER DE 5K EM COMPRAS NO SITE
+                </Typography>
+                <Typography sx={{ fontFamily: 'ui-monospace, Menlo, Consolas, monospace', fontSize: { xs: 10, md: 12 }, letterSpacing: 2, color: "#EDE8C9" }}>
+                  CARTÃO PRESENTE
+                </Typography>
+                <Typography sx={{ fontFamily: 'ui-monospace, Menlo, Consolas, monospace', fontSize: { xs: 10, md: 12 }, letterSpacing: 2, color: "#EDE8C9" }}>
+                  POSIÇÕES:{pad2(posicoes || 0)}
+                </Typography>
+              </Stack>
+
+              {/* Top-right code + amount */}
+              <Stack spacing={0.6} sx={{ position: "absolute", right: { xs: 16, md: 28 }, top: { xs: 14, md: 18 }, alignItems: "flex-end" }}>
+                <Typography sx={{ fontFamily: 'ui-monospace, Menlo, Consolas, monospace', fontSize: { xs: 10, md: 12 }, letterSpacing: 1.2 }}>
+                  CÓDIGO DE DESCONTO:
+                </Typography>
+                <Typography sx={{ fontWeight: 900, letterSpacing: { xs: 2, md: 3 }, fontSize: { xs: 24, md: 34 }, lineHeight: 1 }}>
+                  {couponCode}
+                </Typography>
+                <Typography sx={{ fontFamily: 'ui-monospace, Menlo, Consolas, monospace', fontSize: { xs: 10, md: 12 }, color: "#7CFF6B", letterSpacing: 1.2 }}>
+                  VALOR ACUMULADO:
+                </Typography>
+                <Typography sx={{ fontWeight: 900, color: "#7CFF6B", fontSize: { xs: 16, md: 18 }, lineHeight: 1 }}>
+                  {valorAcumulado.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
+                </Typography>
+              </Stack>
+
+              {/* Logo + ondas NFC */}
+              <Stack direction="row" alignItems="center" spacing={1.2} sx={{ position: "absolute", left: { xs: 18, md: 28 }, top: "50%", transform: "translateY(-50%)" }}>
+                <Box component="img" src={logoNewStore} alt="NS" sx={{ height: { xs: 28, md: 36 }, filter: "brightness(1.1)" }} />
+                <Box sx={{ display: "flex", gap: 0.6, ml: 0.2 }}>
+                  <Box sx={{ width: { xs: 4, md: 5 }, height: { xs: 12, md: 16 }, border: "2px solid #7CFF6B", borderLeft: "none", borderRadius: "0 999px 999px 0" }} />
+                  <Box sx={{ width: { xs: 6, md: 8 }, height: { xs: 16, md: 20 }, border: "2px solid #7CFF6B", borderLeft: "none", borderRadius: "0 999px 999px 0" }} />
+                  <Box sx={{ width: { xs: 8, md: 10 }, height: { xs: 20, md: 24 }, border: "2px solid #7CFF6B", borderLeft: "none", borderRadius: "0 999px 999px 0" }} />
+                </Box>
+              </Stack>
+
+              {/* Name (bottom center) */}
+              <Typography
+                sx={{
+                  position: "absolute",
+                  left: { xs: 16, md: 28 },
+                  right: { xs: 16, md: 28 },
+                  bottom: { xs: 36, md: 44 },
+                  fontWeight: 900,
+                  letterSpacing: 2,
+                  textTransform: "uppercase",
+                  fontSize: { xs: 18, md: 28 },
+                  textAlign: "left",
+                  whiteSpace: "nowrap",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                }}
               >
-                <Stack spacing={0.8} flex={1} minWidth={0}>
-                  <Typography variant="caption" sx={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace', letterSpacing: 1, opacity: 0.85 }}>
-                    CARTÃO PRESENTE
-                  </Typography>
+                {headingName}
+              </Typography>
 
-                  {/* ▼ NOME acima do e-mail — só no mobile */}
-                  <Typography
-                    sx={{
-                      display: { xs: "block", sm: "none" },
-                      fontWeight: 900,
-                      letterSpacing: 1,
-                      textTransform: "uppercase",
-                      lineHeight: 1.1,
-                      fontSize: 12,
-                      opacity: 0.95,
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      whiteSpace: "nowrap",
-                      maxWidth: "100%",
-                    }}
-                  >
-                    {headingName}
-                  </Typography>
-
-                  <Stack direction="row" spacing={1} alignItems="center" sx={{ mt: "auto", minWidth: 0 }}>
-                    <Box component="img" src={logoNewStore} alt="NS" sx={{ height: 16, opacity: 0.9 }} />
-                    <Typography
-                      sx={{
-                        fontWeight: 900, letterSpacing: { xs: 1, sm: 2 }, textTransform: "uppercase", lineHeight: 1.1,
-                        fontSize: { xs: 12, sm: 14, md: 16 }, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "100%",
-                      }}
-                    >
-                      {cardEmail}
-                    </Typography>
-                  </Stack>
-                  <Stack spacing={0.1} sx={{ mt: "auto" }}>
-                    <Typography variant="caption" sx={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace', letterSpacing: 1, opacity: 0.75 }}>
-                      VÁLIDO ATÉ
-                    </Typography>
-                    <Typography sx={{ fontWeight: 800, fontSize: { xs: 12, sm: 13 } }}>{validade}</Typography>
-                  </Stack>
-                </Stack>
-
-                <Stack spacing={0.4} alignItems={{ xs: "flex-start", sm: "flex-end" }} sx={{ ml: { sm: 1 }, mt: { xs: 1, sm: 0 } }}>
-                  <Typography variant="caption" sx={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace', letterSpacing: 1, opacity: 0.85 }}>
-                    CÓDIGO DE DESCONTO:
-                  </Typography>
-                  <Typography
-                    sx={{
-                      fontWeight: 900, letterSpacing: { xs: 0.5, sm: 2 }, wordBreak: "break-all", overflowWrap: "anywhere",
-                      maxWidth: { xs: "100%", sm: 260 }, fontSize: { xs: 14, sm: 18 }, lineHeight: 1.2, textAlign: { xs: "left", sm: "right" },
-                    }}
-                  >
-                    {couponCode}
-                  </Typography>
-                  <Typography variant="caption" sx={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace', letterSpacing: 1, opacity: 0.9, color: "#9AE6B4", textAlign: { xs: "left", sm: "right" } }}>
-                    VALOR ACUMULADO:
-                  </Typography>
-                  <Typography sx={{ fontWeight: 900, color: "#9AE6B4", fontSize: { xs: 16, sm: 18 } }}>
-                    {valorAcumulado.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
-                  </Typography>
-                  {syncing && <Typography variant="caption" sx={{ opacity: 0.7 }}>atualizando cupom…</Typography>}
-                </Stack>
+              {/* Validade (bottom-left) */}
+              <Stack spacing={0.2} sx={{ position: "absolute", left: { xs: 16, md: 28 }, bottom: { xs: 10, md: 14 } }}>
+                <Typography sx={{ fontFamily: 'ui-monospace, Menlo, Consolas, monospace', fontSize: { xs: 10, md: 12 }, letterSpacing: 1.2, opacity: 0.85 }}>
+                  VÁLIDO ATÉ
+                </Typography>
+                <Typography sx={{ fontWeight: 800, fontSize: { xs: 12, md: 14 }, letterSpacing: 1 }}>
+                  {validade}
+                </Typography>
               </Stack>
             </Paper>
           </Box>
@@ -821,7 +878,7 @@ export default function AccountPage() {
                       <TableCell sx={{ fontWeight: 800, whiteSpace: "nowrap" }}>NÚMERO</TableCell>
                       <TableCell sx={{ fontWeight: 800, whiteSpace: "nowrap" }}>DIA</TableCell>
                       <TableCell sx={{ fontWeight: 800, whiteSpace: "nowrap" }}>PAGAMENTO</TableCell>
-                      <TableCell sx={{ fontWeight: 800, whiteSpace: "nowrap" }}>RESULTADO</TableCell>
+                      <TableCell sx={{ fontWeight: 800, whiteSpace: "nowrap" }}>STATUS</TableCell>
                       <TableCell sx={{ fontWeight: 800, whiteSpace: "nowrap" }} align="right">PAGAR</TableCell>
                     </TableRow>
                   </TableHead>
@@ -834,18 +891,21 @@ export default function AccountPage() {
                         String(row.pagamento || "")
                       );
                       const isPaid   = /^(approved|paid|pago)$/i.test(String(row.pagamento || ""));
-                      const isClosed = /(closed|fechado|sorteado)/i.test(String(row.resultado || "")); // ← AJUSTE
-                      const clickable = isPaid && isClosed && (row.draw_id != null || row.sorteio);
+                      const isClosed = /(closed|fechado|sorteado)/i.test(String(row.resultado || ""));
+                      const isOpen   = /(open|aberto)/i.test(String(row.resultado || ""));
+                      const clickable = (isPaid && isClosed && (row.draw_id != null || row.sorteio)) || isOpen;
 
                       return (
                         <TableRow
-                          key={`${row.sorteio}-${row.numero}-${idx}`}
+                          key={`${row.sorteio}-${idx}`}
                           hover
                           onClick={clickable ? () => onRowClick(row) : undefined}
                           sx={{ cursor: clickable ? "pointer" : "default" }}
                         >
                           <TableCell sx={{ width: 100, fontWeight: 700 }}>{String(row.sorteio || "--")}</TableCell>
-                          <TableCell sx={{ width: 90, fontWeight: 700 }}>{pad2(row.numero)}</TableCell>
+                          <TableCell sx={{ minWidth: 160, fontWeight: 700 }}>
+                            {Array.isArray(row.numeros) ? row.numeros.map(pad2).join(", ") : (row.numero != null ? pad2(row.numero) : "--")}
+                          </TableCell>
                           <TableCell sx={{ width: 140 }}>{row.dia}</TableCell>
                           <TableCell><PayChip status={row.pagamento} /></TableCell>
                           <TableCell><ResultChip result={row.resultado} /></TableCell>

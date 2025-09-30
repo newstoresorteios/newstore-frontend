@@ -1,15 +1,54 @@
 // src/AutoPaySection.jsx
 import * as React from "react";
 import {
-  Paper, Stack, Typography, Switch, Chip, Button, TextField, Divider, Box, Tooltip
+  Paper,
+  Stack,
+  Typography,
+  Switch,
+  Chip,
+  Button,
+  TextField,
+  Divider,
+  Box,
+  Tooltip,
+  CircularProgress,
 } from "@mui/material";
 import CreditCardIcon from "@mui/icons-material/CreditCard";
 import AutorenewRoundedIcon from "@mui/icons-material/AutorenewRounded";
-import { apiJoin, authHeaders, getJSON } from "./lib/api";
+import ClearRoundedIcon from "@mui/icons-material/ClearRounded";
+import InfoOutlinedIcon from "@mui/icons-material/InfoOutlined";
+import { authHeaders as _authHeaders } from "./lib/api"; // se não tiver, usamos o fallback abaixo
 
+/* ============================================================
+ * Helpers de API (fallback caso não exista ./lib/api)
+ * ============================================================ */
+const apiJoin = (p) => {
+  const base =
+    process.env.REACT_APP_API_BASE_URL ||
+    process.env.REACT_APP_API_BASE ||
+    "/api";
+  return `${String(base).replace(/\/+$/, "")}${p.startsWith("/") ? p : `/${p}`}`;
+};
+
+const defaultAuthHeaders = () => {
+  const tk =
+    localStorage.getItem("ns_auth_token") ||
+    sessionStorage.getItem("ns_auth_token") ||
+    localStorage.getItem("token") ||
+    localStorage.getItem("access_token") ||
+    sessionStorage.getItem("token");
+  return tk ? { Authorization: `Bearer ${String(tk).replace(/^Bearer\s+/i, "")}` } : {};
+};
+
+const authHeaders = _authHeaders || defaultAuthHeaders;
+
+/* ============================================================
+ * Utils locais
+ * ============================================================ */
 const pad2 = (n) => String(n).padStart(2, "0");
 const onlyDigits = (s) => String(s || "").replace(/\D+/g, "");
-const guessDocType = (docDigits) => (String(docDigits || "").length > 11 ? "CNPJ" : "CPF");
+const guessDocType = (docDigits) =>
+  (String(docDigits || "").length > 11 ? "CNPJ" : "CPF");
 
 // aceita "MM/AA", "MM/AAAA", "MMAA", "MMYYYY"
 function parseExpiry(exp) {
@@ -21,17 +60,9 @@ function parseExpiry(exp) {
   return { mm, yyyy };
 }
 
-/** Lê a public key do ambiente (ou da window como fallback). */
-function getMpPublicKey() {
-  return (
-    process.env.REACT_APP_MP_PUBLIC_KEY ||
-    process.env.REACT_APP_MERCADOPAGO_PUBLIC_KEY ||
-    window.MP_PUBLIC_KEY ||
-    ""
-  );
-}
-
-/** Carrega o SDK v2 do Mercado Pago apenas uma vez (se necessário). */
+/** Carrega o SDK v2 do Mercado Pago se ainda não estiver presente.
+ *  Usa um singleton em window para evitar múltiplos loads.
+ */
 async function loadMpSdkOnce() {
   if (window.MercadoPago) return true;
   if (window.__mpSdkPromise) return window.__mpSdkPromise;
@@ -49,122 +80,176 @@ async function loadMpSdkOnce() {
     await window.__mpSdkPromise;
     return true;
   } catch (e) {
-    window.__mpSdkPromise = null; // deixa tentar de novo no futuro
+    // se falhar, limpamos para permitir nova tentativa futura
+    window.__mpSdkPromise = null;
     throw e;
   }
 }
 
+/* ============================================================
+ * Componente
+ * ============================================================ */
 export default function AutoPaySection() {
   const [loading, setLoading] = React.useState(true);
-  const [saving, setSaving]   = React.useState(false);
-  const [active, setActive]   = React.useState(true);
-  const [numbers, setNumbers] = React.useState([]);
-  const [card, setCard]       = React.useState({ brand: null, last4: null, has_card: false });
-  const [holder, setHolder]   = React.useState("");
-  const [doc, setDoc]         = React.useState("");
+  const [saving, setSaving] = React.useState(false);
+
+  const [active, setActive] = React.useState(true);
+  const [savedActive, setSavedActive] = React.useState(true);
+
+  const [numbers, setNumbers] = React.useState([]);           // seleção atual
+  const [savedNumbers, setSavedNumbers] = React.useState([]); // última salva
+
+  const [card, setCard] = React.useState({
+    brand: null,
+    last4: null,
+    has_card: false,
+  });
+
+  const [holder, setHolder] = React.useState("");
+  const [savedHolder, setSavedHolder] = React.useState("");
+
+  const [doc, setDoc] = React.useState("");
+  const [savedDoc, setSavedDoc] = React.useState("");
 
   // Campos para gerar token (SDK)
   const [cardNumber, setCardNumber] = React.useState("");
-  const [expiry, setExpiry]         = React.useState(""); // MM/AA
-  const [cvv, setCvv]               = React.useState("");
+  const [expiry, setExpiry] = React.useState(""); // MM/AA
+  const [cvv, setCvv] = React.useState("");
 
+  // Mensagem informativa quando não houver número
+  const needsAtLeastOne = numbers.length === 0;
+
+  // --- Dirty flags (reabilitar botão quando houver mudança) ---
+  const numbersDirty = React.useMemo(() => {
+    if (!Array.isArray(numbers) || !Array.isArray(savedNumbers)) return false;
+    if (numbers.length !== savedNumbers.length) return true;
+    const a = [...numbers].sort((x, y) => x - y).join(",");
+    const b = [...savedNumbers].sort((x, y) => x - y).join(",");
+    return a !== b;
+  }, [numbers, savedNumbers]);
+
+  const activeDirty = active !== savedActive;
+  const holderDirty = (holder || "") !== (savedHolder || "");
+  const docDirty = (doc || "") !== (savedDoc || "");
+  const cardFieldsDirty = !!(cardNumber || expiry || cvv); // só de preencher algo já tentaremos tokenizar
+
+  // Regra solicitada: **só pode salvar se tiver pelo menos 1 número**.
+  // Então canSave exige: !needsAtLeastOne && (qualquer mudança)
+  const anyDirty =
+    numbersDirty || activeDirty || holderDirty || docDirty || cardFieldsDirty;
+
+  const canSave = !loading && !saving && !needsAtLeastOne && anyDirty;
+
+  // Carrega perfil
   React.useEffect(() => {
     let alive = true;
     (async () => {
       try {
         setLoading(true);
-        const j = await getJSON("/api/me/autopay").catch(() => null);
+        const r = await fetch(apiJoin("/api/me/autopay"), {
+          headers: { "Content-Type": "application/json", ...authHeaders() },
+          credentials: "include",
+        });
+        const j = await r.json().catch(() => null);
         if (alive && j) {
+          const gotNumbers = Array.isArray(j.numbers) ? j.numbers.map(Number) : [];
           setActive(!!j.active);
-          setNumbers(Array.isArray(j.numbers) ? j.numbers : []);
-          setCard({ brand: j.brand, last4: j.last4, has_card: !!(j.brand || j.last4) });
+          setSavedActive(!!j.active);
+
+          setNumbers(gotNumbers);
+          setSavedNumbers(gotNumbers);
+
+          setCard({
+            brand: j.brand || null,
+            last4: j.last4 || null,
+            has_card: !!(j.brand || j.last4),
+          });
+
           setHolder(j.holder_name || "");
+          setSavedHolder(j.holder_name || "");
+
           setDoc(j.doc_number || "");
+          setSavedDoc(j.doc_number || "");
         }
-      } finally { if (alive) setLoading(false); }
+      } catch (e) {
+        console.error("[autopay] GET error:", e?.message || e);
+      } finally {
+        if (alive) setLoading(false);
+      }
     })();
-    return () => { alive = false; };
+    return () => {
+      alive = false;
+    };
   }, []);
 
   function toggle(n) {
-    setNumbers((prev) =>
-      prev.includes(n) ? prev.filter((x) => x !== n) : [...prev, n].slice(0, 20)
-    );
+    setNumbers((prev) => {
+      const next = prev.includes(n)
+        ? prev.filter((x) => x !== n)
+        : [...prev, n].slice(0, 20); // segurança de 20
+      return next;
+    });
   }
 
-  /** Tenta tokenizar via SDK; se indisponível, cai para o endpoint /v1/card_tokens (CORS). */
+  // Gera token via SDK do Mercado Pago (se disponível)
   async function createMpTokenOrFail() {
     const num = onlyDigits(cardNumber);
     const { mm, yyyy } = parseExpiry(expiry);
-    const sc  = onlyDigits(cvv).slice(0, 4);
+    const sc = onlyDigits(cvv).slice(0, 4);
     const holderName = (holder || "").trim();
-    const docDigits  = onlyDigits(doc);
+    const docDigits = onlyDigits(doc);
 
     // valida mínimos
     if (!num || !mm || !yyyy || !sc || !holderName || !docDigits) {
       throw new Error("Dados do cartão incompletos.");
     }
 
-    const PK = getMpPublicKey();
-    if (!PK) throw new Error("Chave pública do Mercado Pago não configurada.");
+    // tenta carregar o SDK dinamicamente se ainda não estiver presente
+    await loadMpSdkOnce();
 
-    // ——— 1) tenta SDK v2
-    let tokenId = null;
-    try {
-      await loadMpSdkOnce();
-      if (window.MercadoPago) {
-        const mp = new window.MercadoPago(PK, { locale: "pt-BR" });
-        if (mp?.cardToken?.create) {
-          const resp = await mp.cardToken.create({
-            cardNumber: num,
-            securityCode: sc,
-            expirationMonth: mm,
-            expirationYear: yyyy,
-            cardholder: {
-              name: holderName,
-              identification: { type: guessDocType(docDigits), number: docDigits },
-            },
-          });
-          tokenId = resp?.id || resp?.data?.id || resp?.token || null;
-        }
-      }
-    } catch (e) {
-      // mantém silêncio; faremos fallback
-      // console.warn("SDK tokenization failed:", e);
+    const PK =
+      process.env.REACT_APP_MP_PUBLIC_KEY ||
+      process.env.REACT_APP_MERCADOPAGO_PUBLIC_KEY ||
+      window.MP_PUBLIC_KEY;
+
+    if (!PK) {
+      throw new Error("Chave pública do Mercado Pago não configurada (REACT_APP_MP_PUBLIC_KEY).");
+    }
+    if (!window.MercadoPago) {
+      throw new Error("SDK do Mercado Pago não pôde ser carregado.");
     }
 
-    // ——— 2) fallback para REST (CORS) se o SDK não produziu token
-    if (!tokenId) {
-      const url = `https://api.mercadopago.com/v1/card_tokens?public_key=${encodeURIComponent(PK)}`;
-      const r = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Accept: "application/json" },
-        body: JSON.stringify({
-          card_number: num,
-          security_code: sc,
-          expiration_month: mm,
-          expiration_year: yyyy,
-          cardholder: {
-            name: holderName,
-            identification: { type: guessDocType(docDigits), number: docDigits },
-          },
-        }),
-      });
-
-      const j = await r.json().catch(() => ({}));
-      if (!r.ok || !(j?.id)) {
-        const msg =
-          j?.message || j?.error || j?.cause?.[0]?.description || "Falha ao gerar token do cartão.";
-        throw new Error(msg);
-      }
-      tokenId = j.id;
+    const mp = new window.MercadoPago(PK, { locale: "pt-BR" });
+    if (!mp?.cardToken?.create) {
+      throw new Error("Função de tokenização indisponível.");
     }
 
-    if (!tokenId) throw new Error("Função de tokenização indisponível.");
-    return tokenId;
+    const payload = {
+      cardNumber: num,
+      securityCode: sc,
+      expirationMonth: mm,
+      expirationYear: yyyy,
+      cardholder: {
+        name: holderName,
+        identification: {
+          type: guessDocType(docDigits),
+          number: docDigits,
+        },
+      },
+    };
+
+    const resp = await mp.cardToken.create(payload);
+    const tok = resp?.id || resp?.data?.id || resp?.token;
+    if (!tok) throw new Error("Falha ao gerar token do cartão.");
+    return tok;
   }
 
   async function save() {
+    if (needsAtLeastOne) {
+      alert("Selecione pelo menos 1 número para salvar as preferências.");
+      return;
+    }
+
     setSaving(true);
     try {
       const body = {
@@ -174,9 +259,10 @@ export default function AutoPaySection() {
         doc_number: doc,
       };
 
-      const wantsCardUpdate = cardNumber || expiry || cvv || holder || doc;
+      // regra: se mexeu em qualquer campo de cartão (ou atualizou titular/doc), tokeniza
+      const wantsCardUpdate = cardFieldsDirty;
 
-      if (wantsCardUpdate && (cardNumber || expiry || cvv)) {
+      if (wantsCardUpdate) {
         const token = await createMpTokenOrFail();
         body.card_token = token;
       }
@@ -187,48 +273,67 @@ export default function AutoPaySection() {
         credentials: "include",
         body: JSON.stringify(body),
       });
-      const j = await r.json().catch(() => ({}));
+      const j = await r.json();
       if (!r.ok) throw new Error(j?.error || "save_failed");
 
-      setCard(j.card || { has_card: false });
+      // Atualiza estados "salvos" para zerar dirty e re-desabilitar botão até nova mudança
+      setSavedNumbers([...numbers]);
+      setSavedActive(active);
+      setSavedHolder(holder);
+      setSavedDoc(doc);
+
+      setCard(j.card || { has_card: false, brand: null, last4: null });
       if (j.card?.has_card) {
+        // limpa campos sensíveis
         setCardNumber("");
         setExpiry("");
         setCvv("");
       }
+
       alert("Preferências salvas!");
     } catch (e) {
-      alert(e?.message || "Falha ao salvar. Verifique os dados do cartão e tente novamente.");
+      console.error("[autopay] save error:", e?.message || e);
+      alert(
+        e?.message === "save_failed"
+          ? "Falha ao salvar. Verifique os dados do cartão e tente novamente."
+          : e?.message || "Falha ao salvar preferências."
+      );
     } finally {
       setSaving(false);
     }
   }
 
-  /** Cancela o perfil de compra automática e remove cartão/números. */
-  async function cancelAutoPay() {
-    if (!window.confirm("Cancelar a compra automática e remover o cartão salvo?")) return;
+  async function cancelAutopay() {
+    if (!window.confirm("Tem certeza que deseja cancelar a compra automática? Isso apagará os números cativos e o cartão salvo.")) {
+      return;
+    }
+    setSaving(true);
     try {
-      setSaving(true);
       const r = await fetch(apiJoin("/api/me/autopay/cancel"), {
         method: "POST",
         headers: { "Content-Type": "application/json", ...authHeaders() },
         credentials: "include",
-        body: JSON.stringify({}),
       });
-      const j = await r.json().catch(() => ({}));
+      const j = await r.json();
       if (!r.ok) throw new Error(j?.error || "cancel_failed");
-      // limpa estado local
+
+      // zera tudo
       setActive(false);
+      setSavedActive(false);
+
       setNumbers([]);
+      setSavedNumbers([]);
+
       setCard({ brand: null, last4: null, has_card: false });
+
       setCardNumber("");
       setExpiry("");
       setCvv("");
-      setHolder("");
-      setDoc("");
+
       alert("Compra automática cancelada.");
     } catch (e) {
-      alert(e?.message || "Não foi possível cancelar agora.");
+      console.error("[autopay] cancel error:", e?.message || e);
+      alert("Não foi possível cancelar agora.");
     } finally {
       setSaving(false);
     }
@@ -242,16 +347,21 @@ export default function AutoPaySection() {
             Compra automática (cartão)
           </Typography>
           <Stack direction="row" spacing={1} alignItems="center">
-            <Typography variant="body2" sx={{ opacity: .8 }}>Ativar</Typography>
-            <Switch checked={active} onChange={(e) => setActive(e.target.checked)} />
+            <Typography variant="body2" sx={{ opacity: 0.8 }}>
+              Ativar
+            </Typography>
+            <Switch
+              checked={active}
+              onChange={(e) => setActive(e.target.checked)}
+            />
           </Stack>
         </Stack>
 
-        <Typography variant="body2" sx={{ opacity: .8, mt: -1 }}>
+        <Typography variant="body2" sx={{ opacity: 0.8, mt: -1 }}>
           Cadastre seu cartão e escolha números “cativos”. Quando um novo sorteio abrir,
           cobraremos automaticamente e reservaremos seus números (pagamento via Mercado Pago).
           <br />
-          <span style={{ opacity: .75 }}>
+          <span style={{ opacity: 0.75 }}>
             O CVV e a validade são exigidos apenas para salvar/atualizar o cartão.
           </span>
         </Typography>
@@ -259,20 +369,26 @@ export default function AutoPaySection() {
         {/* Cartão salvo */}
         <Box
           sx={{
-            display: "flex", alignItems: "center", gap: 1,
-            p: 1.25, border: "1px solid rgba(255,255,255,.08)", borderRadius: 2.5,
-            bgcolor: "rgba(255,255,255,.03)"
+            display: "flex",
+            alignItems: "center",
+            gap: 1,
+            p: 1.25,
+            border: "1px solid rgba(255,255,255,.08)",
+            borderRadius: 2.5,
+            bgcolor: "rgba(255,255,255,.03)",
           }}
         >
-          <CreditCardIcon sx={{ opacity: .9 }} />
+          <CreditCardIcon sx={{ opacity: 0.9 }} />
           <Typography sx={{ fontWeight: 800 }}>
-            {card.has_card ? `${card.brand || "Cartão"} •••• ${card.last4}` : "Nenhum cartão salvo"}
+            {card.has_card
+              ? `${card.brand || "Cartão"} •••• ${card.last4}`
+              : "Nenhum cartão salvo"}
           </Typography>
         </Box>
 
-        {/* Atualizar/Salvar cartão (opcional) */}
+        {/* Atualizar/Salvar cartão (sem exibir token) */}
         <Stack spacing={1}>
-          <Typography variant="subtitle2" sx={{ opacity: .85 }}>
+          <Typography variant="subtitle2" sx={{ opacity: 0.85 }}>
             Atualizar cartão (opcional)
           </Typography>
 
@@ -319,16 +435,19 @@ export default function AutoPaySection() {
         <Divider />
 
         {/* Escolha dos números cativos */}
-        <Typography variant="subtitle2" sx={{ opacity: .85 }}>
+        <Typography variant="subtitle2" sx={{ opacity: 0.85 }}>
           Números cativos (clique para selecionar)
         </Typography>
+
         <Box
           sx={{
             display: "grid",
             gridTemplateColumns: {
-              xs: "repeat(6, 1fr)", sm: "repeat(10, 1fr)", md: "repeat(12, 1fr)"
+              xs: "repeat(6, 1fr)",
+              sm: "repeat(10, 1fr)",
+              md: "repeat(12, 1fr)",
             },
-            gap: .6,
+            gap: 0.6,
           }}
         >
           {Array.from({ length: 100 }, (_, i) => i).map((n) => {
@@ -340,11 +459,18 @@ export default function AutoPaySection() {
                   onClick={() => toggle(n)}
                   clickable
                   sx={{
-                    fontWeight: 800, borderRadius: 999,
-                    border: on ? "1px solid #9BD1FF" : "1px solid rgba(255,255,255,.14)",
+                    fontWeight: 800,
+                    borderRadius: 999,
+                    border: on
+                      ? "1px solid #9BD1FF"
+                      : "1px solid rgba(255,255,255,.14)",
                     bgcolor: on ? "rgba(155,209,255,.15)" : "rgba(255,255,255,.04)",
                     color: on ? "#D6EBFF" : "inherit",
-                    "&:hover": { bgcolor: on ? "rgba(155,209,255,.25)" : "rgba(255,255,255,.08)" }
+                    "&:hover": {
+                      bgcolor: on
+                        ? "rgba(155,209,255,.25)"
+                        : "rgba(255,255,255,.08)",
+                    },
                   }}
                 />
               </Tooltip>
@@ -352,26 +478,37 @@ export default function AutoPaySection() {
           })}
         </Box>
 
-        <Stack direction={{ xs: "column", sm: "row" }} spacing={1} justifyContent="space-between">
-          <Button
-            variant="outlined"
-            color="error"
-            onClick={cancelAutoPay}
-            sx={{ borderWidth: 2 }}
-          >
-            Cancelar compra automática
-          </Button>
+        {/* Regras de habilitação do botão:
+            - deve haver pelo menos 1 número
+            - deve ter alguma mudança (números/active/holder/doc/cartão) */}
+        <Stack direction="row" spacing={1} justifyContent="space-between" alignItems="center">
+          <Stack direction="row" spacing={1} alignItems="center" sx={{ opacity: needsAtLeastOne ? 0.95 : 0.6 }}>
+            <InfoOutlinedIcon fontSize="small" />
+            <Typography variant="body2">
+              Selecione <b>pelo menos 1 número</b> para salvar.
+            </Typography>
+          </Stack>
 
-          <Box sx={{ display: "flex", gap: 1 }}>
+          <Stack direction="row" spacing={1}>
+            <Button
+              variant="outlined"
+              color="error"
+              startIcon={<ClearRoundedIcon />}
+              onClick={cancelAutopay}
+              disabled={saving || loading}
+            >
+              Cancelar compra automática
+            </Button>
+
             <Button
               variant="contained"
-              startIcon={<AutorenewRoundedIcon />}
+              startIcon={saving ? <CircularProgress size={16} /> : <AutorenewRoundedIcon />}
               onClick={save}
-              disabled={saving || loading}
+              disabled={!canSave}
             >
               {saving ? "Salvando…" : "Salvar preferências"}
             </Button>
-          </Box>
+          </Stack>
         </Stack>
       </Stack>
     </Paper>
