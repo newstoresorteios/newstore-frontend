@@ -1,6 +1,6 @@
 import * as React from "react";
 import { useNavigate, Link as RouterLink } from "react-router-dom";
-import logoNewStore from "./Logo-branca-sem-fundo-768x132.png";
+import logoNewStore from "./Logo-branca-sem-fundo-768x132 - Copia.png";
 import { SelectionContext } from "./selectionContext";
 import { useAuth } from "./authContext";
 import {
