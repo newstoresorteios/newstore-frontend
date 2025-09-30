@@ -36,7 +36,6 @@ const theme = createTheme({
 const pad2 = (n) => String(n).padStart(2, "0");
 const ADMIN_EMAIL = "admin@newstore.com.br";
 const TTL_MINUTES = Number(process.env.REACT_APP_RESERVATION_TTL_MINUTES || 15);
-// ▼ NOVO: validade do cupom (em dias)
 const COUPON_VALIDITY_DAYS = Number(process.env.REACT_APP_COUPON_VALIDITY_DAYS || 180);
 
 // chips
@@ -48,7 +47,7 @@ const PayChip = ({ status }) => {
   return <Chip label="PENDENTE" sx={{ bgcolor: "warning.main", color: "#000", fontWeight: 800, borderRadius: 999, px: 1.5 }} />;
 };
 
-// ▼ AJUSTE: tratar também 'sorteado'
+// status do sorteio
 const ResultChip = ({ result }) => {
   const r = String(result || "").toLowerCase();
   if (r.includes("contempla") || r.includes("win")) {
@@ -92,7 +91,6 @@ async function tryManyPost(paths, body) {
 
 // normaliza payloads diferentes para um único formato
 function normalizeToEntries(payPayload, reservationsPayload) {
-  // payments: [{ id, draw_id, numbers:[...], status, paid_at, amount_cents }]
   if (payPayload) {
     const list = Array.isArray(payPayload)
       ? payPayload
@@ -113,7 +111,6 @@ function normalizeToEntries(payPayload, reservationsPayload) {
     });
   }
 
-  // reservations: { reservations:[{ id, draw_id, n, status, created_at, paid_at, reserved_until/expires_at }] }
   if (reservationsPayload) {
     const list = reservationsPayload.reservations || reservationsPayload.items || [];
     return list.map(r => ({
@@ -140,7 +137,6 @@ export default function AccountPage() {
   const [rows, setRows] = React.useState([]);
   const [valorAcumulado, setValorAcumulado] = React.useState(0);
   const [cupom, setCupom] = React.useState("CUPOMAQUI");
-  // ▼ AJUSTE: validade dinâmica calculada pela última compra
   const [validade, setValidade] = React.useState("--/--/--");
   const [syncing, setSyncing] = React.useState(false);
 
@@ -159,7 +155,7 @@ export default function AccountPage() {
   const [pixAmount, setPixAmount] = React.useState(null);
   const [pixMsg, setPixMsg] = React.useState("");
 
-  // ▶︎ NOVO: modal AutoPay + claims da “tabela cativa”
+  // AutoPay
   const [autoOpen, setAutoOpen] = React.useState(false);
   const [claims, setClaims] = React.useState({ taken: [], mine: [] });
   async function loadClaims() {
@@ -185,7 +181,6 @@ export default function AccountPage() {
     return null;
   }
 
-  // Busca uma reserva ativa do usuário para (drawId, number)
   async function findExistingReservation(drawId, number) {
     const endpoints = [
       "/me/reservations?active=1",
@@ -216,7 +211,6 @@ export default function AccountPage() {
     return null;
   }
 
-  // Procura payment pendente p/ (drawId, number)
   async function findPendingPayment(drawId, number) {
     try {
       const url = `/payments/me?_=${Date.now()}`;
@@ -239,7 +233,7 @@ export default function AccountPage() {
     }
   }
 
-  // --------- GERAR PIX (suporta linhas agrupadas) ----------
+  // --------- GERAR PIX ----------
   async function handleGeneratePix(row) {
     setPixMsg("Gerando PIX…");
     setPixOpen(true);
@@ -247,12 +241,10 @@ export default function AccountPage() {
 
     try {
       const drawId = Number(row?.draw_id ?? row?.sorteio ?? row?.draw ?? row?.id);
-      // se for agrupado, tenta o primeiro número
       const number = Array.isArray(row?.numeros) && row.numeros.length
         ? Number(row.numeros[0])
         : Number(row?.number ?? row?.numero ?? row?.num);
 
-      // 1) Reaproveita um payment pendente com QR já criado
       const already = await findPendingPayment(drawId, number);
       if (already && (already.qr_code || already.qr_code_base64)) {
         setPixData(already);
@@ -262,7 +254,6 @@ export default function AccountPage() {
         return;
       }
 
-      // 2) Descobre/garante a reserva ativa
       let reservationId = row?.reservation_id ?? null;
       if (!reservationId && Number.isFinite(drawId) && Number.isFinite(number)) {
         reservationId = await findExistingReservation(drawId, number);
@@ -272,7 +263,6 @@ export default function AccountPage() {
         return;
       }
 
-      // 3) Gera o PIX no backend (rota correta)
       const r = await fetch(apiJoin("/payments/pix"), {
         method: "POST",
         headers: { "Content-Type": "application/json", ...authHeaders() },
@@ -297,7 +287,6 @@ export default function AccountPage() {
       const created = await r.json().catch(() => ({}));
       setPixData(created);
 
-      // 4) Valor no momento da geração
       let amountCents =
         (typeof created?.amount_cents === "number" && created.amount_cents) ||
         (typeof created?.payment?.amount_cents === "number" && created.payment.amount_cents) ||
@@ -354,7 +343,6 @@ export default function AccountPage() {
     try { return JSON.parse(localStorage.getItem("me") || "null"); } catch { return null; }
   }, []);
 
-  // ▶︎ AJUSTE DE NAVEGAÇÃO: pago+fechado → grade do sorteio; aberto → página principal
   function onRowClick(row) {
     const pago = /^(approved|paid|pago)$/i.test(String(row.pagamento || ""));
     const fechado = /(closed|fechado|sorteado)/i.test(String(row.resultado || ""));
@@ -369,9 +357,10 @@ export default function AccountPage() {
 
   React.useEffect(() => {
     let alive = true;
+
     (async () => {
       try {
-        // /me
+        // ----- /me -----
         let me = ctxUser || storedMe || null;
         try {
           const meResp = await getJSON("/me");
@@ -382,7 +371,35 @@ export default function AccountPage() {
           try { if (me) localStorage.setItem("me", JSON.stringify(me)); } catch {}
         }
 
-        // pagamentos OU reservas (prefira ativos)
+        // ----- CUPOM/BALANCE (AUTORITATIVO) -----
+        // Usa /coupons/mine para ler code e cents e exibir no cartão.
+        try {
+          const r = await fetch(apiJoin("/coupons/mine"), { headers: { ...authHeaders() }, credentials: "include" });
+          const mine = r.ok ? await r.json() : null;
+
+          // Se não existir código no servidor, tenta criar apenas o CÓDIGO (não altera cents).
+          if (!mine?.code) {
+            try {
+              setSyncing(true);
+              const s = await fetch(apiJoin("/coupons/sync"), {
+                method: "POST",
+                headers: { "Content-Type": "application/json", ...authHeaders() },
+                credentials: "include",
+                body: JSON.stringify({ createOnly: true }),
+              });
+              const synced = s.ok ? await s.json() : null;
+              if (alive && synced?.code) setCupom(synced.code);
+            } catch {}
+          }
+
+          // Define valor/cupom vindos do servidor (não zera créditos manuais)
+          if (alive) {
+            if (typeof mine?.cents === "number") setValorAcumulado(mine.cents / 100);
+            if (mine?.code) setCupom(mine.code);
+          }
+        } catch {}
+
+        // ----- pagamentos ou reservas -----
         const { data: pay, from } = await tryManyJson([
           "/payments/me",
           "/me/reservations?active=1",
@@ -405,7 +422,7 @@ export default function AccountPage() {
             from !== "/payments/me" ? pay : null
           );
 
-          // —— filtro: remover reservas expiradas —— (mantém pagos)
+          // remover reservas expiradas, manter pagos
           const now = Date.now();
           const ttlMs = TTL_MINUTES * 60 * 1000;
           const filtered = entries.filter(e => {
@@ -422,7 +439,7 @@ export default function AccountPage() {
             return true;
           });
 
-          // —— DEDUPE por (draw_id, number)
+          // dedupe
           const byKey = new Map();
           const priority = (st) => /pending|pendente|await|aguard/i.test(String(st || "")) ? 2 : 1;
           for (const e of filtered) {
@@ -439,7 +456,7 @@ export default function AccountPage() {
           }
           const deduped = Array.from(byKey.values());
 
-          // ===== AGRUPAR NÚMEROS POR SORTEIO =====
+          // agrupar por sorteio
           const byDraw = new Map();
           for (const e of deduped) {
             const id = Number(e.draw_id);
@@ -448,7 +465,6 @@ export default function AccountPage() {
                 draw_id: id,
                 numeros: [],
                 when: e.when ? new Date(e.when).getTime() : 0,
-                // status agregado: pendente tem prioridade
                 pagamento: e.status,
               });
             }
@@ -475,7 +491,6 @@ export default function AccountPage() {
             };
           });
 
-          // pendentes primeiro
           grouped.sort((a, b) => {
             const ap = /pending|pendente/i.test(String(a.pagamento));
             const bp = /pending|pendente/i.test(String(b.pagamento));
@@ -486,20 +501,17 @@ export default function AccountPage() {
 
           setRows(grouped);
 
-          // total acumulado (apenas payments aprovados)
-          let totalCents = 0;
-          let lastApprovedAtMs = null; // ▼ para calcular validade
+          // validade (última compra aprovada)
+          let lastApprovedAtMs = null;
           if (from === "/payments/me") {
             const list = Array.isArray(pay) ? pay : (pay.payments || []);
             for (const p of list) {
               if (String(p.status).toLowerCase() === "approved") {
                 const t = Date.parse(p.paid_at || p.updated_at || p.created_at || "");
                 if (!isNaN(t)) lastApprovedAtMs = Math.max(lastApprovedAtMs ?? 0, t);
-                totalCents += Number(p.amount_cents || 0);
               }
             }
           } else {
-            // fallback quando só temos 'entries'
             for (const e of deduped) {
               if (String(e.status).toLowerCase() === "approved") {
                 const t = Date.parse(e.when || "");
@@ -507,9 +519,6 @@ export default function AccountPage() {
               }
             }
           }
-          setValorAcumulado((totalCents || 0) / 100);
-
-          // ▼ calcula "VÁLIDO ATÉ" (última compra + COUPON_VALIDITY_DAYS)
           if (lastApprovedAtMs) {
             const exp = new Date(lastApprovedAtMs + COUPON_VALIDITY_DAYS * 24 * 60 * 60 * 1000);
             const yy = String(exp.getFullYear()).slice(-2);
@@ -520,9 +529,10 @@ export default function AccountPage() {
         }
       } finally {
         if (alive) setLoading(false);
+        setSyncing(false);
       }
     })();
-    return () => { alive = false; };
+    return () => { /* cleanup */ alive = false; };
   }, [ctxUser, storedMe]);
 
   // carregar config (banner_title e max_numbers_per_selection)
@@ -544,38 +554,6 @@ export default function AccountPage() {
     return () => { alive = false; };
   }, []);
 
-  // sincroniza cupom
-  React.useEffect(() => {
-    let alive = true;
-    (async () => {
-      try {
-        setSyncing(true);
-        const r = await fetch(apiJoin("/coupons/mine"), { headers: { ...authHeaders() }, credentials: "include" });
-        const mine = r.ok ? await r.json() : null;
-
-        const uiCents = Math.round((Number(valorAcumulado) || 0) * 100);
-        const srvCents = Number(mine?.cents || 0);
-
-        if (!mine?.code || uiCents !== srvCents) {
-          const s = await fetch(apiJoin("/coupons/sync"), {
-            method: "POST",
-            headers: { "Content-Type": "application/json", ...authHeaders() },
-            credentials: "include",
-            body: JSON.stringify({}),
-          });
-          const synced = s.ok ? await s.json() : null;
-          if (alive && synced?.code) setCupom(synced.code);
-          else if (alive && mine?.code) setCupom(mine.code);
-        } else if (alive && mine?.code) {
-          setCupom(mine.code);
-        }
-      } catch {} finally {
-        if (alive) setSyncing(false);
-      }
-    })();
-    return () => { alive = false; };
-  }, [valorAcumulado]);
-
   const u = user || {};
   const headingName =
     u.name || u.fullName || u.nome || u.displayName || u.username || u.email || "NOME DO CLIENTE";
@@ -583,7 +561,7 @@ export default function AccountPage() {
   const couponCode = u?.coupon_code || cupom || "CUPOMAQUI";
   const isAdminUser = !!(u?.is_admin || u?.role === "admin" || (u?.email && u.email.toLowerCase() === ADMIN_EMAIL));
 
-  // ► POSIÇÕES no cartão (quantidade distinta de números)
+  // ► POSIÇÕES no cartão
   const posicoes = React.useMemo(() => {
     const s = new Set();
     for (const r of rows) {
@@ -712,7 +690,7 @@ export default function AccountPage() {
             </Paper>
           )}
 
-          {/* Cartão — layout do anexo (responsivo) */}
+          {/* Cartão */}
           <Box sx={{ width: "100%", display: "flex", justifyContent: "center" }}>
             <Paper
               elevation={0}
@@ -759,7 +737,7 @@ export default function AccountPage() {
                 </Typography>
               </Stack>
 
-              {/* Logo + ondas NFC */}
+              {/* Logo + ondas */}
               <Stack direction="row" alignItems="center" spacing={1.2} sx={{ position: "absolute", left: { xs: 18, md: 28 }, top: "50%", transform: "translateY(-50%)" }}>
                 <Box component="img" src={logoNewStore} alt="NS" sx={{ height: { xs: 28, md: 36 }, filter: "brightness(1.1)" }} />
                 <Box sx={{ display: "flex", gap: 0.6, ml: 0.2 }}>
@@ -769,7 +747,7 @@ export default function AccountPage() {
                 </Box>
               </Stack>
 
-              {/* Name (bottom center) */}
+              {/* Name */}
               <Typography
                 sx={{
                   position: "absolute",
@@ -789,7 +767,7 @@ export default function AccountPage() {
                 {headingName}
               </Typography>
 
-              {/* Validade (bottom-left) */}
+              {/* Validade */}
               <Stack spacing={0.2} sx={{ position: "absolute", left: { xs: 16, md: 28 }, bottom: { xs: 10, md: 14 } }}>
                 <Typography sx={{ fontFamily: 'ui-monospace, Menlo, Consolas, monospace', fontSize: { xs: 10, md: 12 }, letterSpacing: 1.2, opacity: 0.85 }}>
                   VÁLIDO ATÉ
@@ -816,7 +794,7 @@ export default function AccountPage() {
                 <Chip size="small" label="Livre" variant="outlined" />
               </Stack>
 
-              {/* mini grade 00..99 (responsiva) */}
+              {/* mini grade 00..99 */}
               <Box
                 sx={{
                   display: "grid",
@@ -952,7 +930,7 @@ export default function AccountPage() {
         onRefresh={refreshPix}
       />
 
-      {/* Modal: configuração de compra automática (cartão + números cativos) */}
+      {/* Modal: compra automática */}
       <Dialog open={autoOpen} onClose={() => setAutoOpen(false)} fullWidth maxWidth="md">
         <DialogTitle sx={{ fontWeight: 900 }}>Compra automática — número cativo</DialogTitle>
         <DialogContent dividers sx={{ p: 0 }}>
