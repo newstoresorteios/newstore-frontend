@@ -708,18 +708,7 @@ export default function AccountPage() {
                 backgroundBlendMode: "screen, lighten",
               }}
             >
-              {/* Top-left texts */}
-              <Stack spacing={0.4} sx={{ position: "absolute", left: { xs: 16, md: 28 }, top: { xs: 14, md: 18 } }}>
-                <Typography sx={{ fontFamily: 'ui-monospace, Menlo, Consolas, monospace', fontSize: { xs: 10, md: 12 }, letterSpacing: 1.2, color: "#EDE8C9" }}>
-                  PRÊMIO: VOUCHER DE 5K EM COMPRAS NO SITE
-                </Typography>
-                <Typography sx={{ fontFamily: 'ui-monospace, Menlo, Consolas, monospace', fontSize: { xs: 10, md: 12 }, letterSpacing: 2, color: "#EDE8C9" }}>
-                  CARTÃO PRESENTE
-                </Typography>
-                <Typography sx={{ fontFamily: 'ui-monospace, Menlo, Consolas, monospace', fontSize: { xs: 10, md: 12 }, letterSpacing: 2, color: "#EDE8C9" }}>
-                  POSIÇÕES:{pad2(posicoes || 0)}
-                </Typography>
-              </Stack>
+            
 
               {/* Top-right code + amount */}
               <Stack spacing={0.6} sx={{ position: "absolute", right: { xs: 16, md: 28 }, top: { xs: 14, md: 18 }, alignItems: "flex-end" }}>
