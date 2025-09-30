@@ -26,7 +26,7 @@ const theme = createTheme({
     secondary: { main: "#FFC107" },
     error: { main: "#D32F2F" },
     background: { default: "#0E0E0E", paper: "#121212" },
-    success: { main: "#2E7D32" },
+    success: { main: "#7CFF6B" },
     warning: { main: "#B58900" },
   },
   shape: { borderRadius: 12 },
@@ -42,16 +42,15 @@ const COUPON_VALIDITY_DAYS = Number(process.env.REACT_APP_COUPON_VALIDITY_DAYS |
 const PayChip = ({ status }) => {
   const st = String(status || "").toLowerCase();
   if (["approved","paid","pago"].includes(st)) {
-    return <Chip label="PAGO" sx={{ bgcolor: "success.main", color: "#fff", fontWeight: 800, borderRadius: 999, px: 1.5 }} />;
+    return <Chip label="PAGO" sx={{ bgcolor: "success.main", color: "#0E0E0E", fontWeight: 800, borderRadius: 999, px: 1.5 }} />;
   }
   return <Chip label="PENDENTE" sx={{ bgcolor: "warning.main", color: "#000", fontWeight: 800, borderRadius: 999, px: 1.5 }} />;
 };
 
-// status do sorteio
 const ResultChip = ({ result }) => {
   const r = String(result || "").toLowerCase();
   if (r.includes("contempla") || r.includes("win")) {
-    return <Chip label="CONTEMPLADO" sx={{ bgcolor: "success.main", color: "#fff", fontWeight: 800, borderRadius: 999, px: 1.5 }} />;
+    return <Chip label="CONTEMPLADO" sx={{ bgcolor: "success.main", color: "#0E0E0E", fontWeight: 800, borderRadius: 999, px: 1.5 }} />;
   }
   if (r.includes("não") || r.includes("nao") || r.includes("n_contempla")) {
     return <Chip label="NÃO CONTEMPLADO" sx={{ bgcolor: "error.main", color: "#fff", fontWeight: 800, borderRadius: 999, px: 1.5 }} />;
@@ -126,6 +125,23 @@ function normalizeToEntries(payPayload, reservationsPayload) {
   return [];
 }
 
+// parse JSON tolerante
+async function fetchJsonLoose(url, options) {
+  const r = await fetch(apiJoin(url), options);
+  if (!r.ok) return null;
+  try {
+    return await r.json();
+  } catch {
+    try {
+      const txt = await r.text();
+      const cleaned = String(txt).trim().replace(/^[^\[{]*/, "");
+      return JSON.parse(cleaned);
+    } catch {
+      return null;
+    }
+  }
+}
+
 export default function AccountPage() {
   const navigate = useNavigate();
   const { selecionados } = React.useContext(SelectionContext);
@@ -135,20 +151,25 @@ export default function AccountPage() {
   const [loading, setLoading] = React.useState(true);
   const [user, setUser] = React.useState(ctxUser || null);
   const [rows, setRows] = React.useState([]);
+
+  // ► saldo composto
+  const [baseCents, setBaseCents] = React.useState(0);   // coupon_value_cents
+  const [paidCents, setPaidCents] = React.useState(0);   // soma payments approved (não usado na UI)
   const [valorAcumulado, setValorAcumulado] = React.useState(0);
+
   const [cupom, setCupom] = React.useState("CUPOMAQUI");
   const [validade, setValidade] = React.useState("--/--/--");
   const [syncing, setSyncing] = React.useState(false);
 
   // estado das configurações (apenas admin)
   const [cfgLoading, setCfgLoading] = React.useState(false);
-  const [cfgSaved, setCfgSaved] = React.useState(null); // null | "ok" | "err"
+  const [cfgSaved, setCfgSaved] = React.useState(null);
   const [cfg, setCfg] = React.useState({
     banner_title: "",
     max_numbers_per_selection: 5,
   });
 
-  // ▼ PIX state
+  // ▼ PIX
   const [pixOpen, setPixOpen] = React.useState(false);
   const [pixLoading, setPixLoading] = React.useState(false);
   const [pixData, setPixData] = React.useState(null);
@@ -169,18 +190,13 @@ export default function AccountPage() {
   }
   React.useEffect(() => { loadClaims(); }, []);
 
-  function extractPayloadFromRow(row) {
-    if (row.reservation_id) return { reservation_id: row.reservation_id };
-    const drawId = row.draw_id ?? row.sorteio ?? row.draw ?? row.id ?? null;
-    const number = row.number ?? row.numero ?? row.num ?? null;
-    if (row.payment_id) return { payment_id: row.payment_id };
-    if (drawId != null && number != null) return { draw_id: Number(drawId), numbers: [Number(number)] };
-    if (drawId != null && Array.isArray(row.numbers) && row.numbers.length > 0) {
-      return { draw_id: Number(drawId), numbers: row.numbers.map(n => Number(n)) };
-    }
-    return null;
-  }
+  // ─── saldo NA UI = APENAS coupon_value_cents ─────────────────────────────────
+  React.useEffect(() => {
+    setValorAcumulado((Number(baseCents) || 0) / 100);
+  }, [baseCents]);
+  // ─────────────────────────────────────────────────────────────────────────────
 
+  // Busca uma reserva ativa do usuário para (drawId, number)
   async function findExistingReservation(drawId, number) {
     const endpoints = [
       "/me/reservations?active=1",
@@ -211,6 +227,7 @@ export default function AccountPage() {
     return null;
   }
 
+  // Procura payment pendente p/ (drawId, number)
   async function findPendingPayment(drawId, number) {
     try {
       const url = `/payments/me?_=${Date.now()}`;
@@ -333,7 +350,6 @@ export default function AccountPage() {
     const key = pixData?.copy || pixData?.copy_paste || pixData?.copy_paste_code || pixData?.emv || pixData?.qr_code || "";
     if (key) navigator.clipboard.writeText(key).catch(() => {});
   }
-  // ▲ PIX
 
   const isLoggedIn = !!(user?.email || user?.id);
   const logoTo = isLoggedIn ? "/conta" : "/";
@@ -343,24 +359,40 @@ export default function AccountPage() {
     try { return JSON.parse(localStorage.getItem("me") || "null"); } catch { return null; }
   }, []);
 
-  function onRowClick(row) {
-    const pago = /^(approved|paid|pago)$/i.test(String(row.pagamento || ""));
-    const fechado = /(closed|fechado|sorteado)/i.test(String(row.resultado || ""));
-    const aberto = /(open|aberto)/i.test(String(row.resultado || ""));
-    const drawId = Number(row.draw_id ?? row.sorteio);
-    if (pago && fechado && Number.isFinite(drawId)) {
-      navigate(`/me/draw/${drawId}`);
-    } else if (aberto) {
-      navigate("/");
-    }
-  }
+  // ---- RELOAD BALANCES (composição base + compras aprovadas) ----
+  const reloadBalances = React.useCallback(async () => {
+    try {
+      const mine = await fetchJsonLoose("/coupons/mine", {
+        headers: { ...authHeaders() }, credentials: "include",
+      });
+      if (mine) {
+        const centsNum = Number(mine.cents ?? mine.coupon_value_cents ?? mine.value_cents ?? 0);
+        if (Number.isFinite(centsNum) && centsNum >= 0) setBaseCents(centsNum);
+        const code = mine.code || mine.coupon_code;
+        if (code) setCupom(String(code));
+      }
 
+      // ⚠️ UI NÃO SOMA PAGAMENTOS para evitar dobrar o saldo: mantemos 0.
+      setPaidCents(0);
+      // (mantive o resto da estrutura para não remover nada)
+      try {
+        const r = await fetch(apiJoin("/payments/me?_=" + Date.now()), {
+          headers: { ...authHeaders(), "Content-Type": "application/json" },
+          credentials: "include",
+        });
+        if (r.ok) { await r.json().catch(() => ({})); /* ignorado intencionalmente */ }
+      } catch {}
+    } catch (e) {
+      console.warn("[reloadBalances] erro silencioso:", e?.message || e);
+    }
+  }, []);
+
+  // efeito principal
   React.useEffect(() => {
     let alive = true;
-
     (async () => {
       try {
-        // ----- /me -----
+        // /me
         let me = ctxUser || storedMe || null;
         try {
           const meResp = await getJSON("/me");
@@ -369,37 +401,11 @@ export default function AccountPage() {
         if (alive) {
           setUser(me || null);
           try { if (me) localStorage.setItem("me", JSON.stringify(me)); } catch {}
+          const raw = me?.coupon_value_cents ?? me?.cupon_value_cents ?? me?.coupon_cents ?? null;
+          if (Number.isFinite(Number(raw))) setBaseCents(Number(raw));
         }
 
-        // ----- CUPOM/BALANCE (AUTORITATIVO) -----
-        // Usa /coupons/mine para ler code e cents e exibir no cartão.
-        try {
-          const r = await fetch(apiJoin("/coupons/mine"), { headers: { ...authHeaders() }, credentials: "include" });
-          const mine = r.ok ? await r.json() : null;
-
-          // Se não existir código no servidor, tenta criar apenas o CÓDIGO (não altera cents).
-          if (!mine?.code) {
-            try {
-              setSyncing(true);
-              const s = await fetch(apiJoin("/coupons/sync"), {
-                method: "POST",
-                headers: { "Content-Type": "application/json", ...authHeaders() },
-                credentials: "include",
-                body: JSON.stringify({ createOnly: true }),
-              });
-              const synced = s.ok ? await s.json() : null;
-              if (alive && synced?.code) setCupom(synced.code);
-            } catch {}
-          }
-
-          // Define valor/cupom vindos do servidor (não zera créditos manuais)
-          if (alive) {
-            if (typeof mine?.cents === "number") setValorAcumulado(mine.cents / 100);
-            if (mine?.code) setCupom(mine.code);
-          }
-        } catch {}
-
-        // ----- pagamentos ou reservas -----
+        // pagamentos/linhas p/ tabela + validade
         const { data: pay, from } = await tryManyJson([
           "/payments/me",
           "/me/reservations?active=1",
@@ -422,7 +428,6 @@ export default function AccountPage() {
             from !== "/payments/me" ? pay : null
           );
 
-          // remover reservas expiradas, manter pagos
           const now = Date.now();
           const ttlMs = TTL_MINUTES * 60 * 1000;
           const filtered = entries.filter(e => {
@@ -439,7 +444,7 @@ export default function AccountPage() {
             return true;
           });
 
-          // dedupe
+          // DEDUPE
           const byKey = new Map();
           const priority = (st) => /pending|pendente|await|aguard/i.test(String(st || "")) ? 2 : 1;
           for (const e of filtered) {
@@ -456,7 +461,7 @@ export default function AccountPage() {
           }
           const deduped = Array.from(byKey.values());
 
-          // agrupar por sorteio
+          // AGRUPAR
           const byDraw = new Map();
           for (const e of deduped) {
             const id = Number(e.draw_id);
@@ -479,6 +484,7 @@ export default function AccountPage() {
                 : (["approved","paid","pago"].includes(st) ? "approved" : g.pagamento);
           }
 
+          // array para tabela (guardamos whenMs para ordenar)
           const grouped = Array.from(byDraw.values()).map(g => {
             const whenDate = g.when ? new Date(g.when) : null;
             return {
@@ -488,20 +494,16 @@ export default function AccountPage() {
               dia: whenDate ? whenDate.toLocaleDateString("pt-BR") : "--/--/----",
               pagamento: g.pagamento,
               resultado: drawsMap.get(Number(g.draw_id)) || "aberto",
+              whenMs: g.when || 0,
             };
           });
 
-          grouped.sort((a, b) => {
-            const ap = /pending|pendente/i.test(String(a.pagamento));
-            const bp = /pending|pendente/i.test(String(b.pagamento));
-            if (ap && !bp) return -1;
-            if (!ap && bp) return 1;
-            return 0;
-          });
+          // >>> ORDEM: última compra primeiro (decrescente por whenMs)
+          grouped.sort((a, b) => (b.whenMs || 0) - (a.whenMs || 0));
 
           setRows(grouped);
 
-          // validade (última compra aprovada)
+          // validade (último approved)
           let lastApprovedAtMs = null;
           if (from === "/payments/me") {
             const list = Array.isArray(pay) ? pay : (pay.payments || []);
@@ -527,13 +529,25 @@ export default function AccountPage() {
             setValidade("--/--/--");
           }
         }
+
+        await reloadBalances();
       } finally {
-        if (alive) setLoading(false);
-        setSyncing(false);
+        setLoading(false);
       }
     })();
-    return () => { /* cleanup */ alive = false; };
-  }, [ctxUser, storedMe]);
+
+    const onFocus = () => reloadBalances();
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, [ctxUser, storedMe, reloadBalances]);
+
+  // quando PIX vira approved, atualiza saldo
+  React.useEffect(() => {
+    const st = String(pixData?.status || "").toLowerCase();
+    if (st === "approved" || st === "paid" || st === "pago") {
+      reloadBalances();
+    }
+  }, [pixData?.status, reloadBalances]);
 
   // carregar config (banner_title e max_numbers_per_selection)
   React.useEffect(() => {
@@ -547,9 +561,7 @@ export default function AccountPage() {
           banner_title: banner,
           max_numbers_per_selection: Number.isFinite(maxSel) && maxSel > 0 ? maxSel : 5,
         });
-      } catch {
-        /* silencioso */
-      }
+      } catch {}
     })();
     return () => { alive = false; };
   }, []);
@@ -557,18 +569,8 @@ export default function AccountPage() {
   const u = user || {};
   const headingName =
     u.name || u.fullName || u.nome || u.displayName || u.username || u.email || "NOME DO CLIENTE";
-  const cardEmail = u.email || (u.username?.includes?.("@") ? u.username : headingName);
   const couponCode = u?.coupon_code || cupom || "CUPOMAQUI";
   const isAdminUser = !!(u?.is_admin || u?.role === "admin" || (u?.email && u.email.toLowerCase() === ADMIN_EMAIL));
-
-  // ► POSIÇÕES no cartão
-  const posicoes = React.useMemo(() => {
-    const s = new Set();
-    for (const r of rows) {
-      if (Array.isArray(r?.numeros)) r.numeros.forEach(n => s.add(Number(n)));
-    }
-    return s.size;
-  }, [rows]);
 
   // salvar config
   async function handleSaveConfig() {
@@ -612,7 +614,7 @@ export default function AccountPage() {
                 alignItems: "center",
               }}
             >
-              <Box component="img" src={logoNewStore} alt="NEW STORE" sx={{ height: { xs: 28, sm: 36, md: 40 }, objectFit: "contain" }} />
+              <Box component="img" src={logoNewStore} alt="NEW STORE" sx={{ height: { xs: 42, sm: 58, md: 62 }, objectFit: "contain" }} />
             </Box>
           <IconButton color="inherit" sx={{ ml: "auto" }} onClick={(e) => setMenuEl(e.currentTarget)}>
             <AccountCircleRoundedIcon />
@@ -690,63 +692,105 @@ export default function AccountPage() {
             </Paper>
           )}
 
-          {/* Cartão */}
+          {/* Cartão — remodelado para ficar como o anexo */}
           <Box sx={{ width: "100%", display: "flex", justifyContent: "center" }}>
             <Paper
               elevation={0}
               sx={{
-                width: { xs: "min(96vw, 680px)", md: 860 },
+                width: { xs: "min(86vw, 520px)", md: 700 },
                 aspectRatio: { xs: "16/9", md: "21/9" },
                 borderRadius: 6, position: "relative", overflow: "hidden",
-                p: { xs: 2.2, md: 3 },
-                bgcolor: "#0E0E0E",
+                p: { xs: 1.6, md: 2.2 },
+                bgcolor: "#0C0C0C",
                 border: "1px solid rgba(255,255,255,0.08)",
                 backgroundImage: `
-                  radial-gradient(90% 130% at 15% 20%, rgba(255,255,255,0.08), transparent 60%),
-                  radial-gradient(70% 120% at 80% 70%, rgba(255,255,255,0.06), transparent 60%)
+                  radial-gradient(160% 140% at 10% 10%, rgba(255,255,255,0.08), transparent 60%),
+                  radial-gradient(120% 140% at 80% 80%, rgba(255,255,255,0.06), transparent 55%),
+                  radial-gradient(100% 100% at 50% 50%, rgba(255,255,255,0.02), transparent 70%)
                 `,
                 backgroundBlendMode: "screen, lighten",
               }}
             >
-            
+              {/* REMOVIDO: PRÊMIO / CARTÃO PRESENTE / POSIÇÕES */}
 
-              {/* Top-right code + amount */}
-              <Stack spacing={0.6} sx={{ position: "absolute", right: { xs: 16, md: 28 }, top: { xs: 14, md: 18 }, alignItems: "flex-end" }}>
-                <Typography sx={{ fontFamily: 'ui-monospace, Menlo, Consolas, monospace', fontSize: { xs: 10, md: 12 }, letterSpacing: 1.2 }}>
+              {/* Top-right: código + valor */}
+              <Stack
+                spacing={0.7}
+                sx={{
+                  position: "absolute",
+                  right: { xs: 26, sm: 32, md: 44 },
+                  top:   { xs: 22, sm: 26, md: 34 },
+                  alignItems: "flex-end",
+                }}
+              >
+                <Typography sx={{ fontFamily: 'ui-monospace, Menlo, Consolas, monospace', fontSize: { xs: 9.5, md: 11 }, letterSpacing: 1.2, opacity: 0.9 }}>
                   CÓDIGO DE DESCONTO:
                 </Typography>
-                <Typography sx={{ fontWeight: 900, letterSpacing: { xs: 2, md: 3 }, fontSize: { xs: 24, md: 34 }, lineHeight: 1 }}>
+                <Typography
+                  sx={{
+                    fontWeight: 900,
+                    letterSpacing: { xs: 1.5, md: 2.5 },
+                    fontSize: { xs: 22, sm: 26, md: 32 },
+                    lineHeight: 1,
+                    textShadow: "0 0 0.6px rgba(255,255,255,0.6)",
+                  }}
+                >
                   {couponCode}
                 </Typography>
-                <Typography sx={{ fontFamily: 'ui-monospace, Menlo, Consolas, monospace', fontSize: { xs: 10, md: 12 }, color: "#7CFF6B", letterSpacing: 1.2 }}>
+                <Typography sx={{ fontFamily: 'ui-monospace, Menlo, Consolas, monospace', fontSize: { xs: 10, md: 12 }, color: "success.main", letterSpacing: 1.2 }}>
                   VALOR ACUMULADO:
                 </Typography>
-                <Typography sx={{ fontWeight: 900, color: "#7CFF6B", fontSize: { xs: 16, md: 18 }, lineHeight: 1 }}>
+                <Typography sx={{ fontWeight: 900, color: "success.main", fontSize: { xs: 15, sm: 16, md: 18 }, lineHeight: 1 }}>
                   {valorAcumulado.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
                 </Typography>
               </Stack>
 
-              {/* Logo + ondas */}
-              <Stack direction="row" alignItems="center" spacing={1.2} sx={{ position: "absolute", left: { xs: 18, md: 28 }, top: "50%", transform: "translateY(-50%)" }}>
-                <Box component="img" src={logoNewStore} alt="NS" sx={{ height: { xs: 28, md: 36 }, filter: "brightness(1.1)" }} />
-                <Box sx={{ display: "flex", gap: 0.6, ml: 0.2 }}>
-                  <Box sx={{ width: { xs: 4, md: 5 }, height: { xs: 12, md: 16 }, border: "2px solid #7CFF6B", borderLeft: "none", borderRadius: "0 999px 999px 0" }} />
-                  <Box sx={{ width: { xs: 6, md: 8 }, height: { xs: 16, md: 20 }, border: "2px solid #7CFF6B", borderLeft: "none", borderRadius: "0 999px 999px 0" }} />
-                  <Box sx={{ width: { xs: 8, md: 10 }, height: { xs: 20, md: 24 }, border: "2px solid #7CFF6B", borderLeft: "none", borderRadius: "0 999px 999px 0" }} />
-                </Box>
-              </Stack>
+              {/* Logo + ondas NFC */}
+              <Box
+                sx={{
+                  position: "absolute",
+                  left: { xs: 26, md: 44 },
+                  top: "50%",
+                  transform: "translateY(-50%)",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: { xs: 1, md: 1.3 },
+                }}
+              >
+                <Box
+                  component="img"
+                  src={logoNewStore}
+                  alt="NS"
+                  sx={{
+                    height: { xs: 46, sm: 70, md: 76 },
+                    objectFit: "contain",
+                    filter: "brightness(1.02)",
+                  }}
+                />
 
-              {/* Name */}
+                <Box
+                  component="svg"
+                  viewBox="0 0 60 30"
+                  sx={{ width: { xs: 38, md: 50 }, height: { xs: 20, md: 26 } }}
+                >
+                  <path d="M20 5 C28 10, 28 20, 20 25" fill="none" stroke="#7CFF6B" strokeWidth="3" strokeLinecap="round"/>
+                  <path d="M34 3 C44 10, 44 20, 34 27" fill="none" stroke="#7CFF6B" strokeWidth="3" strokeLinecap="round" opacity={0.95}/>
+                  <path d="M48 1 C60 10, 60 20, 48 29" fill="none" stroke="#7CFF6B" strokeWidth="3" strokeLinecap="round" opacity={0.9}/>
+                  
+                </Box>
+              </Box>
+
+              {/* Nome */}
               <Typography
                 sx={{
                   position: "absolute",
-                  left: { xs: 16, md: 28 },
+                  left:   { xs: 26, md: 44 },
                   right: { xs: 16, md: 28 },
-                  bottom: { xs: 36, md: 44 },
+                  bottom: { xs: 46, md: 56 },
                   fontWeight: 900,
-                  letterSpacing: 2,
+                  letterSpacing: 1.5,
                   textTransform: "uppercase",
-                  fontSize: { xs: 18, md: 28 },
+                  fontSize: { xs: 18, sm: 22, md: 28 },
                   textAlign: "left",
                   whiteSpace: "nowrap",
                   overflow: "hidden",
@@ -757,13 +801,18 @@ export default function AccountPage() {
               </Typography>
 
               {/* Validade */}
-              <Stack spacing={0.2} sx={{ position: "absolute", left: { xs: 16, md: 28 }, bottom: { xs: 10, md: 14 } }}>
+              <Stack spacing={0.3} sx={{ position: "absolute", left:   { xs: 36, md: 54 }, bottom: { xs: 12, md: 18 } }}>
                 <Typography sx={{ fontFamily: 'ui-monospace, Menlo, Consolas, monospace', fontSize: { xs: 10, md: 12 }, letterSpacing: 1.2, opacity: 0.85 }}>
-                  VÁLIDO ATÉ
+                  VÁLIDO
                 </Typography>
-                <Typography sx={{ fontWeight: 800, fontSize: { xs: 12, md: 14 }, letterSpacing: 1 }}>
-                  {validade}
-                </Typography>
+                <Stack direction="row" spacing={1}>
+                  <Typography sx={{ fontFamily: 'ui-monospace, Menlo, Consolas, monospace', fontSize: { xs: 10, md: 12 }, letterSpacing: 1.2, opacity: 0.85 }}>
+                    ATÉ
+                  </Typography>
+                  <Typography sx={{ fontWeight: 800, fontSize: { xs: 12, md: 14 }, letterSpacing: 1 }}>
+                    {validade}
+                  </Typography>
+                </Stack>
               </Stack>
             </Paper>
           </Box>
@@ -776,14 +825,12 @@ export default function AccountPage() {
                 Garanta seus números preferidos em todo sorteio novo. Configure um cartão e o sistema compra automaticamente quando o sorteio abre.
               </Typography>
 
-              {/* legenda */}
               <Stack direction="row" spacing={1} alignItems="center" sx={{ mt: .5, flexWrap: "wrap" }}>
                 <Chip size="small" label="Seu cativo" sx={{ bgcolor:"#10233a", color:"#cbe6ff", border:"1px solid #9bd1ff" }} />
                 <Chip size="small" label="Ocupado" sx={{ bgcolor:"#2a1c1c", color:"#ffb3b3", border:"1px solid #ff8a8a" }} />
                 <Chip size="small" label="Livre" variant="outlined" />
               </Stack>
 
-              {/* mini grade 00..99 */}
               <Box
                 sx={{
                   display: "grid",
@@ -854,19 +901,24 @@ export default function AccountPage() {
                       <TableRow><TableCell colSpan={6} sx={{ color: "#bbb" }}>Nenhuma participação encontrada.</TableCell></TableRow>
                     )}
                     {rows.map((row, idx) => {
-                      const isPending = /pendente|pending|await|aguard|open/i.test(
-                        String(row.pagamento || "")
-                      );
+                      const isPending = /pendente|pending|await|aguard|open/i.test(String(row.pagamento || ""));
+                      const clickable = true;
+
                       const isPaid   = /^(approved|paid|pago)$/i.test(String(row.pagamento || ""));
                       const isClosed = /(closed|fechado|sorteado)/i.test(String(row.resultado || ""));
                       const isOpen   = /(open|aberto)/i.test(String(row.resultado || ""));
-                      const clickable = (isPaid && isClosed && (row.draw_id != null || row.sorteio)) || isOpen;
+
+                      const handleRowClick = () => {
+                        const drawId = Number(row.draw_id ?? row.sorteio);
+                        if (isPaid && isClosed && Number.isFinite(drawId)) navigate(`/me/draw/${drawId}`);
+                        else if (isOpen) navigate("/");
+                      };
 
                       return (
                         <TableRow
                           key={`${row.sorteio}-${idx}`}
                           hover
-                          onClick={clickable ? () => onRowClick(row) : undefined}
+                          onClick={clickable ? handleRowClick : undefined}
                           sx={{ cursor: clickable ? "pointer" : "default" }}
                         >
                           <TableCell sx={{ width: 100, fontWeight: 700 }}>{String(row.sorteio || "--")}</TableCell>
@@ -919,7 +971,7 @@ export default function AccountPage() {
         onRefresh={refreshPix}
       />
 
-      {/* Modal: compra automática */}
+      {/* Modal: configuração de compra automática */}
       <Dialog open={autoOpen} onClose={() => setAutoOpen(false)} fullWidth maxWidth="md">
         <DialogTitle sx={{ fontWeight: 900 }}>Compra automática — número cativo</DialogTitle>
         <DialogContent dividers sx={{ p: 0 }}>
