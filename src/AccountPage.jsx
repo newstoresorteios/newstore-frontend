@@ -157,15 +157,16 @@ function asTime(v) {
   return Number.isFinite(t) ? t : 0;
 }
 
-// ⚠️ Não enviar mais coupon_value_cents para evitar sobrescrita.
-// O backend deve somar add_cents com base no last_payment_sync_at.
+// ⚠️ Incremento de cupom: usar apenas endpoints de sync/incremento.
+// Nada de fallback para rotas "update" (elas fazem SET e causam sobrescrita).
 async function postIncrementCoupon({ addCents, lastPaymentSyncAt }) {
   const payload = {
     add_cents: Number(addCents) || 0,
     last_payment_sync_at: lastPaymentSyncAt,
   };
+  // Somente os endpoints de incremento
   return await tryManyPost(
-    ["/coupons/sync", "/me/coupons/sync", "/coupons/update", "/me/coupon", "/coupon/update"],
+    ["/coupons/sync", "/me/coupons/sync"],
     payload
   );
 }
@@ -181,9 +182,12 @@ export default function AccountPage() {
   const [rows, setRows] = React.useState([]);
 
   // ► saldo composto
-  const [baseCents, setBaseCents] = React.useState(0);   // coupon_value_cents
+  const [baseCents, setBaseCents] = React.useState(0);   // pode incluir safeUi p/ nunca regredir visualmente
   const [paidCents, setPaidCents] = React.useState(0);   // soma payments approved (não usado na UI)
   const [valorAcumulado, setValorAcumulado] = React.useState(0);
+
+  // ▼ NOVO: referência ao valor OFICIAL do servidor (coupon_value_cents)
+  const officialCentsRef = React.useRef(0);
 
   const [cupom, setCupom] = React.useState("CUPOMAQUI");
   const [validade, setValidade] = React.useState("--/--/--");
@@ -218,9 +222,9 @@ export default function AccountPage() {
   }
   React.useEffect(() => { loadClaims(); }, []);
 
-  // ─── saldo NA UI = APENAS coupon_value_cents ─────────────────────────────────
+  // ─── saldo NA UI = **APENAS** coupon_value_cents (valor oficial) ─────────────
   React.useEffect(() => {
-    setValorAcumulado((Number(baseCents) || 0) / 100);
+    setValorAcumulado((Number(officialCentsRef.current) || 0) / 100);
   }, [baseCents]);
   // ─────────────────────────────────────────────────────────────────────────────
 
@@ -255,6 +259,65 @@ export default function AccountPage() {
     return null;
   }
 
+  // NOVO: busca a ÚLTIMA reserva ATIVA do sorteio, priorizando os números informados
+  async function findLatestActiveReservation(drawId, numbersHint) {
+    const want = new Set(
+      Array.isArray(numbersHint)
+        ? numbersHint.map(n => Number(n))
+        : Number.isFinite(Number(numbersHint)) ? [Number(numbersHint)] : []
+    );
+
+    const endpoints = [
+      "/me/reservations?active=1",
+      "/me/reservations",
+      "/reservations/me?active=1",
+      "/reservations/me",
+    ];
+
+    let best = null; // { id, number, when }
+
+    for (const base of endpoints) {
+      const url = `${base}${base.includes("?") ? "&" : "?"}_=${Date.now()}`;
+      try {
+        const r = await fetch(apiJoin(url), {
+          headers: { "Content-Type": "application/json", ...authHeaders() },
+          credentials: "include",
+          cache: "no-store",
+        });
+        if (!r.ok) continue;
+
+        const j = await r.json().catch(() => ({}));
+        const list = Array.isArray(j) ? j : (j.reservations || j.items || []);
+
+        for (const x of list || []) {
+          const d = Number(x?.draw_id ?? x?.sorteio_id);
+          if (d !== Number(drawId)) continue;
+
+          const raw = String(x?.status || "").toLowerCase();
+          const isActive = /(active|reserved|pending|await|aguard)/.test(raw) && !/(expired|cancel)/.test(raw);
+          if (!isActive) continue;
+
+          const nums = Array.isArray(x?.numbers)
+            ? x.numbers.map(Number)
+            : [Number(x?.n ?? x?.number ?? x?.numero)].filter(Number.isFinite);
+
+          const candidates = want.size ? nums.filter(n => want.has(n)) : nums;
+          if (!candidates.length) continue;
+
+          const when = asTime(x?.updated_at) || asTime(x?.created_at) || asTime(x?.reserved_until) || 0;
+          for (const n of candidates) {
+            if (!best || when > best.when) {
+              best = { id: x.id ?? x.reservation_id ?? x.reservationId, number: n, when };
+            }
+          }
+        }
+      } catch {}
+      if (best) break; // já achou uma ativa recente neste endpoint
+    }
+
+    return best ? { reservationId: best.id, number: best.number } : null;
+  }
+
   // Procura payment pendente p/ (drawId, number)
   async function findPendingPayment(drawId, number) {
     try {
@@ -286,59 +349,77 @@ export default function AccountPage() {
 
     try {
       const drawId = Number(row?.draw_id ?? row?.sorteio ?? row?.draw ?? row?.id);
-      const number = Array.isArray(row?.numeros) && row.numeros.length
-        ? Number(row.numeros[0])
-        : Number(row?.number ?? row?.numero ?? row?.num);
 
-      const already = await findPendingPayment(drawId, number);
-      if (already && (already.qr_code || already.qr_code_base64)) {
+      // ► Prioriza a ÚLTIMA reserva ATIVA dentro dos números exibidos na linha
+      const hintNumbers = Array.isArray(row?.numeros)
+        ? row.numeros
+        : (Number.isFinite(Number(row?.number ?? row?.numero ?? row?.num))
+            ? [Number(row?.number ?? row?.numero ?? row?.num)]
+            : []);
+
+      const latest = await findLatestActiveReservation(drawId, hintNumbers);
+      if (!latest) {
+        setPixMsg("Falha ao gerar PIX: sua reserva não está ativa. Volte ao sorteio para reservar novamente.");
+        return;
+      }
+
+      let selectedNumber = Number(latest.number);
+
+      // Reaproveita pagamento pendente existente (para o número correto)
+      const already = await findPendingPayment(drawId, selectedNumber);
+      if (already && (already.qr_code || already.qr_code_base64 || already.copy || already.copy_paste)) {
         setPixData(already);
         const cents = already?.amount_cents ?? null;
         setPixAmount(typeof cents === "number" ? cents / 100 : null);
-        setPixMsg(already?.status ? `Status: ${already.status}` : "PIX pendente recuperado.");
+        setPixMsg(already?.status ? `Status: ${already.status}` : `PIX pendente do nº ${pad2(selectedNumber)} recuperado.`);
         return;
       }
 
-      let reservationId = row?.reservation_id ?? null;
-      if (!reservationId && Number.isFinite(drawId) && Number.isFinite(number)) {
-        reservationId = await findExistingReservation(drawId, number);
-      }
-      if (!reservationId) {
-        setPixMsg("Não foi possível localizar a sua reserva/pagamento para este número. Atualize a página ou tente novamente.");
-        return;
-      }
+      // Função local para pedir PIX (com revalidação caso a reserva esteja inativa)
+      const requestPix = async (reservationId) => {
+        const r = await fetch(apiJoin("/payments/pix"), {
+          method: "POST",
+          headers: { "Content-Type": "application/json", ...authHeaders() },
+          credentials: "include",
+          cache: "no-store",
+          body: JSON.stringify({ reservationId, reservation_id: reservationId }),
+        });
 
-      const r = await fetch(apiJoin("/payments/pix"), {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...authHeaders() },
-        credentials: "include",
-        cache: "no-store",
-        body: JSON.stringify({ reservationId, reservation_id: reservationId }),
-      });
-
-      if (!r.ok) {
-        if (r.status === 400) {
-          const j = await r.json().catch(() => ({}));
-          const msg = j?.error || j?.message || "Requisição inválida (400).";
-          setPixMsg(`Falha ao gerar PIX: ${msg}`);
-        } else if (r.status === 404) {
-          setPixMsg("Falha ao gerar PIX (rota não encontrada no servidor).");
-        } else {
-          setPixMsg(`Falha ao gerar PIX (HTTP ${r.status}).`);
+        // Se a API disser que a reserva não está ativa, tenta novamente com a última ativa
+        if (!r.ok && r.status === 400) {
+          let msg = "";
+          try { const j = await r.json(); msg = String(j?.error || j?.message || ""); } catch {}
+          if (/reservation[_\s-]?not[_\s-]?active|expired|inativa|expirada/i.test(msg)) {
+            const fresh = await findLatestActiveReservation(drawId, hintNumbers);
+            if (fresh && fresh.reservationId !== reservationId) {
+              selectedNumber = Number(fresh.number); // atualiza o nº
+              return await requestPix(fresh.reservationId);
+            }
+            setPixMsg("Falha ao gerar PIX: sua reserva não está ativa. Volte ao sorteio para reservar novamente.");
+            return null;
+          }
         }
-        return;
-      }
+        if (!r.ok) {
+          if (r.status === 404) setPixMsg("Falha ao gerar PIX (rota não encontrada no servidor).");
+          else setPixMsg(`Falha ao gerar PIX (HTTP ${r.status}).`);
+          return null;
+        }
+        return await r.json().catch(() => ({}));
+      };
 
-      const created = await r.json().catch(() => ({}));
+      const created = await requestPix(latest.reservationId);
+      if (!created) return;
+
       setPixData(created);
 
+      // Descobre o valor (centavos)
       let amountCents =
         (typeof created?.amount_cents === "number" && created.amount_cents) ||
         (typeof created?.payment?.amount_cents === "number" && created.payment.amount_cents) ||
         null;
 
       if (amountCents == null) {
-        const nowPending = await findPendingPayment(drawId, number);
+        const nowPending = await findPendingPayment(drawId, selectedNumber);
         if (nowPending?.amount_cents != null) amountCents = nowPending.amount_cents;
       }
       if (amountCents == null) {
@@ -352,7 +433,7 @@ export default function AccountPage() {
       }
 
       setPixAmount(amountCents != null ? amountCents / 100 : null);
-      setPixMsg(created?.status ? `Status: ${created.status}` : "");
+      setPixMsg(created?.status ? `Status: ${created.status}` : `PIX criado para o nº ${pad2(selectedNumber)}.`);
     } catch (e) {
       console.error("[AccountPage] createPixPayment error:", e);
       setPixMsg("Falha ao gerar PIX.");
@@ -390,7 +471,7 @@ export default function AccountPage() {
   // ---- RELOAD BALANCES (composição base + compras aprovadas) ----
   const reloadBalances = React.useCallback(async () => {
     try {
-      // 1) Cupom atual
+      // 1) Cupom atual (valor oficial do servidor)
       const mine = await fetchJsonLoose("/coupons/mine", {
         headers: { ...authHeaders() }, credentials: "include",
       });
@@ -402,6 +483,10 @@ export default function AccountPage() {
         currentCents = Number(mine.cents ?? mine.coupon_value_cents ?? mine.value_cents ?? 0) || 0;
         code = mine.code || mine.coupon_code || null;
       }
+
+      // guarda o valor OFICIAL para referência/visualização
+      officialCentsRef.current = currentCents;
+
       if (Number.isFinite(currentCents) && currentCents >= 0) setBaseCents(currentCents);
       if (code) setCupom(String(code));
 
@@ -438,7 +523,7 @@ export default function AccountPage() {
         }
       } catch {}
 
-      // 3) Incremento no backend (sem sobrescrever total)
+      // 3) Incremento no backend (sem sobrescrever total) e REFRESH do valor oficial
       if (deltaCents > 0) {
         const nowIso = new Date().toISOString();
         try {
@@ -446,12 +531,18 @@ export default function AccountPage() {
             addCents: deltaCents,
             lastPaymentSyncAt: nowIso,
           });
-          // ✅ Recarrega o saldo oficial do servidor após sincronizar
+          // Recarrega o valor oficial após sincronizar
           const updated = await fetchJsonLoose("/coupons/mine", {
             headers: { ...authHeaders() }, credentials: "include",
           });
           const centsAfter = Number(updated?.cents ?? updated?.coupon_value_cents ?? updated?.value_cents ?? currentCents) || currentCents;
-          setBaseCents(centsAfter);
+
+          // atualiza a referência oficial
+          officialCentsRef.current = centsAfter;
+
+          // Nunca diminuir na UI por conta de replicação/latência (safeUi só para base interna)
+          const safeUi = Math.max(centsAfter, currentCents + deltaCents);
+          setBaseCents(safeUi);
 
           if (lsKey) localStorage.setItem(lsKey, String(Date.parse(nowIso)));
         } catch (e) {
@@ -479,9 +570,7 @@ export default function AccountPage() {
         if (alive) {
           setUser(me || null);
           try { if (me) localStorage.setItem("me", JSON.stringify(me)); } catch {}
-          // 🚫 NÃO ATUALIZAR baseCents a partir de /me para evitar sobrescrever saldo
-          // const raw = me?.coupon_value_cents ?? me?.cupon_value_cents ?? me?.coupon_cents ?? null;
-          // if (Number.isFinite(Number(raw))) setBaseCents(Number(raw));
+          // NÃO atualizar baseCents a partir de /me para não sobrescrever o saldo
         }
 
         // pagamentos/linhas p/ tabela + validade
