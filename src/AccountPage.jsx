@@ -440,14 +440,19 @@ export default function AccountPage() {
 
       // 3) Incremento no backend (sem sobrescrever total)
       if (deltaCents > 0) {
-        const newTotal = currentCents + deltaCents;
         const nowIso = new Date().toISOString();
         try {
           await postIncrementCoupon({
             addCents: deltaCents,
             lastPaymentSyncAt: nowIso,
           });
-          setBaseCents(newTotal);
+          // ✅ Recarrega o saldo oficial do servidor após sincronizar
+          const updated = await fetchJsonLoose("/coupons/mine", {
+            headers: { ...authHeaders() }, credentials: "include",
+          });
+          const centsAfter = Number(updated?.cents ?? updated?.coupon_value_cents ?? updated?.value_cents ?? currentCents) || currentCents;
+          setBaseCents(centsAfter);
+
           if (lsKey) localStorage.setItem(lsKey, String(Date.parse(nowIso)));
         } catch (e) {
           console.warn("[coupon.increment] falhou ao persistir incremento:", e?.message || e);
@@ -474,8 +479,9 @@ export default function AccountPage() {
         if (alive) {
           setUser(me || null);
           try { if (me) localStorage.setItem("me", JSON.stringify(me)); } catch {}
-          const raw = me?.coupon_value_cents ?? me?.cupon_value_cents ?? me?.coupon_cents ?? null;
-          if (Number.isFinite(Number(raw))) setBaseCents(Number(raw));
+          // 🚫 NÃO ATUALIZAR baseCents a partir de /me para evitar sobrescrever saldo
+          // const raw = me?.coupon_value_cents ?? me?.cupon_value_cents ?? me?.coupon_cents ?? null;
+          // if (Number.isFinite(Number(raw))) setBaseCents(Number(raw));
         }
 
         // pagamentos/linhas p/ tabela + validade
@@ -794,7 +800,7 @@ export default function AccountPage() {
                   alignItems: "flex-end",
                 }}
               >
-                <Typography sx={{ fontFamily: 'ui-monospace, Menlo, Consolas, monospace', fontSize: { xs: 9.5, md: 11 }, letterSpacing: 1.2, opacity: 0.9 }}>
+                <Typography sx={{ fontFamily: 'ui-monospace, Menlo, Consolas, monospace', fontSize: { xs: 10, md: 12 }, color: "success.main", letterSpacing: 1.2 }}>
                   CÓDIGO DE DESCONTO:
                 </Typography>
                 <Typography
