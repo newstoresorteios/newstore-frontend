@@ -1,3 +1,4 @@
+// src/AccountPage.jsx
 import * as React from "react";
 import { useNavigate, Link as RouterLink } from "react-router-dom";
 import logoNewStore from "./Logo-branca-sem-fundo-768x132 - Copia.png";
@@ -98,12 +99,12 @@ function normalizeToEntries(payPayload, reservationsPayload) {
       const drawId = p.draw_id ?? p.drawId ?? p.sorteio_id ?? null;
       const numbers = Array.isArray(p.numbers) ? p.numbers : [];
       const payStatus = p.status || p.paymentStatus || "pending";
-      const when = p.paid_at || p.created_at || p.updated_at || null;
+      const when = p.paid_at || p.updated_at || p.created_at || null;
       return numbers.map(n => ({
         payment_id: p.id ?? p.payment_id ?? null,
         draw_id: drawId,
         number: Number(n),
-        status: payStatus,
+        status: String(payStatus).toLowerCase(),
         when,
         expires_at: p.expires_at || p.expire_at || null,
       }));
@@ -112,14 +113,22 @@ function normalizeToEntries(payPayload, reservationsPayload) {
 
   if (reservationsPayload) {
     const list = reservationsPayload.reservations || reservationsPayload.items || [];
-    return list.map(r => ({
-      reservation_id: r.id ?? r.reservation_id ?? null,
-      draw_id: r.draw_id ?? r.sorteio_id ?? null,
-      number: r.n ?? r.number ?? r.numero,
-      status: (String(r.status || "").toLowerCase() === "sold") ? "approved" : "pending",
-      when: r.paid_at || r.created_at || r.updated_at || null,
-      expires_at: r.reserved_until || r.expires_at || r.expire_at || null,
-    }));
+    return list.map(r => {
+      const raw = String(r.status || "").toLowerCase();
+      // mapear corretamente os estados do reservations
+      let st = "pending";
+      if (raw === "paid" || raw === "sold" || raw === "approved") st = "approved";
+      else if (/(active|reserved|pending|await|aguard)/.test(raw)) st = "pending";
+      else if (/(expired|cancel)/.test(raw)) st = "expired";
+      return {
+        reservation_id: r.id ?? r.reservation_id ?? null,
+        draw_id: r.draw_id ?? r.sorteio_id ?? null,
+        number: Number(r.n ?? r.number ?? r.numero),
+        status: st,
+        when: r.paid_at || r.updated_at || r.created_at || null,
+        expires_at: r.reserved_until || r.expires_at || r.expire_at || null,
+      };
+    });
   }
 
   return [];
@@ -148,10 +157,11 @@ function asTime(v) {
   return Number.isFinite(t) ? t : 0;
 }
 
-async function postIncrementCoupon({ addCents, newTotalCents, lastPaymentSyncAt }) {
+// ⚠️ Não enviar mais coupon_value_cents para evitar sobrescrita.
+// O backend deve somar add_cents com base no last_payment_sync_at.
+async function postIncrementCoupon({ addCents, lastPaymentSyncAt }) {
   const payload = {
     add_cents: Number(addCents) || 0,
-    coupon_value_cents: Number(newTotalCents) || 0,
     last_payment_sync_at: lastPaymentSyncAt,
   };
   return await tryManyPost(
@@ -428,14 +438,13 @@ export default function AccountPage() {
         }
       } catch {}
 
-      // 3) Incremento no backend
+      // 3) Incremento no backend (sem sobrescrever total)
       if (deltaCents > 0) {
         const newTotal = currentCents + deltaCents;
         const nowIso = new Date().toISOString();
         try {
           await postIncrementCoupon({
             addCents: deltaCents,
-            newTotalCents: newTotal,
             lastPaymentSyncAt: nowIso,
           });
           setBaseCents(newTotal);
@@ -445,8 +454,7 @@ export default function AccountPage() {
         }
       }
 
-      // não somar pagamentos diretamente na UI
-      setPaidCents(0);
+      setPaidCents(0); // não somar pagamentos diretamente na UI
     } catch (e) {
       console.warn("[reloadBalances] erro silencioso:", e?.message || e);
     }
@@ -495,6 +503,7 @@ export default function AccountPage() {
 
           const now = Date.now();
           const ttlMs = TTL_MINUTES * 60 * 1000;
+
           const filtered = entries.filter(e => {
             const st = String(e.status || "").toLowerCase();
             if (["approved","paid","pago"].includes(st)) return true;
@@ -509,9 +518,14 @@ export default function AccountPage() {
             return true;
           });
 
-          // DEDUPE
+          // DEDUPE por (sorteio, número) preferindo status aprovado
           const byKey = new Map();
-          const priority = (st) => /pending|pendente|await|aguard/i.test(String(st || "")) ? 2 : 1;
+          const priority = (st) => {
+            const s = String(st || "").toLowerCase();
+            if (["approved","paid","pago"].includes(s)) return 2;
+            if (/(expired|cancel)/.test(s)) return 0;
+            return 1; // pending/active/await…
+          };
           for (const e of filtered) {
             const key = `${Number(e.draw_id)}|${Number(e.number)}`;
             const cur = byKey.get(key);
@@ -526,8 +540,11 @@ export default function AccountPage() {
           }
           const deduped = Array.from(byKey.values());
 
-          // AGRUPAR
+          // AGRUPAR por sorteio (approved só se todos aprovados)
           const byDraw = new Map();
+          const isPendingStatus = (s) => /pending|pendente|await|aguard|active|ativo|reserv/.test(String(s || "").toLowerCase());
+          const isApprovedStatus = (s) => /^(approved|paid|pago)$/.test(String(s || "").toLowerCase());
+
           for (const e of deduped) {
             const id = Number(e.draw_id);
             if (!byDraw.has(id)) {
@@ -535,29 +552,26 @@ export default function AccountPage() {
                 draw_id: id,
                 numeros: [],
                 when: e.when ? new Date(e.when).getTime() : 0,
-                pagamento: e.status,
+                hasPending: false,
+                hasApproved: false,
               });
             }
             const g = byDraw.get(id);
             g.numeros.push(Number(e.number));
             g.when = Math.max(g.when, e.when ? new Date(e.when).getTime() : 0);
-            const st = String(e.status || "").toLowerCase();
-            const gst = String(g.pagamento || "").toLowerCase();
-            g.pagamento =
-              /pending|pendente|await|aguard/.test(st) || /pending|pendente|await|aguard/.test(gst)
-                ? "pending"
-                : (["approved","paid","pago"].includes(st) ? "approved" : g.pagamento);
+            g.hasPending  = g.hasPending  || isPendingStatus(e.status);
+            g.hasApproved = g.hasApproved || isApprovedStatus(e.status);
           }
 
-          // array para tabela (guardamos whenMs para ordenar)
           const grouped = Array.from(byDraw.values()).map(g => {
             const whenDate = g.when ? new Date(g.when) : null;
+            const pagamento = g.hasPending ? "pending" : (g.hasApproved ? "approved" : "pending");
             return {
               draw_id: g.draw_id,
               sorteio: g.draw_id != null ? String(g.draw_id) : "--",
               numeros: Array.from(new Set(g.numeros)).sort((a,b)=>a-b),
               dia: whenDate ? whenDate.toLocaleDateString("pt-BR") : "--/--/----",
-              pagamento: g.pagamento,
+              pagamento,
               resultado: drawsMap.get(Number(g.draw_id)) || "aberto",
               whenMs: g.when || 0,
             };
@@ -565,27 +579,21 @@ export default function AccountPage() {
 
           // >>> ORDEM: última compra primeiro (decrescente por whenMs)
           grouped.sort((a, b) => (b.whenMs || 0) - (a.whenMs || 0));
-
           setRows(grouped);
 
           // validade (último approved)
           let lastApprovedAtMs = null;
-          if (from === "/payments/me") {
-            const list = Array.isArray(pay) ? pay : (pay.payments || []);
-            for (const p of list) {
-              if (String(p.status).toLowerCase() === "approved") {
-                const t = Date.parse(p.paid_at || p.updated_at || p.created_at || "");
-                if (!isNaN(t)) lastApprovedAtMs = Math.max(lastApprovedAtMs ?? 0, t);
-              }
-            }
-          } else {
-            for (const e of deduped) {
-              if (String(e.status).toLowerCase() === "approved") {
-                const t = Date.parse(e.when || "");
-                if (!isNaN(t)) lastApprovedAtMs = Math.max(lastApprovedAtMs ?? 0, t);
-              }
-            }
+          const listForValidity = from === "/payments/me"
+            ? (Array.isArray(pay) ? pay : (pay.payments || []))
+            : deduped;
+
+          for (const p of listForValidity) {
+            const st = String((p.status ?? p?.status)?.toString() || "").toLowerCase();
+            const ok = st === "approved" || st === "paid" || st === "pago";
+            const t = Date.parse(p.paid_at || p.when || p.updated_at || p.created_at || "");
+            if (ok && !isNaN(t)) lastApprovedAtMs = Math.max(lastApprovedAtMs ?? 0, t);
           }
+
           if (lastApprovedAtMs) {
             const exp = new Date(lastApprovedAtMs + COUPON_VALIDITY_DAYS * 24 * 60 * 60 * 1000);
             const yy = String(exp.getFullYear()).slice(-2);
@@ -757,7 +765,7 @@ export default function AccountPage() {
             </Paper>
           )}
 
-          {/* Cartão — remodelado para ficar como o anexo */}
+          {/* Cartão */}
           <Box sx={{ width: "100%", display: "flex", justifyContent: "center" }}>
             <Paper
               elevation={0}
@@ -776,8 +784,6 @@ export default function AccountPage() {
                 backgroundBlendMode: "screen, lighten",
               }}
             >
-              {/* REMOVIDO: PRÊMIO / CARTÃO PRESENTE / POSIÇÕES */}
-
               {/* Top-right: código + valor */}
               <Stack
                 spacing={0.7}
@@ -810,7 +816,7 @@ export default function AccountPage() {
                 </Typography>
               </Stack>
 
-              {/* Logo + ondas NFC */}
+              {/* Logo + ondas */}
               <Box
                 sx={{
                   position: "absolute",
@@ -832,16 +838,10 @@ export default function AccountPage() {
                     filter: "brightness(1.02)",
                   }}
                 />
-
-                <Box
-                  component="svg"
-                  viewBox="0 0 60 30"
-                  sx={{ width: { xs: 38, md: 50 }, height: { xs: 20, md: 26 } }}
-                >
+                <Box component="svg" viewBox="0 0 60 30" sx={{ width: { xs: 38, md: 50 }, height: { xs: 20, md: 26 } }}>
                   <path d="M20 5 C28 10, 28 20, 20 25" fill="none" stroke="#7CFF6B" strokeWidth="3" strokeLinecap="round"/>
                   <path d="M34 3 C44 10, 44 20, 34 27" fill="none" stroke="#7CFF6B" strokeWidth="3" strokeLinecap="round" opacity={0.95}/>
                   <path d="M48 1 C60 10, 60 20, 48 29" fill="none" stroke="#7CFF6B" strokeWidth="3" strokeLinecap="round" opacity={0.9}/>
-                  
                 </Box>
               </Box>
 
@@ -966,7 +966,7 @@ export default function AccountPage() {
                       <TableRow><TableCell colSpan={6} sx={{ color: "#bbb" }}>Nenhuma participação encontrada.</TableCell></TableRow>
                     )}
                     {rows.map((row, idx) => {
-                      const isPending = /pendente|pending|await|aguard|open/i.test(String(row.pagamento || ""));
+                      const isPending = /pendente|pending|await|aguard|open|ativo|active/i.test(String(row.pagamento || ""));
                       const clickable = true;
 
                       const isPaid   = /^(approved|paid|pago)$/i.test(String(row.pagamento || ""));
