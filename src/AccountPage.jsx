@@ -184,10 +184,10 @@ export default function AccountPage() {
   // ► saldo composto
   const [baseCents, setBaseCents] = React.useState(0);   // pode incluir safeUi p/ nunca regredir visualmente
   const [paidCents, setPaidCents] = React.useState(0);   // soma payments approved (não usado na UI)
-  const [valorAcumulado, setValorAcumulado] = React.useState(0);
 
-  // ▼ NOVO: referência ao valor OFICIAL do servidor (coupon_value_cents)
-  const officialCentsRef = React.useRef(0);
+  // Valor oficial vindo do servidor (coupon_value_cents)
+  const [officialCents, setOfficialCents] = React.useState(0);
+  const valorAcumulado = (Number(officialCents) || 0) / 100;
 
   const [cupom, setCupom] = React.useState("CUPOMAQUI");
   const [validade, setValidade] = React.useState("--/--/--");
@@ -221,12 +221,6 @@ export default function AccountPage() {
     } catch {}
   }
   React.useEffect(() => { loadClaims(); }, []);
-
-  // ─── saldo NA UI = **APENAS** coupon_value_cents (valor oficial) ─────────────
-  React.useEffect(() => {
-    setValorAcumulado((Number(officialCentsRef.current) || 0) / 100);
-  }, [baseCents]);
-  // ─────────────────────────────────────────────────────────────────────────────
 
   // Busca uma reserva ativa do usuário para (drawId, number)
   async function findExistingReservation(drawId, number) {
@@ -484,8 +478,8 @@ export default function AccountPage() {
         code = mine.code || mine.coupon_code || null;
       }
 
-      // guarda o valor OFICIAL para referência/visualização
-      officialCentsRef.current = currentCents;
+      // atualiza o valor OFICIAL exibido
+      setOfficialCents(Number.isFinite(currentCents) && currentCents >= 0 ? currentCents : 0);
 
       if (Number.isFinite(currentCents) && currentCents >= 0) setBaseCents(currentCents);
       if (code) setCupom(String(code));
@@ -537,8 +531,8 @@ export default function AccountPage() {
           });
           const centsAfter = Number(updated?.cents ?? updated?.coupon_value_cents ?? updated?.value_cents ?? currentCents) || currentCents;
 
-          // atualiza a referência oficial
-          officialCentsRef.current = centsAfter;
+          // valor oficial pós-sync
+          setOfficialCents(centsAfter);
 
           // Nunca diminuir na UI por conta de replicação/latência (safeUi só para base interna)
           const safeUi = Math.max(centsAfter, currentCents + deltaCents);
