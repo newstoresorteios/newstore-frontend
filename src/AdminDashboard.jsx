@@ -396,6 +396,10 @@ export default function AdminDashboard() {
             <br />
             <Divider sx={{ my: 3, borderColor: "rgba(255,255,255,0.18)", borderBottomWidth: 2 }} />
             <br />
+            <BigCard color="info.dark" onClick={() => navigate("/admin/sorteiosAtivos")}>
+              SORTEIO ATIVO<br /> COMPRADORES
+            </BigCard>
+            <br />
             <BigCard outlined onClick={() => navigate("/admin/sorteios")}>
               LISTA DE SORTEIOS
               <br /> REALIZADOS

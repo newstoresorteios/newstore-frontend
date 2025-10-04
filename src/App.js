@@ -19,6 +19,7 @@ import AdminClientes from "./AdminClientes";
 import AdminVencedores from "./AdminVencedores";
 import AdminUsersPage from "./AdminUsersPage";
 import DrawBoardPage from "./DrawBoardPage";
+import AdminOpenDrawBuyers from "./AdminOpenDrawBuyers";
 
 export default function App() {
   const [selecionados, setSelecionados] = React.useState([]);
@@ -89,6 +90,7 @@ export default function App() {
             />
             <Route path="/admin/AdminClientesUser" element={<AdminUsersPage />} />
             <Route path="/me/draw/:id" element={<DrawBoardPage />} />
+            <Route path="/admin/sorteiosAtivos" element={<AdminOpenDrawBuyers />} />
           </Routes>
         </BrowserRouter>
       </SelectionContext.Provider>
