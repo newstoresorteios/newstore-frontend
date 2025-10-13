@@ -930,10 +930,7 @@ Baseado no resultado oficial da Lotomania (Caixa Econômica Federal).
                 alt="Cartão presente - exemplo"
                 sx={{ width: "100%", maxWidth: 800, mx: "auto", display: "block", borderRadius: 2 }}
               />
-              <Typography variant="body2" sx={{ opacity: 0.85 }}>
-                Os cartões são <strong>acumulativos</strong>, permitindo somar até{" "}
-                <strong>R$ 4.200</strong> em um único cartão.
-              </Typography>
+             
             </Stack>
           </Paper>
 
