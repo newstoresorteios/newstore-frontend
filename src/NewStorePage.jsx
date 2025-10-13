@@ -949,7 +949,7 @@ Baseado no resultado oficial da Lotomania (Caixa Econômica Federal).
                 • O ganhador é o participante com o último número sorteado pela Lotomania.
               </Typography>
               <Typography variant="body1">
-                • Prazo máximo: <strong><span style={{ color: "red" }}>7 dias após abertura da rodada.</span></strong>
+                • Prazo máximo: 7 dias após abertura da rodada.
               </Typography>
               <Typography variant="body1">
                 • Envio do prêmio: frete por conta do vencedor.
