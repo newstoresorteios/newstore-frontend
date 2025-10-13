@@ -10,6 +10,15 @@ import { createPixPayment, checkPixStatus } from "./services/pix";
 import { useAuth } from "./authContext";
 
 import {
+   List, ListItem, ListItemText,
+  Alert, Accordion, AccordionSummary, AccordionDetails
+} from "@mui/material";
+import PixIcon from "@mui/icons-material/Pix";
+import CreditCardOutlinedIcon from "@mui/icons-material/CreditCardOutlined";
+import HelpOutlineOutlinedIcon from "@mui/icons-material/HelpOutlineOutlined";
+import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
+
+import {
   AppBar,
   Box,
   Button,
@@ -601,12 +610,15 @@ export default function NewStorePage({
                 </Box>{" "}
                 Relógios!
               </Typography>
+              <Typography variant="h5" fontWeight={900}>
+                “Participe, concorra e ainda receba 100% do valor de volta.”
+              
+              </Typography>
               <Typography variant="h6" sx={{ opacity: 0.9 }}>
-                O único sorteio que permite receber <strong>100% do valor</strong>{" "}
-                de volta em todas as participações. Além de concorrer ao prêmio,
-                você tem a <strong>vantagem de não perder o valor investido</strong>{" "}
-                — o valor vira um<strong> cartão presente </strong> para usar no
-                site (validade de até <strong>6 meses</strong>).
+                A New Store apresenta o único sorteio em que você nunca sai perdendo.
+Ao participar, você garante uma vaga na disputa por <strong>R$ 5.000 em créditos</strong>, e ainda transforma o valor da sua participação em um Cartão Presente Digital, válido para compras em todo o site.
+⏳ Sorteio válido até o preenchimento total da tabela.
+Baseado no resultado oficial da Lotomania (Caixa Econômica Federal).
               </Typography>
             </Stack>
           </Paper>
@@ -883,20 +895,30 @@ export default function NewStorePage({
                Como Funciona Seu Cartão Presente Digital
               </Typography>
             </Box>
+              <Typography variant="body1">
+      Cada participação que você faz se transforma em crédito no seu Cartão Presente Digital, acumulando automaticamente o valor investido.
+      A validade do saldo é de 6 meses, sendo renovada a cada nova participação.
+    </Typography>
       <Typography variant="body1">
-      • Seu saldo cresce a cada participação: o valor de todas as suas apostas é somado automaticamente em um único cartão presente digital.
+      • Saldo acumulativo em um único cartão
     </Typography>
 
     <Typography variant="body1">
-      • <em>Validade renovada automaticamente:</em> a cada nova participação, a data de validade do seu saldo é renovada. Assim, você não precisa se preocupar em perder nada.
+      • Validade renovada automaticamente
     </Typography>
 
     <Typography variant="body1">
-      • <em>Programe sua compra:</em> é a maneira perfeita de guardar um crédito para aquela compra especial em nosso site!
+      • Uso exclusivo no site da New Store Relógios
     </Typography>
 
     <Typography variant="body1">
-      • <em>Mantenha seu código em segurança:</em> o código do cartão é a chave para usar seu desconto. <em>Guarde-o com cuidado e nunca o compartilhe em público.</em>
+      • Código pessoal e intransferível
+    </Typography>
+    <Typography variant="body1">
+      • Crédito perfeito para planejar a compra do seu próximo relógio
+    </Typography>
+    <Typography variant="body1">
+      <strong>Dica:</strong> É a maneira mais inteligente de participar, enquanto concorre, você acumula crédito para usar quando quiser.
     </Typography>
   </Stack>
 </Paper>
@@ -921,30 +943,27 @@ export default function NewStorePage({
                 Informações do sorteio
               </Typography>
               <Typography variant="body1">
-                • A posição só é considerada <strong>confirmada</strong> após a compensação
-                do pagamento pelo número reservado.
+                • A vaga só é confirmada após a compensação do pagamento.
               </Typography>
               <Typography variant="body1">
-                • O sorteio é realizado <strong>após a venda de todos os cartões</strong>.
+                • O sorteio é realizado assim que todos os números são vendidos.
               </Typography>
               <Typography variant="body1">
-                • O resultado utiliza a <strong>Lotomania</strong> — veja em{" "}
-                <Link href={RESULTADOS_LOTERIAS} target="_blank" rel="noopener">
-                  Resultados das loterias
-                </Link>
-                .
+                • O ganhador é o participante com o último número sorteado pela Lotomania.
               </Typography>
               <Typography variant="body1">
-                • O <strong>ganhador</strong> é aquele que tirar o <strong>último número</strong>{" "}
-                sorteado da Lotomania.
+                • Prazo máximo: <strong><span style={{ color: "red" }}>7 dias após abertura da rodada.</span></strong>
               </Typography>
               <Typography variant="body1">
-                • Custos de entrega por conta do vencedor; envio a partir do RJ.
+                • Envio do prêmio: frete por conta do vencedor.
               </Typography>
-              <Typography variant="body1">• Duração máxima do sorteio: <strong>7 dias</strong>.</Typography>
               <Typography variant="body1">
-                • O <strong>Cartão Presente não é cumulativo</strong> com o prêmio do sorteio.
+                • O Cartão Presente não é cumulativo com o prêmio nem com outras promoções do site.
               </Typography>
+              <Typography variant="body1">
+                Transparência total: o resultado pode ser conferido publicamente no site oficial da Caixa Econômica Federal.
+              </Typography>
+              
             </Stack>
           </Paper>
 
@@ -954,13 +973,13 @@ export default function NewStorePage({
                 Regras para utilização dos <Box component="span" sx={{ opacity: 0.85 }}>cartões presente</Box>
               </Typography>
               <Stack component="ul" sx={{ pl: 3, m: 0 }} spacing={1}>
-                <Typography component="li">Uso apenas no site da New Store.</Typography>
+                <Typography component="li">Uso exclusivo no site da <strong>New Store Relógios.</strong></Typography>
                 <Typography component="li">
-                  Não é possível comprar outro cartão-presente com cartão-presente.
+                  Não é possível comprar outro cartão-presente com crédito de sorteio.
                 </Typography>
-                <Typography component="li">Não há conversão em dinheiro.</Typography>
+                <Typography component="li">Sem conversão em dinheiro.</Typography>
                <Typography component="li">
-                  Utilização em <strong>uma única compra</strong> (pode dividir em vários cartões).
+                  Utilização em uma única compra, na compra de diversos produtos e também é possível usar somente parte do valor acumulado. 
                   <Link
                     href="https://chat.whatsapp.com/GdosYmyW2Jj1mDXNDTFt6F"
                     target="_blank"
@@ -970,18 +989,14 @@ export default function NewStorePage({
                   </Link>
                 </Typography>
                 
-                <Typography component="li">Validade: <strong>6 meses</strong>.</Typography>
+                <Typography component="li">Validade: <strong>6 meses</strong>, renovável automaticamente a cada participação..</Typography>
                 <Typography component="li">
-                  Sem responsabilidade por extravio/furto/perda/validade expirada.
+                  A New Store não se responsabiliza por perda, extravio ou validade expirada.
                 </Typography>
                 <Typography component="li">
-                  Considere o valor do produto no credito para aplicação dos cartões cartões presente, sempre respeitando a tabela de utilização do cartão presente. (tabela abaixo). 
+                  O cartão não é cumulativo com outros cupons de desconto.
                 </Typography>
-                <Typography component="li">Não soma com outros cupons.</Typography>
-                 <Typography component="li">
-                  Cartões presente não se somam a outras promoções.  
-O Valor do premio do sorteio pode ser utilizado em todo o site sem descriminação. 
-                </Typography>
+                
               </Stack>
               <Box
                 component="img"
@@ -990,11 +1005,174 @@ O Valor do premio do sorteio pode ser utilizado em todo o site sem descriminaç�
                 sx={{ width: "100%", maxWidth: 900, mx: "auto", display: "block", borderRadius: 2, mt: 1 }}
               />
               <Typography align="center" sx={{ mt: 1.5, fontWeight: 700, letterSpacing: 1 }}>
-                CONSIDERAR VALOR DO PRODUTO NO CREDITO PARA APLICAÇÃO DOS CARTÕES CARTÃO PRESENTE
+                Sempre considerar o valor integral do produto na forma de pagamento escolhida (Pix ou crédito).
               </Typography>
              
             </Stack>
           </Paper>
+
+           <Paper variant="outlined" sx={{ p: { xs: 2, md: 3 }, mt: 2 }}>
+  <Stack spacing={2}>
+    {/* Exemplo Prático */}
+    <Typography variant="h6">⌚ Exemplo Prático</Typography>
+
+    <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
+      Relógio Tissot PRX Powermatic 80
+    </Typography>
+
+    <Divider />
+
+    {/* Crédito */}
+    <Stack spacing={1}>
+      <Stack direction="row" alignItems="center" spacing={1}>
+        <CreditCardOutlinedIcon fontSize="small" />
+        <Chip size="small" label="Compra no crédito" />
+      </Stack>
+      <List dense disablePadding>
+        <ListItem disableGutters>
+          <ListItemText primary="Valor no crédito: R$ 6.799,99" />
+        </ListItem>
+        <ListItem disableGutters>
+          <ListItemText primary="→ Pode usar até R$ 800,00 do cartão presente" />
+        </ListItem>
+        <ListItem disableGutters>
+          <ListItemText primary="→ Valor final: R$ 5.999,99 (parcelado em até 12x sem juros)" />
+        </ListItem>
+      </List>
+    </Stack>
+
+    <Divider />
+
+    {/* Pix */}
+    <Stack spacing={1}>
+      <Stack direction="row" alignItems="center" spacing={1}>
+        <PixIcon fontSize="small" />
+        <Chip size="small" color="success" label="À vista (Pix)" />
+      </Stack>
+      <List dense disablePadding>
+        <ListItem disableGutters>
+          <ListItemText primary="Valor à vista (Pix): R$ 5.779,99" />
+        </ListItem>
+        <ListItem disableGutters>
+          <ListItemText primary="→ Pode aplicar os mesmos R$ 800,00" />
+        </ListItem>
+        <ListItem disableGutters>
+          <ListItemText primary="→ Valor final: R$ 4.979,99" />
+        </ListItem>
+      </List>
+    </Stack>
+
+    <Alert severity="info" icon={<HelpOutlineOutlinedIcon />}>
+      <Typography variant="body2">
+        <strong>Importante:</strong> o desconto sempre acompanha a forma de pagamento.
+        Compras via Pix devem ter o desconto aplicado <strong>manualmente</strong> pela equipe da loja.
+      </Typography>
+    </Alert>
+
+    <Divider sx={{ my: 1 }} />
+
+    {/* FAQ */}
+    <Typography variant="h6">❓ Perguntas Frequentes (FAQ)</Typography>
+
+    <Accordion>
+      <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+        <Typography>1. Como funciona o sorteio?</Typography>
+      </AccordionSummary>
+      <AccordionDetails>
+        <Typography variant="body2">
+          Baseado no resultado oficial da Lotomania. O ganhador é quem possui o último número sorteado.
+        </Typography>
+      </AccordionDetails>
+    </Accordion>
+
+    <Accordion>
+      <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+        <Typography>2. Quando o sorteio acontece?</Typography>
+      </AccordionSummary>
+      <AccordionDetails>
+        <Typography variant="body2">Assim que todos os números são vendidos.</Typography>
+      </AccordionDetails>
+    </Accordion>
+
+    <Accordion>
+      <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+        <Typography>3. O que ganho ao participar?</Typography>
+      </AccordionSummary>
+      <AccordionDetails>
+        <Typography variant="body2">
+          Você concorre ao prêmio e ainda recebe o valor investido de volta em créditos no site.
+        </Typography>
+      </AccordionDetails>
+    </Accordion>
+
+    <Accordion>
+      <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+        <Typography>4. Onde posso usar meu cartão presente?</Typography>
+      </AccordionSummary>
+      <AccordionDetails>
+        <Typography variant="body2">
+          Somente no site da New Store Relógios, em qualquer produto disponível no site (respeitando a tabela).
+        </Typography>
+      </AccordionDetails>
+    </Accordion>
+
+    <Accordion>
+      <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+        <Typography>5. Posso transferir meu crédito?</Typography>
+      </AccordionSummary>
+      <AccordionDetails>
+        <Typography variant="body2">
+          Não. O cartão é pessoal, intransferível e sem conversão em dinheiro.
+        </Typography>
+      </AccordionDetails>
+    </Accordion>
+
+    <Accordion>
+      <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+        <Typography>6. O prêmio inclui o frete?</Typography>
+      </AccordionSummary>
+      <AccordionDetails>
+        <Typography variant="body2">Não. O custo de envio é por conta do vencedor.</Typography>
+      </AccordionDetails>
+    </Accordion>
+
+    <Accordion>
+      <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+        <Typography>7. Onde acompanho os resultados e novas rodadas?</Typography>
+      </AccordionSummary>
+      <AccordionDetails>
+        <Typography variant="body2">
+          No grupo oficial da New Store Relógios no WhatsApp.
+        </Typography>
+      </AccordionDetails>
+    </Accordion>
+
+    <Accordion>
+      <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+        <Typography>8. Posso usar somente uma parte do meu saldo acumulado?</Typography>
+      </AccordionSummary>
+      <AccordionDetails>
+        <Typography variant="body2">
+          Sim, você pode desmembrar o seu cartão presente e usar somente uma parte do seu saldo.
+        </Typography>
+      </AccordionDetails>
+    </Accordion>
+
+    <Accordion>
+      <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+        <Typography>9. Posso comprar mais de 1 produto usando meus créditos?</Typography>
+      </AccordionSummary>
+      <AccordionDetails>
+        <Typography variant="body2">
+          Sim, você pode escolher diversos produtos no site para aplicar seu desconto.
+          Basta seguir a tabela de utilização dos cartões presente.
+        </Typography>
+      </AccordionDetails>
+    </Accordion>
+  </Stack>
+</Paper>
+
+
 
           <Paper variant="outlined" sx={{ p: { xs: 2, md: 3 } }}>
             <Stack spacing={1.5}>
