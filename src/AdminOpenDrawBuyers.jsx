@@ -54,13 +54,74 @@ async function getJSON(path) {
 
 /* ---------- util ---------- */
 const pad2 = (n) => String(n).padStart(2, "0");
-const buyerColor = (idx) => {
-  const palette = [
-    "#59d98e","#5bb6ff","#ffb74d","#e57373","#ba68c8","#4db6ac","#7986cb",
-    "#aed581","#90a4ae","#f06292","#9575cd","#4fc3f7","#81c784","#ff8a65",
-  ];
-  return palette[idx % palette.length];
-};
+const palette = [
+  "#59d98e","#5bb6ff","#ffb74d","#e57373","#ba68c8","#4db6ac","#7986cb",
+  "#aed581","#90a4ae","#f06292","#9575cd","#4fc3f7","#81c784","#ff8a65",
+];
+const buyerColor = (idx) => palette[idx % palette.length];
+const esc = (s) =>
+  String(s ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+
+/* ----- helpers de imagem (logo opcional) ----- */
+async function blobToDataURL(blob) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(r.result);
+    r.onerror = reject;
+    r.readAsDataURL(blob);
+  });
+}
+async function preloadAsDataURL(src) {
+  const res = await fetch(src, { cache: "no-store" });
+  const blob = await res.blob();
+  return blobToDataURL(blob);
+}
+
+/* ----- helpers de canvas (formas arredondadas) ----- */
+function roundRectPath(ctx, x, y, w, h, r) {
+  const rr = Math.min(r, w / 2, h / 2);
+  ctx.beginPath();
+  ctx.moveTo(x + rr, y);
+  ctx.arcTo(x + w, y, x + w, y + h, rr);
+  ctx.arcTo(x + w, y + h, x, y + h, rr);
+  ctx.arcTo(x, y + h, x, y, rr);
+  ctx.arcTo(x, y, x + w, y, rr);
+  ctx.closePath();
+}
+function fillRounded(ctx, x, y, w, h, r, fill) {
+  roundRectPath(ctx, x, y, w, h, r);
+  ctx.fillStyle = fill;
+  ctx.fill();
+}
+function strokeRounded(ctx, x, y, w, h, r, stroke, lw = 2) {
+  roundRectPath(ctx, x, y, w, h, r);
+  ctx.lineWidth = lw;
+  ctx.strokeStyle = stroke;
+  ctx.stroke();
+}
+
+/* ----- word wrap simples ----- */
+function wrapText(ctx, text, maxWidth) {
+  const words = text.split(/\s+/g);
+  const lines = [];
+  let line = "";
+  for (let i = 0; i < words.length; i++) {
+    const test = line ? line + " " + words[i] : words[i];
+    if (ctx.measureText(test).width <= maxWidth) {
+      line = test;
+    } else {
+      if (line) lines.push(line);
+      line = words[i];
+    }
+  }
+  if (line) lines.push(line);
+  return lines;
+}
 
 export default function AdminOpenDrawBuyers() {
   const navigate = useNavigate();
@@ -133,6 +194,291 @@ export default function AdminOpenDrawBuyers() {
     URL.revokeObjectURL(url);
   };
 
+  /** ---------- EXPORT 1: PNG 1080x1920 (Grade) ---------- */
+  const exportPNGMobile = async () => {
+    if (loading) {
+      alert("Aguarde carregar os dados do sorteio antes de exportar.");
+      return;
+    }
+
+    const W = 1080, H = 1920;
+    const canvas = document.createElement("canvas");
+    canvas.width = W;
+    canvas.height = H;
+    const ctx = canvas.getContext("2d");
+
+    // Fundo
+    ctx.fillStyle = "#0E0E0E";
+    ctx.fillRect(0, 0, W, H);
+
+    const Mx = 36, My = 48;
+    let y = My;
+
+    // Logo
+    try {
+      const dataURL = await preloadAsDataURL(logoNewStore);
+      const img = new Image();
+      await new Promise((res, rej) => { img.onload = res; img.onerror = rej; img.src = dataURL; });
+      const h = 72;
+      const scale = h / img.height;
+      const w = img.width * scale;
+      ctx.drawImage(img, Mx, y, w, h);
+    } catch {}
+    y += 72 + 12;
+
+    // Título
+    ctx.fillStyle = "#FFFFFF";
+    ctx.font = "900 44px Inter, system-ui, Segoe UI, Roboto, Arial";
+    ctx.textBaseline = "top";
+    ctx.fillText("Sorteio Ativo — Grade 00–99", Mx, y);
+    y += 44 + 16;
+
+    // Metadados
+    const metaGap = 24;
+    const metaLabels = ["Nº Sorteio", "Vendidos", "Restantes"];
+    const metaValues = [
+      String(drawId ?? "-"),
+      String(sold ?? 0),
+      String(Math.max(0, remaining ?? (100 - (sold || 0)))),
+    ];
+    const colW = 280;
+
+    for (let i = 0; i < 3; i++) {
+      const x = Mx + i * (colW + metaGap);
+      ctx.globalAlpha = 0.75;
+      ctx.font = "700 24px Inter, system-ui, Segoe UI, Roboto, Arial";
+      ctx.fillText(metaLabels[i], x, y);
+      ctx.globalAlpha = 1;
+      ctx.font = "900 36px Inter, system-ui, Segoe UI, Roboto, Arial";
+      ctx.fillText(metaValues[i], x, y + 28);
+    }
+    y += 36 + 28 + 28;
+
+    // Grade 10x10
+    const gap = 10;
+    const footerH = 28 + 12 + 8;
+    const availH = H - y - footerH - My;
+    const availW = W - Mx * 2;
+
+    const cellW = (availW - gap * 9) / 10;
+    const cellHMax = (availH - gap * 9) / 10;
+    const cell = Math.min(cellW, cellHMax);
+    const gridW = cell * 10 + gap * 9;
+    const startX = Mx + (availW - gridW) / 2;
+    const startY = y;
+
+    // Mapa número → dono
+    const ownByNum = new Map();
+    numbers.forEach((x) => {
+      const nNum = Number(x.n);
+      const idx  = idToIdx.get(x.user_id) ?? 0;
+      ownByNum.set(nNum, { idx, owner: x });
+    });
+
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+
+    for (let i = 0; i < 100; i++) {
+      const r = Math.floor(i / 10);
+      const c = i % 10;
+      const x = startX + c * (cell + gap);
+      const yy = startY + r * (cell + gap);
+
+      const info = ownByNum.get(i);
+      if (info) {
+        fillRounded(ctx, x, yy, cell, cell, 16, buyerColor(info.idx));
+        ctx.fillStyle = "#000000";
+      } else {
+        strokeRounded(ctx, x, yy, cell, cell, 16, "rgba(255,255,255,0.18)", 2);
+        ctx.fillStyle = "#FFFFFF";
+      }
+
+      ctx.font = `${Math.round(cell * 0.36)}px Inter, system-ui, Segoe UI, Roboto, Arial`;
+      ctx.fillText(pad2(i), x + cell / 2, yy + cell / 2);
+    }
+
+    // Footer
+    const footY = startY + 10 * (cell + gap) + 16;
+    ctx.globalAlpha = 0.8;
+    ctx.fillStyle = "#FFFFFF";
+    ctx.font = "22px Inter, system-ui, Segoe UI, Roboto, Arial";
+    ctx.textAlign = "left";
+    ctx.fillText(`Gerado pela administração • ${new Date().toLocaleString("pt-BR")}`, Mx, footY);
+    ctx.textAlign = "right";
+    ctx.fillText("newstore", W - Mx, footY);
+    ctx.globalAlpha = 1;
+
+    const dataUrl = canvas.toDataURL("image/png");
+    const a = document.createElement("a");
+    a.href = dataUrl;
+    a.download = `sorteio_${drawId}_grade_1080x1920.png`;
+    a.click();
+  };
+
+  /** ---------- EXPORT 2: PNG 1080x1920 (Lista de nomes e números) ---------- */
+  const exportPNGListMobile = async () => {
+    if (loading) {
+      alert("Aguarde carregar os dados do sorteio antes de exportar.");
+      return;
+    }
+
+    const W = 1080, H = 1920;
+    const canvas = document.createElement("canvas");
+    canvas.width = W;
+    canvas.height = H;
+    const ctx = canvas.getContext("2d");
+
+    // Fundo
+    ctx.fillStyle = "#0E0E0E";
+    ctx.fillRect(0, 0, W, H);
+
+    const Mx = 36, My = 48;
+    let y = My;
+
+    // Logo
+    try {
+      const dataURL = await preloadAsDataURL(logoNewStore);
+      const img = new Image();
+      await new Promise((res, rej) => { img.onload = res; img.onerror = rej; img.src = dataURL; });
+      const h = 72;
+      const scale = h / img.height;
+      const w = img.width * scale;
+      ctx.drawImage(img, Mx, y, w, h);
+    } catch {}
+    y += 72 + 12;
+
+    // Título
+    ctx.fillStyle = "#FFFFFF";
+    ctx.font = "900 44px Inter, system-ui, Segoe UI, Roboto, Arial";
+    ctx.textBaseline = "top";
+    ctx.fillText("Sorteio Ativo — Lista de Compradores", Mx, y);
+    y += 44 + 14;
+
+    // Metadados
+    const metaGap = 24;
+    const metaLabels = ["Nº Sorteio", "Vendidos", "Restantes"];
+    const metaValues = [
+      String(drawId ?? "-"),
+      String(sold ?? 0),
+      String(Math.max(0, remaining ?? (100 - (sold || 0)))),
+    ];
+    const colW = 280;
+    for (let i = 0; i < 3; i++) {
+      const x = Mx + i * (colW + metaGap);
+      ctx.globalAlpha = 0.75;
+      ctx.font = "700 24px Inter, system-ui, Segoe UI, Roboto, Arial";
+      ctx.fillText(metaLabels[i], x, y);
+      ctx.globalAlpha = 1;
+      ctx.font = "900 36px Inter, system-ui, Segoe UI, Roboto, Arial";
+      ctx.fillText(metaValues[i], x, y + 28);
+    }
+    y += 36 + 28 + 18;
+
+    // Área para os cards em duas colunas
+    const gapCol = 24;
+    const contentTop = y;
+    const contentBottom = H - 80; // reserva para footer
+    const contentHeight = contentBottom - contentTop;
+    const colWidth = Math.floor((W - Mx * 2 - gapCol) / 2);
+    const colX = [Mx, Mx + colWidth + gapCol];
+    let colY = [contentTop, contentTop];
+
+    // Ordena por nome (opcional p/ divulgação)
+    const data = [...buyers].sort((a, b) =>
+      String(a.name || a.email || "").localeCompare(String(b.name || b.email || ""), "pt-BR", { sensitivity: "base" })
+    );
+
+    // Desenha cada comprador como um "card"
+    ctx.textBaseline = "top";
+
+    let overflowCount = 0;
+    data.forEach((b) => {
+      const idx = idToIdx.get(b.user_id) ?? 0;
+      const chip = buyerColor(idx);
+      const name = String(b.name || b.email || "(sem nome)");
+      const qtd = Number(b.count || (b.numbers?.length ?? 0)) || 0;
+      const numbersList = (b.numbers || []).map(pad2).join(", ");
+
+      // Estimativa de altura do card com wrap
+      ctx.font = "800 30px Inter, system-ui, Segoe UI, Roboto, Arial";
+      const nameH = 34;
+
+      ctx.font = "700 24px Inter, system-ui, Segoe UI, Roboto, Arial";
+      const qtdText = `Qtd: ${qtd}`;
+      const qtdH = 26;
+
+      ctx.font = "400 26px Inter, system-ui, Segoe UI, Roboto, Arial";
+      const lines = wrapText(ctx, numbersList || "—", colWidth - 24 - 8); // padding 12+12
+      const lineH = 30;
+      const numsH = lines.length * lineH;
+
+      const cardPad = 12;
+      const cardH = cardPad + nameH + 6 + qtdH + 8 + numsH + cardPad;
+
+      // escolhe coluna com menor Y
+      const k = colY[0] <= colY[1] ? 0 : 1;
+      const x = colX[k];
+      const nextY = colY[k] + cardH + 14;
+
+      // checa overflow
+      if (nextY > contentTop + contentHeight) {
+        overflowCount++;
+        return;
+      }
+
+      // Card
+      fillRounded(ctx, x, colY[k], colWidth, cardH, 16, "#141414");
+      strokeRounded(ctx, x, colY[k], colWidth, cardH, 16, "rgba(255,255,255,0.10)", 2);
+
+      // Chip
+      const chipSize = 18;
+      fillRounded(ctx, x + cardPad, colY[k] + cardPad + 6, chipSize, chipSize, 8, chip);
+
+      // Nome
+      ctx.fillStyle = "#FFFFFF";
+      ctx.font = "800 30px Inter, system-ui, Segoe UI, Roboto, Arial";
+      ctx.fillText(
+        name,
+        x + cardPad + chipSize + 8,
+        colY[k] + cardPad
+      );
+
+      // Qtd
+      ctx.fillStyle = "rgba(255,255,255,0.85)";
+      ctx.font = "700 24px Inter, system-ui, Segoe UI, Roboto, Arial";
+      ctx.fillText(qtdText, x + cardPad, colY[k] + cardPad + nameH + 6);
+
+      // Números (wrap)
+      ctx.fillStyle = "rgba(255,255,255,0.9)";
+      ctx.font = "400 26px Inter, system-ui, Segoe UI, Roboto, Arial";
+      const numbersYStart = colY[k] + cardPad + nameH + 6 + qtdH + 8;
+      lines.forEach((ln, i) => {
+        ctx.fillText(ln, x + cardPad, numbersYStart + i * lineH);
+      });
+
+      colY[k] = nextY;
+    });
+
+    // Se overflow, mensagem no rodapé
+    ctx.fillStyle = "#FFFFFF";
+    ctx.textAlign = "left";
+    ctx.font = "22px Inter, system-ui, Segoe UI, Roboto, Arial";
+    let footerTextLeft = `Gerado pela administração • ${new Date().toLocaleString("pt-BR")}`;
+    if (overflowCount > 0) {
+      footerTextLeft += ` • … e mais ${overflowCount} comprador(es)`;
+    }
+    ctx.fillText(footerTextLeft, Mx, H - 48);
+
+    ctx.textAlign = "right";
+    ctx.fillText("newstore", W - Mx, H - 48);
+
+    const dataUrl = canvas.toDataURL("image/png");
+    const a = document.createElement("a");
+    a.href = dataUrl;
+    a.download = `sorteio_${drawId}_lista_1080x1920.png`;
+    a.click();
+  };
+
   return (
     <ThemeProvider theme={theme}>
       <CssBaseline />
@@ -161,16 +507,16 @@ export default function AdminOpenDrawBuyers() {
           </Typography>
 
           <Paper variant="outlined" sx={{ p: { xs: 2, md: 3 }, borderRadius: 4 }}>
-            <Stack direction="row" spacing={3} alignItems="center" flexWrap="wrap">
-              <Stack>
+            <Stack direction="row" spacing={1.5} alignItems="center" flexWrap="wrap">
+              <Stack sx={{ mr: 3 }}>
                 <Typography sx={{ opacity: .7, fontWeight: 700 }}>Nº Sorteio</Typography>
                 <Typography variant="h5" sx={{ fontWeight: 900 }}>{loading ? "…" : (drawId ?? "-")}</Typography>
               </Stack>
-              <Stack>
+              <Stack sx={{ mr: 3 }}>
                 <Typography sx={{ opacity: .7, fontWeight: 700 }}>Vendidos (aprovados)</Typography>
                 <Typography variant="h5" sx={{ fontWeight: 900 }}>{loading ? "…" : sold}</Typography>
               </Stack>
-              <Stack>
+              <Stack sx={{ mr: 3 }}>
                 <Typography sx={{ opacity: .7, fontWeight: 700 }}>Restantes</Typography>
                 <Typography variant="h5" sx={{ fontWeight: 900 }}>{loading ? "…" : remaining}</Typography>
               </Stack>
@@ -187,6 +533,12 @@ export default function AdminOpenDrawBuyers() {
 
               <Button startIcon={<DownloadRoundedIcon />} onClick={exportCSV} variant="outlined">
                 Exportar CSV
+              </Button>
+              <Button startIcon={<DownloadRoundedIcon />} onClick={exportPNGMobile} variant="contained">
+                Exportar PNG (Grade 1080×1920)
+              </Button>
+              <Button startIcon={<DownloadRoundedIcon />} onClick={exportPNGListMobile} variant="contained" color="primary">
+                Exportar PNG (Lista 1080×1920)
               </Button>
             </Stack>
 
@@ -205,7 +557,6 @@ export default function AdminOpenDrawBuyers() {
                     <TableHead>
                       <TableRow>
                         <TableCell sx={{ fontWeight: 800 }}>Comprador</TableCell>
-                        <TableCell sx={{ fontWeight: 800 }}>E-mail</TableCell>
                         <TableCell sx={{ fontWeight: 800 }}>Qtd</TableCell>
                         <TableCell sx={{ fontWeight: 800 }}>Números</TableCell>
                         <TableCell sx={{ fontWeight: 800 }}>Valor (R$)</TableCell>
@@ -223,7 +574,7 @@ export default function AdminOpenDrawBuyers() {
                               <span>{b.name || "(sem nome)"}</span>
                             </Stack>
                           </TableCell>
-                          <TableCell>{b.email || "-"}</TableCell>
+
                           <TableCell>{b.count || 0}</TableCell>
                           <TableCell sx={{ maxWidth: 520, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                             {(b.numbers || []).map(pad2).join(", ")}
