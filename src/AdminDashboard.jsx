@@ -400,6 +400,11 @@ export default function AdminDashboard() {
               SORTEIO ATIVO<br /> COMPRADORES
             </BigCard>
             <br />
+              <br />
+            <BigCard color="info.dark" onClick={() => navigate("/admin/analytics")}>
+              DASHBOARD - ANALISE
+            </BigCard>
+            <br />
             <BigCard outlined onClick={() => navigate("/admin/sorteios")}>
               LISTA DE SORTEIOS
               <br /> REALIZADOS
