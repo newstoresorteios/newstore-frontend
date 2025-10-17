@@ -37,7 +37,7 @@ export default function LoginPage() {
   const { login } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
-  const from = location.state?.from?.pathname || "/conta";
+  const from = location.state?.from?.pathname || "/";
 
   const [email, setEmail] = React.useState("");
   const [password, setPassword] = React.useState("");
