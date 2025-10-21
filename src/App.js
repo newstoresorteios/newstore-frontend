@@ -20,7 +20,7 @@ import AdminVencedores from "./AdminVencedores";
 import AdminUsersPage from "./AdminUsersPage";
 import DrawBoardPage from "./DrawBoardPage";
 import AdminOpenDrawBuyers from "./AdminOpenDrawBuyers";
-import AdminAnalytics from './pages/AdminAnalytics';
+import AdminAnalytics from './AdminAnalytics';
 
 export default function App() {
   const [selecionados, setSelecionados] = React.useState([]);

@@ -18,6 +18,8 @@ import CreditCardOutlinedIcon from "@mui/icons-material/CreditCardOutlined";
 import HelpOutlineOutlinedIcon from "@mui/icons-material/HelpOutlineOutlined";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 
+import GiftCardSimulator from "./components/GiftCardSimulator.jsx";
+
 import {
   AppBar,
   Box,
@@ -1007,6 +1009,14 @@ Baseado no resultado oficial da Lotomania (Caixa Econômica Federal).
              
             </Stack>
           </Paper>
+
+          <GiftCardSimulator
+        productName="Relógio Tissot PRX Powermatic 80"
+        creditPriceDefault={6799.99}
+        pixPriceDefault={5779.99}
+        giftBalanceDefault={800}
+      />
+
 
            <Paper variant="outlined" sx={{ p: { xs: 2, md: 3 }, mt: 2 }}>
   <Stack spacing={2}>
