@@ -18,6 +18,11 @@ import AutorenewRoundedIcon from "@mui/icons-material/AutorenewRounded";
 import ClearRoundedIcon from "@mui/icons-material/ClearRounded";
 import InfoOutlinedIcon from "@mui/icons-material/InfoOutlined";
 import { authHeaders as _authHeaders } from "./lib/api";
+import {
+  tokenizeCardWithVindi,
+  setupAutopayVindi,
+  getAutopayVindiStatus,
+} from "./services/autopayVindi";
 
 const apiJoin = (p) => {
   const base =
@@ -43,8 +48,6 @@ const authHeaders = _authHeaders || defaultAuthHeaders;
 
 const pad2 = (n) => String(n).padStart(2, "0");
 const onlyDigits = (s) => String(s || "").replace(/\D+/g, "");
-const guessDocType = (docDigits) =>
-  (String(docDigits || "").length > 11 ? "CNPJ" : "CPF");
 
 function parseExpiry(exp) {
   const d = onlyDigits(exp);
@@ -55,28 +58,7 @@ function parseExpiry(exp) {
   return { mm, yyyy };
 }
 
-async function loadMpSdkOnce() {
-  if (window.MercadoPago) return true;
-  if (window.__mpSdkPromise) return window.__mpSdkPromise;
-
-  window.__mpSdkPromise = new Promise((resolve, reject) => {
-    const s = document.createElement("script");
-    s.src = "https://sdk.mercadopago.com/js/v2";
-    s.async = true;
-    s.onload = () => resolve(true);
-    s.onerror = () =>
-      reject(new Error("Falha ao carregar o SDK do Mercado Pago."));
-    document.head.appendChild(s);
-  });
-
-  try {
-    await window.__mpSdkPromise;
-    return true;
-  } catch (e) {
-    window.__mpSdkPromise = null;
-    throw e;
-  }
-}
+// Função removida: loadMpSdkOnce (não mais necessária com Vindi)
 
 export default function AutoPaySection() {
   const [loading, setLoading] = React.useState(true);
@@ -129,11 +111,8 @@ export default function AutoPaySection() {
     (async () => {
       try {
         setLoading(true);
-        const r = await fetch(apiJoin("/api/me/autopay"), {
-          headers: { "Content-Type": "application/json", ...authHeaders() },
-          credentials: "include",
-        });
-        const j = await r.json().catch(() => null);
+        // Usa o novo endpoint Vindi para buscar status
+        const j = await getAutopayVindiStatus();
         if (alive && j) {
           const gotNumbers = Array.isArray(j.numbers)
             ? j.numbers.map(Number)
@@ -143,17 +122,33 @@ export default function AutoPaySection() {
           setNumbers(gotNumbers);
           setSavedNumbers(gotNumbers);
           setCard({
-            brand: j.brand || null,
-            last4: j.last4 || null,
-            has_card: !!(j.brand || j.last4),
+            brand: j.card?.brand || j.brand || null,
+            last4: j.card?.last4 || j.last4 || null,
+            has_card: !!(j.card?.last4 || j.last4 || j.card?.has_card || j.has_card),
           });
-          setHolder(j.holder_name || "");
-          setSavedHolder(j.holder_name || "");
-          setDoc(j.doc_number || "");
-          setSavedDoc(j.doc_number || "");
+          // Só atualiza holder/doc se vierem do backend
+          // Se não vierem, mantém o estado atual (vazio ou já digitado)
+          if (j.holder_name || j.card?.holder_name) {
+            const h = j.holder_name || j.card?.holder_name || "";
+            setHolder(h);
+            setSavedHolder(h);
+          }
+          if (j.doc_number) {
+            setDoc(j.doc_number);
+            setSavedDoc(j.doc_number);
+          }
         }
       } catch (e) {
         console.error("[autopay] GET error:", e?.message || e);
+        // Se falhar, assume estado vazio (autopay não configurado)
+        if (alive) {
+          setActive(false);
+          setSavedActive(false);
+          setNumbers([]);
+          setSavedNumbers([]);
+          setCard({ brand: null, last4: null, has_card: false });
+          // Não zera holder/doc para não perder dados já digitados
+        }
       } finally {
         if (alive) setLoading(false);
       }
@@ -171,53 +166,26 @@ export default function AutoPaySection() {
     );
   }
 
-  // Tokenização v2
-  async function createMpTokenOrFail() {
+  // Tokenização via Vindi
+  async function createVindiGatewayToken() {
     const num = onlyDigits(cardNumber);
     const { mm, yyyy } = parseExpiry(expiry);
     const sc = onlyDigits(cvv).slice(0, 4);
     const holderName = (holder || "").trim();
     const docDigits = onlyDigits(doc);
 
-    if (!num || !mm || !yyyy || !sc || !holderName || !docDigits) {
+    if (!num || !mm || !yyyy || !sc || !holderName) {
       throw new Error("Dados do cartão incompletos.");
     }
 
-    await loadMpSdkOnce();
-
-    const PK =
-      process.env.REACT_APP_MP_PUBLIC_KEY ||
-      process.env.REACT_APP_MERCADOPAGO_PUBLIC_KEY ||
-      window.MP_PUBLIC_KEY;
-    if (!PK) {
-      throw new Error(
-        "Chave pública do Mercado Pago não configurada (REACT_APP_MP_PUBLIC_KEY)."
-      );
-    }
-    if (!window.MercadoPago) {
-      throw new Error("SDK do Mercado Pago não pôde ser carregado.");
-    }
-
-    const mp = new window.MercadoPago(PK, { locale: "pt-BR" });
-    if (typeof mp.createCardToken !== "function") {
-      throw new Error("Função de tokenização indisponível.");
-    }
-
-    const payload = {
+    return await tokenizeCardWithVindi({
+      holderName,
       cardNumber: num,
-      securityCode: sc,
-      cardExpirationMonth: mm,
-      cardExpirationYear: yyyy,
-      cardholderName: holderName,
-      identificationType: guessDocType(docDigits),
-      identificationNumber: docDigits,
-    };
-
-    const resp = await mp.createCardToken(payload);
-    const tok =
-      resp?.id || resp?.data?.id || resp?.token || resp?.cardTokenId;
-    if (!tok) throw new Error("Falha ao gerar token do cartão.");
-    return tok;
+      expMonth: mm,
+      expYear: yyyy,
+      cvv: sc,
+      documentNumber: docDigits || undefined,
+    });
   }
 
   async function save() {
@@ -226,40 +194,111 @@ export default function AutoPaySection() {
       return;
     }
 
+    // Valida holder_name antes de prosseguir
+    const holderName = (holder || "").trim();
+    if (!holderName) {
+      alert("Por favor, informe o nome impresso no cartão.");
+      return;
+    }
+
     setSaving(true);
     try {
-      const body = { active, numbers, holder_name: holder, doc_number: doc };
-      const wantsCardUpdate = cardFieldsDirty;
-      if (wantsCardUpdate) body.card_token = await createMpTokenOrFail();
-
-      const r = await fetch(apiJoin("/api/me/autopay"), {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...authHeaders() },
-        credentials: "include",
-        body: JSON.stringify(body),
-      });
-      const j = await r.json();
-      if (!r.ok) throw new Error(j?.error || "save_failed");
-
-      setSavedNumbers([...numbers]);
-      setSavedActive(active);
-      setSavedHolder(holder);
-      setSavedDoc(doc);
-
-      setCard(j.card || { has_card: false, brand: null, last4: null });
-      if (j.card?.has_card) {
-        setCardNumber("");
-        setExpiry("");
-        setCvv("");
+      // Se há atualização de cartão, tokeniza via Vindi primeiro
+      let gatewayToken = null;
+      if (cardFieldsDirty) {
+        gatewayToken = await createVindiGatewayToken();
       }
 
-      alert("Preferências salvas!");
+      // Sempre chama setupAutopayVindi para persistir preferências
+      // Se não houver gatewayToken mas houver mudanças, tenta salvar mesmo assim
+      try {
+        const result = await setupAutopayVindi({
+          gatewayToken: gatewayToken || undefined, // undefined se não houver
+          holderName,
+          docNumber: doc,
+          numbers,
+          active,
+        });
+
+        // Atualiza estado do cartão se retornado
+        if (result.card) {
+          setCard({
+            brand: result.card.brand || null,
+            last4: result.card.last4 || null,
+            has_card: !!(result.card.last4 || result.card.brand),
+          });
+        }
+
+        // Limpa campos do cartão após tokenizar (só se houve tokenização)
+        if (gatewayToken) {
+          setCardNumber("");
+          setExpiry("");
+          setCvv("");
+        }
+
+        // Atualiza estados salvos
+        setSavedNumbers([...numbers]);
+        setSavedActive(active);
+        setSavedHolder(holderName);
+        setSavedDoc(doc);
+
+        alert("Preferências salvas!");
+      } catch (setupError) {
+        // Se o erro for porque gateway_token é obrigatório
+        if (
+          setupError?.message === "GATEWAY_TOKEN_REQUIRED" ||
+          (setupError?.status === 400 &&
+            !gatewayToken &&
+            String(setupError?.message || "")
+              .toLowerCase()
+              .includes("gateway"))
+        ) {
+          alert(
+            "Para ativar ou alterar preferências, você precisa salvar o cartão novamente. Por favor, preencha os dados do cartão e tente novamente."
+          );
+          return;
+        }
+        throw setupError;
+      }
+
+      // Recarrega status para garantir sincronização
+      try {
+        const status = await getAutopayVindiStatus();
+        if (status.card) {
+          setCard({
+            brand: status.card.brand || null,
+            last4: status.card.last4 || null,
+            has_card: !!(status.card.last4 || status.card.brand),
+          });
+        }
+        if (status.numbers) {
+          const gotNumbers = Array.isArray(status.numbers)
+            ? status.numbers.map(Number)
+            : [];
+          setNumbers(gotNumbers);
+          setSavedNumbers(gotNumbers);
+        }
+        if (typeof status.active === "boolean") {
+          setActive(status.active);
+          setSavedActive(status.active);
+        }
+        // Atualiza holder/doc se vierem do status
+        if (status.holder_name || status.card?.holder_name) {
+          const h = status.holder_name || status.card?.holder_name || "";
+          setHolder(h);
+          setSavedHolder(h);
+        }
+        if (status.doc_number) {
+          setDoc(status.doc_number);
+          setSavedDoc(status.doc_number);
+        }
+      } catch (e) {
+        console.warn("[autopay] refresh status error:", e);
+      }
     } catch (e) {
       console.error("[autopay] save error:", e?.message || e);
       alert(
-        e?.message === "save_failed"
-          ? "Falha ao salvar. Verifique os dados do cartão."
-          : e?.message || "Falha ao salvar preferências."
+        e?.message || "Falha ao salvar preferências. Verifique os dados do cartão."
       );
     } finally {
       setSaving(false);
@@ -275,13 +314,26 @@ export default function AutoPaySection() {
       return;
     setSaving(true);
     try {
-      const r = await fetch(apiJoin("/api/me/autopay/cancel"), {
+      // Tenta o endpoint Vindi primeiro, depois fallback para o antigo
+      let r = await fetch(apiJoin("/api/autopay/vindi/cancel"), {
         method: "POST",
         headers: { "Content-Type": "application/json", ...authHeaders() },
         credentials: "include",
       });
-      const j = await r.json();
-      if (!r.ok) throw new Error(j?.error || "cancel_failed");
+      
+      // Se não existir, tenta o endpoint antigo
+      if (!r.ok && r.status === 404) {
+        r = await fetch(apiJoin("/api/me/autopay/cancel"), {
+          method: "POST",
+          headers: { "Content-Type": "application/json", ...authHeaders() },
+          credentials: "include",
+        });
+      }
+
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({}));
+        throw new Error(j?.error || "cancel_failed");
+      }
 
       setActive(false);
       setSavedActive(false);
@@ -325,9 +377,9 @@ export default function AutoPaySection() {
 
         {/* Texto explicativo */}
         <Typography variant="body2" sx={{ opacity: 0.8, mt: -1 }}>
-          Cadastre seu cartão e escolha números “cativos”. Quando um novo sorteio
+          Cadastre seu cartão e escolha números "cativos". Quando um novo sorteio
           abrir, cobraremos automaticamente e reservaremos seus números
-          (pagamento via Mercado Pago).
+          (cobrança automática).
           <br />
           <span style={{ opacity: 0.75 }}>
             O CVV e a validade são exigidos apenas para salvar/atualizar o
