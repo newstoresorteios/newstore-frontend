@@ -203,10 +203,27 @@ export default function AutoPaySection() {
 
     setSaving(true);
     try {
-      // Se há atualização de cartão, tokeniza via Vindi primeiro
+      // Se há atualização de cartão, tokeniza via backend primeiro
       let gatewayToken = null;
       if (cardFieldsDirty) {
-        gatewayToken = await createVindiGatewayToken();
+        try {
+          gatewayToken = await createVindiGatewayToken();
+        } catch (tokenizeError) {
+          // Tratamento específico de erros de tokenização
+          if (tokenizeError?.message === "VINDI_PUBLIC_KEY_INVALID") {
+            alert(
+              "Tokenização indisponível no momento (configuração). Contate o suporte."
+            );
+            return;
+          }
+          if (tokenizeError?.message === "CARD_VALIDATION_FAILED") {
+            const friendlyMsg = tokenizeError?.details || "Dados do cartão inválidos. Verifique e tente novamente.";
+            alert(friendlyMsg);
+            return;
+          }
+          // Re-lança outros erros
+          throw tokenizeError;
+        }
       }
 
       // Sempre chama setupAutopayVindi para persistir preferências
@@ -254,7 +271,7 @@ export default function AutoPaySection() {
               .includes("gateway"))
         ) {
           alert(
-            "Para ativar ou alterar preferências, você precisa salvar o cartão novamente. Por favor, preencha os dados do cartão e tente novamente."
+            "Para ativar o AutoPay pela primeira vez, cadastre o cartão."
           );
           return;
         }
@@ -297,9 +314,9 @@ export default function AutoPaySection() {
       }
     } catch (e) {
       console.error("[autopay] save error:", e?.message || e);
-      alert(
-        e?.message || "Falha ao salvar preferências. Verifique os dados do cartão."
-      );
+      // Se não foi tratado acima, mostra mensagem genérica
+      const errorMsg = e?.message || "Falha ao salvar preferências. Verifique os dados do cartão.";
+      alert(errorMsg);
     } finally {
       setSaving(false);
     }

@@ -1,18 +1,12 @@
 // src/services/autopayVindi.js
 // Serviço para autopay via Vindi (tokenização + setup no backend)
+// Tokenização é feita via backend para manter segredos no servidor
 
 import { apiJoin, authHeaders } from "../lib/api";
 
-const VINDI_PUBLIC_KEY =
-  process.env.REACT_APP_VINDI_PUBLIC_KEY ||
-  "";
-
-const VINDI_PUBLIC_BASE_URL =
-  (process.env.REACT_APP_VINDI_PUBLIC_BASE_URL || "https://app.vindi.com.br/api/v1")
-    .replace(/\/+$/, "");
-
 /**
- * Tokeniza um cartão via Vindi Public API
+ * Tokeniza um cartão via backend (endpoint proxy para Vindi)
+ * O backend usa a chave privada da Vindi de forma segura
  * @param {Object} params - Dados do cartão
  * @param {string} params.holderName - Nome do titular
  * @param {string} params.cardNumber - Número do cartão (apenas dígitos)
@@ -30,12 +24,6 @@ export async function tokenizeCardWithVindi({
   cvv,
   documentNumber,
 }) {
-  if (!VINDI_PUBLIC_KEY) {
-    throw new Error(
-      "Chave pública da Vindi não configurada (REACT_APP_VINDI_PUBLIC_KEY)."
-    );
-  }
-
   const num = String(cardNumber || "").replace(/\D+/g, "");
   const mm = String(expMonth || "").padStart(2, "0");
   const yyyy = String(expYear || "").slice(-4);
@@ -47,7 +35,7 @@ export async function tokenizeCardWithVindi({
     throw new Error("Dados do cartão incompletos.");
   }
 
-  // Monta o payload conforme a API da Vindi
+  // Monta o payload para o backend
   const payload = {
     holder_name: holder,
     card_number: num,
@@ -57,58 +45,78 @@ export async function tokenizeCardWithVindi({
     payment_method_code: "credit_card",
   };
 
-  // Adiciona documento se fornecido
+  // Adiciona documento se fornecido (campo pode ser registry_code ou document_number)
   if (doc) {
     payload.document_number = doc;
+    payload.registry_code = doc; // backend decide qual usar
   }
 
-  // Authorization: Basic base64(public_key + ":")
-  const auth = btoa(`${VINDI_PUBLIC_KEY}:`);
+  const url = apiJoin("/api/autopay/vindi/tokenize");
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...authHeaders(),
+    },
+    credentials: "include",
+    body: JSON.stringify(payload),
+  });
 
-  try {
-    const response = await fetch(
-      `${VINDI_PUBLIC_BASE_URL}/public/payment_profiles`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Basic ${auth}`,
-        },
-        body: JSON.stringify(payload),
+  if (!response.ok) {
+    let errorMsg = "Falha ao tokenizar cartão";
+    let errorCode = null;
+    
+    try {
+      const errorJson = await response.json();
+      errorMsg = errorJson?.error || errorJson?.message || errorMsg;
+      errorCode = errorJson?.code || null;
+      
+      // Tratamento específico por status
+      if (response.status === 401 || response.status === 403) {
+        // Chave da API inválida ou não autorizado
+        throw new Error("VINDI_PUBLIC_KEY_INVALID");
       }
-    );
-
-    if (!response.ok) {
-      let errorMsg = `Falha ao tokenizar cartão (HTTP ${response.status})`;
-      try {
-        const errorJson = await response.json();
-        errorMsg =
-          errorJson?.errors?.[0]?.message ||
-          errorJson?.error ||
-          errorMsg;
-      } catch {}
-      throw new Error(errorMsg);
+      
+      if (response.status === 422 || response.status === 400) {
+        // Validação do cartão falhou
+        const friendlyMsg = errorJson?.errors?.[0]?.message || 
+                          errorJson?.message || 
+                          "Dados do cartão inválidos. Verifique e tente novamente.";
+        const err = new Error("CARD_VALIDATION_FAILED");
+        err.details = friendlyMsg;
+        throw err;
+      }
+    } catch (innerError) {
+      // Se já foi lançado erro específico, re-lança
+      if (innerError.message === "VINDI_PUBLIC_KEY_INVALID" || 
+          innerError.message === "CARD_VALIDATION_FAILED") {
+        throw innerError;
+      }
+      // Caso contrário, usa mensagem genérica
     }
-
-    const vindiJson = await response.json();
-
-    // Extrai gateway_token de forma resiliente
-    const gatewayToken =
-      vindiJson?.payment_profile?.gateway_token ||
-      vindiJson?.gateway_token ||
-      null;
-
-    if (!gatewayToken) {
-      throw new Error(
-        "Resposta da Vindi não contém gateway_token. Verifique a estrutura da resposta."
-      );
-    }
-
-    return gatewayToken;
-  } catch (error) {
-    if (error instanceof Error) throw error;
-    throw new Error("Erro ao comunicar com a Vindi.");
+    
+    const error = new Error(errorMsg);
+    if (errorCode) error.code = errorCode;
+    error.status = response.status;
+    throw error;
   }
+
+  const result = await response.json();
+
+  // Extrai gateway_token de forma resiliente
+  const gatewayToken =
+    result?.gateway_token ||
+    result?.payment_profile?.gateway_token ||
+    result?.data?.gateway_token ||
+    null;
+
+  if (!gatewayToken) {
+    throw new Error(
+      "Resposta do backend não contém gateway_token. Verifique a estrutura da resposta."
+    );
+  }
+
+  return gatewayToken;
 }
 
 /**
