@@ -1,11 +1,18 @@
 # Alterações Necessárias no Backend para AutoPay Vindi
 
-## Resumo das Mudanças no Frontend
+## ✅ Frontend Atualizado e Pronto
 
-O frontend foi atualizado para:
-1. ✅ **Remover tokenização direta da Vindi do browser** - Agora usa endpoint do backend
-2. ✅ **Melhorar tratamento de erros** - Mensagens diferenciadas para 401/403 vs validação
+O frontend foi completamente atualizado e está pronto para uso:
+
+1. ✅ **Tokenização via backend** - Não chama mais Vindi diretamente do browser
+2. ✅ **Tratamento robusto de erros**:
+   - 404: "O backend ainda não possui o endpoint de tokenização..."
+   - 401/403: "Chave Vindi inválida ou ambiente incorreto"
+   - 400/422: Mensagens específicas de validação do cartão
+   - GATEWAY_TOKEN_REQUIRED: "Para ativar o AutoPay pela primeira vez, cadastre o cartão"
 3. ✅ **Sempre persistir preferências** - Mesmo sem cartão novo, salva numbers/active/holder/doc
+4. ✅ **Validação de dados** - expMonth (MM), expYear (YYYY), CVV apenas dígitos
+5. ✅ **Nenhum segredo no frontend** - Removidas todas as referências a chaves privadas
 
 ## 1. Novo Endpoint Necessário: `/api/autopay/vindi/tokenize`
 

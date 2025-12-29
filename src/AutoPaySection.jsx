@@ -166,7 +166,7 @@ export default function AutoPaySection() {
     );
   }
 
-  // Tokenização via Vindi
+  // Tokenização via backend (endpoint /api/autopay/vindi/tokenize)
   async function createVindiGatewayToken() {
     const num = onlyDigits(cardNumber);
     const { mm, yyyy } = parseExpiry(expiry);
@@ -174,16 +174,26 @@ export default function AutoPaySection() {
     const holderName = (holder || "").trim();
     const docDigits = onlyDigits(doc);
 
-    if (!num || !mm || !yyyy || !sc || !holderName) {
-      throw new Error("Dados do cartão incompletos.");
+    // Validação: garante formato correto
+    if (!num || num.length < 13) {
+      throw new Error("Número do cartão inválido.");
+    }
+    if (!mm || mm.length !== 2 || !yyyy || yyyy.length !== 4) {
+      throw new Error("Data de validade inválida. Use MM/AA ou MM/AAAA.");
+    }
+    if (!sc || sc.length < 3) {
+      throw new Error("CVV inválido.");
+    }
+    if (!holderName) {
+      throw new Error("Nome do titular é obrigatório.");
     }
 
     return await tokenizeCardWithVindi({
       holderName,
       cardNumber: num,
-      expMonth: mm,
-      expYear: yyyy,
-      cvv: sc,
+      expMonth: mm,  // Formato MM
+      expYear: yyyy, // Formato YYYY
+      cvv: sc,       // Apenas dígitos
       documentNumber: docDigits || undefined,
     });
   }
@@ -210,9 +220,16 @@ export default function AutoPaySection() {
           gatewayToken = await createVindiGatewayToken();
         } catch (tokenizeError) {
           // Tratamento específico de erros de tokenização
-          if (tokenizeError?.message === "VINDI_PUBLIC_KEY_INVALID") {
+          if (tokenizeError?.message === "TOKENIZE_ENDPOINT_NOT_FOUND") {
             alert(
-              "Tokenização indisponível no momento (configuração). Contate o suporte."
+              "O backend ainda não possui o endpoint de tokenização. Entre em contato com o suporte técnico."
+            );
+            return;
+          }
+          if (tokenizeError?.message === "VINDI_KEY_INVALID") {
+            const details = tokenizeError?.details || "";
+            alert(
+              `Chave Vindi inválida ou ambiente incorreto. ${details ? `Detalhes: ${details}` : "Contate o suporte."}`
             );
             return;
           }
@@ -221,7 +238,7 @@ export default function AutoPaySection() {
             alert(friendlyMsg);
             return;
           }
-          // Re-lança outros erros
+          // Re-lança outros erros para tratamento genérico
           throw tokenizeError;
         }
       }

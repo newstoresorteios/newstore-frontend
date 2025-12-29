@@ -24,14 +24,21 @@ export async function tokenizeCardWithVindi({
   cvv,
   documentNumber,
 }) {
+  // Valida e normaliza dados do cartão
   const num = String(cardNumber || "").replace(/\D+/g, "");
+  // Garante expMonth no formato MM (2 dígitos)
   const mm = String(expMonth || "").padStart(2, "0");
-  const yyyy = String(expYear || "").slice(-4);
+  // Garante expYear no formato YYYY (4 dígitos)
+  let yyyy = String(expYear || "").slice(-4);
+  if (yyyy.length === 2) {
+    yyyy = `20${yyyy}`;
+  }
+  // CVV apenas dígitos, máximo 4 caracteres
   const sc = String(cvv || "").replace(/\D+/g, "").slice(0, 4);
   const holder = String(holderName || "").trim();
   const doc = String(documentNumber || "").replace(/\D+/g, "");
 
-  if (!num || !mm || !yyyy || !sc || !holder) {
+  if (!num || !mm || mm.length !== 2 || !yyyy || yyyy.length !== 4 || !sc || !holder) {
     throw new Error("Dados do cartão incompletos.");
   }
 
@@ -63,6 +70,13 @@ export async function tokenizeCardWithVindi({
   });
 
   if (!response.ok) {
+    // Tratamento específico para 404 - endpoint não existe
+    if (response.status === 404) {
+      const err = new Error("TOKENIZE_ENDPOINT_NOT_FOUND");
+      err.status = 404;
+      throw err;
+    }
+    
     let errorMsg = "Falha ao tokenizar cartão";
     let errorCode = null;
     
@@ -74,7 +88,10 @@ export async function tokenizeCardWithVindi({
       // Tratamento específico por status
       if (response.status === 401 || response.status === 403) {
         // Chave da API inválida ou não autorizado
-        throw new Error("VINDI_PUBLIC_KEY_INVALID");
+        const err = new Error("VINDI_KEY_INVALID");
+        err.status = response.status;
+        err.details = errorMsg;
+        throw err;
       }
       
       if (response.status === 422 || response.status === 400) {
@@ -83,16 +100,18 @@ export async function tokenizeCardWithVindi({
                           errorJson?.message || 
                           "Dados do cartão inválidos. Verifique e tente novamente.";
         const err = new Error("CARD_VALIDATION_FAILED");
+        err.status = response.status;
         err.details = friendlyMsg;
         throw err;
       }
     } catch (innerError) {
       // Se já foi lançado erro específico, re-lança
-      if (innerError.message === "VINDI_PUBLIC_KEY_INVALID" || 
+      if (innerError.message === "TOKENIZE_ENDPOINT_NOT_FOUND" ||
+          innerError.message === "VINDI_KEY_INVALID" || 
           innerError.message === "CARD_VALIDATION_FAILED") {
         throw innerError;
       }
-      // Caso contrário, usa mensagem genérica
+      // Caso contrário, continua para criar erro genérico
     }
     
     const error = new Error(errorMsg);
