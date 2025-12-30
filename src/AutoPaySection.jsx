@@ -225,30 +225,10 @@ export default function AutoPaySection() {
           gatewayToken = await createVindiGatewayToken();
         } catch (tokenizeError) {
           // Tratamento específico de erros de tokenização
-          if (tokenizeError?.message === "TOKENIZE_ENDPOINT_NOT_FOUND") {
-            alert(
-              "O backend ainda não possui o endpoint de tokenização. Entre em contato com o suporte técnico."
-            );
-            return;
-          }
-          if (tokenizeError?.message === "SESSION_EXPIRED") {
-            alert("Sessão expirada. Faça login novamente.");
-            return;
-          }
-          if (tokenizeError?.message === "VINDI_KEY_INVALID") {
-            const details = tokenizeError?.details || "";
-            alert(
-              `Chave Vindi inválida ou ambiente incorreto. ${details ? `Detalhes: ${details}` : "Contate o suporte."}`
-            );
-            return;
-          }
-          if (tokenizeError?.message === "CARD_VALIDATION_FAILED") {
-            // Mostra mensagem real do backend/Vindi (ex: "bandeira/banco não suportado" ou "não pode ficar em branco")
-            const friendlyMsg = tokenizeError?.details || "Dados do cartão inválidos. Verifique e tente novamente.";
-            alert(friendlyMsg);
-            return;
-          }
-          // Erros de validação local (CPF/CNPJ inválido, etc.)
+          // Mostra a mensagem real do erro (já processada no service)
+          const errorMessage = tokenizeError?.message || "Falha ao tokenizar cartão.";
+          
+          // Erros de validação local (antes de enviar ao backend)
           if (tokenizeError?.message && (
             tokenizeError.message.includes("CPF/CNPJ") ||
             tokenizeError.message.includes("Número do cartão") ||
@@ -256,11 +236,13 @@ export default function AutoPaySection() {
             tokenizeError.message.includes("CVV") ||
             tokenizeError.message.includes("Nome do titular")
           )) {
-            alert(tokenizeError.message);
+            alert(errorMessage);
             return;
           }
-          // Re-lança outros erros para tratamento genérico
-          throw tokenizeError;
+          
+          // Erros do backend - mostra mensagem real (já processada)
+          alert(errorMessage);
+          return;
         }
       }
 

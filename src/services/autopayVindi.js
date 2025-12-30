@@ -72,24 +72,25 @@ export async function tokenizeCardWithVindi({
   if (!response.ok) {
     // Tratamento específico para 404 - endpoint não existe
     if (response.status === 404) {
-      const err = new Error("TOKENIZE_ENDPOINT_NOT_FOUND");
+      const err = new Error("Endpoint de tokenização não encontrado (backend desatualizado).");
       err.status = 404;
+      err.code = "TOKENIZE_ENDPOINT_NOT_FOUND";
       throw err;
     }
     
-    let errorMsg = "Falha ao tokenizar cartão";
+    let errorMsg = `HTTP ${response.status}`;
     let errorCode = null;
     
     try {
       const errorJson = await response.json();
       
-      // Prioriza errors[0].message, depois error, depois message
-      if (errorJson?.errors && Array.isArray(errorJson.errors) && errorJson.errors.length > 0) {
-        errorMsg = errorJson.errors[0].message || errorMsg;
-      } else if (errorJson?.error) {
+      // Ordem de prioridade: a) json.error, b) json.message, c) json.errors[0].message, d) fallback HTTP ${status}
+      if (errorJson?.error) {
         errorMsg = errorJson.error;
       } else if (errorJson?.message) {
         errorMsg = errorJson.message;
+      } else if (errorJson?.errors && Array.isArray(errorJson.errors) && errorJson.errors.length > 0) {
+        errorMsg = errorJson.errors[0].message || errorMsg;
       }
       
       errorCode = errorJson?.code || null;
@@ -97,41 +98,45 @@ export async function tokenizeCardWithVindi({
       // Tratamento específico por status
       if (response.status === 401) {
         // Sessão expirada ou não autorizado
-        const err = new Error("SESSION_EXPIRED");
+        const err = new Error("Sessão expirada, faça login novamente.");
         err.status = 401;
-        err.details = "Sessão expirada. Faça login novamente.";
+        err.code = "SESSION_EXPIRED";
         throw err;
       }
       
       if (response.status === 403) {
         // Chave da API inválida ou não autorizado
-        const err = new Error("VINDI_KEY_INVALID");
+        const err = new Error(errorMsg);
         err.status = 403;
-        err.details = errorMsg;
+        err.code = "VINDI_KEY_INVALID";
         throw err;
       }
       
       if (response.status === 422) {
-        // Validação do cartão falhou - mostra mensagem real do backend/Vindi
-        const err = new Error("CARD_VALIDATION_FAILED");
+        // Validação do cartão falhou - mostra mensagem real do backend/Vindi (ex: "bandeira/banco não suportado", "não pode ficar em branco")
+        const err = new Error(errorMsg);
         err.status = 422;
-        err.details = errorMsg; // Já tem a mensagem priorizada acima
+        err.code = "CARD_VALIDATION_FAILED";
         throw err;
       }
       
       if (response.status === 400) {
         // Validação do cartão ou requisição inválida
-        const err = new Error("CARD_VALIDATION_FAILED");
+        const err = new Error(errorMsg);
         err.status = 400;
-        err.details = errorMsg;
+        err.code = "CARD_VALIDATION_FAILED";
         throw err;
       }
     } catch (innerError) {
       // Se já foi lançado erro específico, re-lança
-      if (innerError.message === "TOKENIZE_ENDPOINT_NOT_FOUND" ||
-          innerError.message === "SESSION_EXPIRED" ||
-          innerError.message === "VINDI_KEY_INVALID" || 
-          innerError.message === "CARD_VALIDATION_FAILED") {
+      if (innerError.code === "TOKENIZE_ENDPOINT_NOT_FOUND" ||
+          innerError.code === "SESSION_EXPIRED" ||
+          innerError.code === "VINDI_KEY_INVALID" || 
+          innerError.code === "CARD_VALIDATION_FAILED") {
+        throw innerError;
+      }
+      // Se o erro tem mensagem e status, re-lança
+      if (innerError.message && innerError.status) {
         throw innerError;
       }
       // Caso contrário, continua para criar erro genérico
