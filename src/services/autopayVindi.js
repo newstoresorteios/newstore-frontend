@@ -82,31 +82,54 @@ export async function tokenizeCardWithVindi({
     
     try {
       const errorJson = await response.json();
-      errorMsg = errorJson?.error || errorJson?.message || errorMsg;
+      
+      // Prioriza errors[0].message, depois error, depois message
+      if (errorJson?.errors && Array.isArray(errorJson.errors) && errorJson.errors.length > 0) {
+        errorMsg = errorJson.errors[0].message || errorMsg;
+      } else if (errorJson?.error) {
+        errorMsg = errorJson.error;
+      } else if (errorJson?.message) {
+        errorMsg = errorJson.message;
+      }
+      
       errorCode = errorJson?.code || null;
       
       // Tratamento específico por status
-      if (response.status === 401 || response.status === 403) {
+      if (response.status === 401) {
+        // Sessão expirada ou não autorizado
+        const err = new Error("SESSION_EXPIRED");
+        err.status = 401;
+        err.details = "Sessão expirada. Faça login novamente.";
+        throw err;
+      }
+      
+      if (response.status === 403) {
         // Chave da API inválida ou não autorizado
         const err = new Error("VINDI_KEY_INVALID");
-        err.status = response.status;
+        err.status = 403;
         err.details = errorMsg;
         throw err;
       }
       
-      if (response.status === 422 || response.status === 400) {
-        // Validação do cartão falhou
-        const friendlyMsg = errorJson?.errors?.[0]?.message || 
-                          errorJson?.message || 
-                          "Dados do cartão inválidos. Verifique e tente novamente.";
+      if (response.status === 422) {
+        // Validação do cartão falhou - mostra mensagem real do backend/Vindi
         const err = new Error("CARD_VALIDATION_FAILED");
-        err.status = response.status;
-        err.details = friendlyMsg;
+        err.status = 422;
+        err.details = errorMsg; // Já tem a mensagem priorizada acima
+        throw err;
+      }
+      
+      if (response.status === 400) {
+        // Validação do cartão ou requisição inválida
+        const err = new Error("CARD_VALIDATION_FAILED");
+        err.status = 400;
+        err.details = errorMsg;
         throw err;
       }
     } catch (innerError) {
       // Se já foi lançado erro específico, re-lança
       if (innerError.message === "TOKENIZE_ENDPOINT_NOT_FOUND" ||
+          innerError.message === "SESSION_EXPIRED" ||
           innerError.message === "VINDI_KEY_INVALID" || 
           innerError.message === "CARD_VALIDATION_FAILED") {
         throw innerError;
@@ -122,11 +145,12 @@ export async function tokenizeCardWithVindi({
 
   const result = await response.json();
 
-  // Extrai gateway_token de forma resiliente
+  // Extrai gateway_token de forma resiliente - aceita múltiplos formatos
   const gatewayToken =
     result?.gateway_token ||
     result?.payment_profile?.gateway_token ||
     result?.data?.gateway_token ||
+    result?.data?.payment_profile?.gateway_token ||
     null;
 
   if (!gatewayToken) {

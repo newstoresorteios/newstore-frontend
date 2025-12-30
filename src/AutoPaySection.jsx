@@ -187,6 +187,11 @@ export default function AutoPaySection() {
     if (!holderName) {
       throw new Error("Nome do titular é obrigatório.");
     }
+    
+    // Validação obrigatória de CPF/CNPJ
+    if (!docDigits || (docDigits.length !== 11 && docDigits.length !== 14)) {
+      throw new Error("CPF/CNPJ é obrigatório. Informe um CPF (11 dígitos) ou CNPJ (14 dígitos).");
+    }
 
     return await tokenizeCardWithVindi({
       holderName,
@@ -194,7 +199,7 @@ export default function AutoPaySection() {
       expMonth: mm,  // Formato MM
       expYear: yyyy, // Formato YYYY
       cvv: sc,       // Apenas dígitos
-      documentNumber: docDigits || undefined,
+      documentNumber: docDigits,
     });
   }
 
@@ -226,6 +231,10 @@ export default function AutoPaySection() {
             );
             return;
           }
+          if (tokenizeError?.message === "SESSION_EXPIRED") {
+            alert("Sessão expirada. Faça login novamente.");
+            return;
+          }
           if (tokenizeError?.message === "VINDI_KEY_INVALID") {
             const details = tokenizeError?.details || "";
             alert(
@@ -234,8 +243,20 @@ export default function AutoPaySection() {
             return;
           }
           if (tokenizeError?.message === "CARD_VALIDATION_FAILED") {
+            // Mostra mensagem real do backend/Vindi (ex: "bandeira/banco não suportado" ou "não pode ficar em branco")
             const friendlyMsg = tokenizeError?.details || "Dados do cartão inválidos. Verifique e tente novamente.";
             alert(friendlyMsg);
+            return;
+          }
+          // Erros de validação local (CPF/CNPJ inválido, etc.)
+          if (tokenizeError?.message && (
+            tokenizeError.message.includes("CPF/CNPJ") ||
+            tokenizeError.message.includes("Número do cartão") ||
+            tokenizeError.message.includes("Data de validade") ||
+            tokenizeError.message.includes("CVV") ||
+            tokenizeError.message.includes("Nome do titular")
+          )) {
+            alert(tokenizeError.message);
             return;
           }
           // Re-lança outros erros para tratamento genérico
