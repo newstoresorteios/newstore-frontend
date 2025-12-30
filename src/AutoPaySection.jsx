@@ -234,7 +234,9 @@ export default function AutoPaySection() {
             tokenizeError.message.includes("Número do cartão") ||
             tokenizeError.message.includes("Data de validade") ||
             tokenizeError.message.includes("CVV") ||
-            tokenizeError.message.includes("Nome do titular")
+            tokenizeError.message.includes("Nome do titular") ||
+            tokenizeError.message.includes("Bandeira") ||
+            tokenizeError.message.includes("bandeira")
           )) {
             alert(errorMessage);
             return;

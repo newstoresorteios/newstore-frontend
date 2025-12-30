@@ -5,6 +5,47 @@
 import { apiJoin, authHeaders } from "../lib/api";
 
 /**
+ * Bandeiras suportadas pela Vindi
+ */
+const SUPPORTED_BRANDS = new Set(['visa', 'mastercard', 'elo', 'amex', 'diners', 'hipercard', 'jcb']);
+
+/**
+ * Detecta a bandeira do cartão pelo BIN (6 primeiros dígitos)
+ * @param {string} cardNumber - Número do cartão (apenas dígitos)
+ * @returns {string|null} Código da bandeira (visa, mastercard, elo, etc.) ou null se não detectada
+ */
+function detectCardBrand(cardNumber) {
+  const num = String(cardNumber || "").replace(/\D+/g, "");
+  if (num.length < 6) return null;
+  
+  const bin = num.slice(0, 6);
+  
+  // Visa: 4xxxxx
+  if (/^4/.test(bin)) return 'visa';
+  
+  // Mastercard: 5xxxxx (51-55) ou 2xxxxx (range 222100-272099)
+  const binNum = parseInt(bin);
+  if (/^5[1-5]/.test(bin) || (binNum >= 222100 && binNum <= 272099)) return 'mastercard';
+  
+  // Elo: padrões principais (5067xx, 5090xx-5099xx, 4314xx, 4514xx, 6363xx, 6500xx, 6277xx, 4389xx, 5041xx)
+  if (/^(5067|509[0-9]|4314|4514|6363|6500|6277|4389|5041)/.test(bin)) return 'elo';
+  
+  // Amex: 34xxxx ou 37xxxx
+  if (/^3[47]/.test(bin)) return 'amex';
+  
+  // Diners: 36xxxx ou 38xxxx
+  if (/^3[68]/.test(bin)) return 'diners';
+  
+  // Hipercard: 606282, 384100-384199
+  if (/^606282/.test(bin) || /^3841/.test(bin)) return 'hipercard';
+  
+  // JCB: 35xxxx
+  if (/^35/.test(bin)) return 'jcb';
+  
+  return null;
+}
+
+/**
  * Tokeniza um cartão via backend (endpoint proxy para Vindi)
  * O backend usa a chave privada da Vindi de forma segura
  * @param {Object} params - Dados do cartão
@@ -42,29 +83,54 @@ export async function tokenizeCardWithVindi({
     throw new Error("Dados do cartão incompletos.");
   }
 
-  // Monta o payload para o backend
+  // Detecta bandeira pelo BIN (6 primeiros dígitos)
+  const brand = detectCardBrand(num);
+  if (!brand) {
+    throw new Error("Bandeira do cartão não identificada. Verifique o número do cartão.");
+  }
+
+  // Valida se bandeira está na lista suportada
+  if (!SUPPORTED_BRANDS.has(brand)) {
+    throw new Error(`Bandeira ${brand} não é suportada. Use Visa, Mastercard, Elo, Amex, Diners, Hipercard ou JCB.`);
+  }
+
+  // Monta card_expiration como MM/YYYY (formato esperado pela Vindi)
+  const cardExpiration = `${mm}/${yyyy}`;
+
+  // Monta o payload para o backend em snake_case
   const payload = {
     holder_name: holder,
     card_number: num,
-    card_expiration_month: mm,
-    card_expiration_year: yyyy,
+    card_expiration: cardExpiration, // Formato MM/YYYY
     card_cvv: sc,
     payment_method_code: "credit_card",
+    payment_company_code: brand, // visa, mastercard, elo, etc.
   };
 
-  // Adiciona documento se fornecido (campo pode ser registry_code ou document_number)
+  // Adiciona documento se fornecido
   if (doc) {
     payload.document_number = doc;
     payload.registry_code = doc; // backend decide qual usar
   }
 
+  // Log não sensível para debug
+  console.log("[autopay] Tokenizando cartão:", {
+    brand,
+    last4: num.slice(-4),
+    expiration: cardExpiration,
+    holder_name_length: holder.length,
+    has_document: !!doc,
+  });
+
   const url = apiJoin("/api/autopay/vindi/tokenize");
+  const headers = {
+    "Content-Type": "application/json",
+    ...authHeaders(), // Garante Authorization: Bearer <token>
+  };
+
   const response = await fetch(url, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...authHeaders(),
-    },
+    headers,
     credentials: "include",
     body: JSON.stringify(payload),
   });
@@ -159,10 +225,23 @@ export async function tokenizeCardWithVindi({
     null;
 
   if (!gatewayToken) {
+    console.error("[autopay] Resposta do backend não contém gateway_token:", {
+      has_gateway_token: !!result?.gateway_token,
+      has_payment_profile: !!result?.payment_profile,
+      has_data: !!result?.data,
+      response_keys: Object.keys(result || {}),
+    });
     throw new Error(
       "Resposta do backend não contém gateway_token. Verifique a estrutura da resposta."
     );
   }
+
+  // Log não sensível de sucesso
+  console.log("[autopay] Tokenização bem-sucedida:", {
+    brand,
+    has_token: !!gatewayToken,
+    token_length: gatewayToken.length,
+  });
 
   return gatewayToken;
 }
