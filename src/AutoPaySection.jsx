@@ -50,12 +50,27 @@ const pad2 = (n) => String(n).padStart(2, "0");
 const onlyDigits = (s) => String(s || "").replace(/\D+/g, "");
 
 function parseExpiry(exp) {
-  const d = onlyDigits(exp);
-  if (d.length < 4) return { mm: "", yyyy: "" };
+  // Aceita MM/AA ou MM/AAAA
+  const str = String(exp || "").trim();
+  // Remove tudo exceto dígitos
+  const d = str.replace(/\D+/g, "");
+  if (d.length < 4) return { mm: "", yyyy: "", valid: false };
+  
   const mm = d.slice(0, 2);
   let yy = d.slice(2);
+  // Se tem 2 dígitos, assume 20AA; se tem 4, usa como está
   let yyyy = yy.length === 2 ? `20${yy}` : yy.slice(0, 4);
-  return { mm, yyyy };
+  
+  // Valida mês (01-12)
+  const monthNum = parseInt(mm, 10);
+  // Valida: mês entre 1-12, ano tem 4 dígitos, ano >= 2020
+  const yearNum = parseInt(yyyy, 10);
+  const valid = monthNum >= 1 && monthNum <= 12 && 
+                yyyy.length === 4 && 
+                yearNum >= 2020 && 
+                yearNum <= 2099;
+  
+  return { mm, yyyy, valid };
 }
 
 // Função removida: loadMpSdkOnce (não mais necessária com Vindi)
@@ -98,13 +113,26 @@ export default function AutoPaySection() {
   }, [numbers, savedNumbers]);
 
   const activeDirty = active !== savedActive;
-  const holderDirty = (holder || "") !== (savedHolder || "");
+  const holderDirty = (holder || "").trim() !== (savedHolder || "").trim();
   const docDirty = (doc || "") !== (savedDoc || "");
   const cardFieldsDirty = !!(cardNumber || expiry || cvv);
 
+  // anyDirty: considera mudanças em números, active, holder, doc ou cartão
+  // Se usuário digitou cartão OU mudou holder OU mudou números/active/doc, habilita botão
   const anyDirty =
     numbersDirty || activeDirty || holderDirty || docDirty || cardFieldsDirty;
+  
+  // canSave: habilita se não está carregando/salvando, tem pelo menos 1 número e há mudanças
   const canSave = !loading && !saving && !needsAtLeastOne && anyDirty;
+  
+  // Diagnóstico: qual condição está impedindo o save
+  const saveBlockedReason = React.useMemo(() => {
+    if (loading) return "Carregando dados...";
+    if (saving) return "Salvando...";
+    if (needsAtLeastOne) return "Selecione ao menos 1 número";
+    if (!anyDirty) return "Nenhuma alteração detectada";
+    return null; // Pode salvar
+  }, [loading, saving, needsAtLeastOne, anyDirty]);
 
   React.useEffect(() => {
     let alive = true;
@@ -168,8 +196,11 @@ export default function AutoPaySection() {
 
   // Tokenização via backend (endpoint /api/autopay/vindi/tokenize)
   async function createVindiGatewayToken() {
+    console.debug("[autopay] Tokenize start");
+    
     const num = onlyDigits(cardNumber);
-    const { mm, yyyy } = parseExpiry(expiry);
+    const expiryParsed = parseExpiry(expiry);
+    const { mm, yyyy, valid: expiryValid } = expiryParsed;
     const sc = onlyDigits(cvv).slice(0, 4);
     const holderName = (holder || "").trim();
     const docDigits = onlyDigits(doc);
@@ -178,9 +209,16 @@ export default function AutoPaySection() {
     if (!num || num.length < 13) {
       throw new Error("Número do cartão inválido.");
     }
-    if (!mm || mm.length !== 2 || !yyyy || yyyy.length !== 4) {
-      throw new Error("Data de validade inválida. Use MM/AA ou MM/AAAA.");
+    
+    // Valida parse e formato de validade
+    if (!mm || mm.length !== 2 || !yyyy || yyyy.length !== 4 || !expiryValid) {
+      const monthNum = parseInt(mm, 10);
+      if (!expiryValid && monthNum >= 1 && monthNum <= 12) {
+        throw new Error("Ano de validade inválido. Use MM/AA ou MM/AAAA.");
+      }
+      throw new Error("Data de validade inválida. Use MM/AA ou MM/AAAA (mês deve ser 01-12).");
     }
+    
     if (!sc || sc.length < 3) {
       throw new Error("CVV inválido.");
     }
@@ -193,17 +231,51 @@ export default function AutoPaySection() {
       throw new Error("CPF/CNPJ é obrigatório. Informe um CPF (11 dígitos) ou CNPJ (14 dígitos).");
     }
 
-    return await tokenizeCardWithVindi({
-      holderName,
-      cardNumber: num,
-      expMonth: mm,  // Formato MM
-      expYear: yyyy, // Formato YYYY
-      cvv: sc,       // Apenas dígitos
-      documentNumber: docDigits,
+    console.debug("[autopay] Tokenize calling backend", {
+      has_card_number: !!num,
+      has_expiry: !!mm && !!yyyy,
+      has_cvv: !!sc,
+      has_holder: !!holderName,
+      has_doc: !!docDigits,
     });
+
+    try {
+      const result = await tokenizeCardWithVindi({
+        holderName,
+        cardNumber: num,
+        expMonth: mm,  // Formato MM
+        expYear: yyyy, // Formato YYYY
+        cvv: sc,       // Apenas dígitos
+        documentNumber: docDigits,
+      });
+      console.debug("[autopay] Tokenize end - success");
+      return result;
+    } catch (error) {
+      console.debug("[autopay] Tokenize end - error:", error?.message || error);
+      throw error;
+    }
   }
 
   async function save() {
+    // Instrumentação: logs de diagnóstico
+    const holderNameFilled = !!(holder || "").trim();
+    const docFilled = !!(doc || "");
+    const expiryParsed = parseExpiry(expiry);
+    const expiryParsedOk = expiryParsed.valid;
+    
+    console.debug("[autopay] save() called", {
+      needsAtLeastOne,
+      anyDirty,
+      cardFieldsDirty,
+      holderNameFilled,
+      docFilled,
+      expiryParsedOk,
+      has_cardNumber: !!(cardNumber || ""),
+      has_expiry: !!(expiry || ""),
+      has_cvv: !!(cvv || ""),
+      numbers_count: numbers.length,
+    });
+
     if (needsAtLeastOne) {
       alert("Selecione pelo menos 1 número para salvar as preferências.");
       return;
@@ -221,6 +293,10 @@ export default function AutoPaySection() {
       // Se há atualização de cartão, tokeniza via backend primeiro
       let gatewayToken = null;
       if (cardFieldsDirty) {
+        console.debug("[autopay] Will call tokenize", {
+          has_card_number: !!(cardNumber || ""),
+          has_cvv: !!(cvv || ""),
+        });
         try {
           gatewayToken = await createVindiGatewayToken();
         } catch (tokenizeError) {
@@ -243,7 +319,12 @@ export default function AutoPaySection() {
           }
           
           // Erros do backend - mostra mensagem real (já processada)
-          alert(errorMessage);
+          // Trata mensagens específicas do backend/Vindi
+          if (errorMessage.includes("bandeira") || errorMessage.includes("banco") || errorMessage.includes("não suportado")) {
+            alert(errorMessage);
+          } else {
+            alert(errorMessage);
+          }
           return;
         }
       }
@@ -557,7 +638,11 @@ export default function AutoPaySection() {
           >
             <InfoOutlinedIcon fontSize="small" />
             <Typography variant="body2">
-              Selecione <b>pelo menos 1 número</b> para salvar.
+              {saveBlockedReason || (
+                <>
+                  Selecione <b>pelo menos 1 número</b> para salvar.
+                </>
+              )}
             </Typography>
           </Stack>
 
@@ -579,6 +664,7 @@ export default function AutoPaySection() {
               }
               onClick={save}
               disabled={!canSave}
+              title={saveBlockedReason || undefined}
             >
               {saving ? "Salvando…" : "Salvar preferências"}
             </Button>

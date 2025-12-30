@@ -114,19 +114,26 @@ export async function tokenizeCardWithVindi({
   }
 
   // Log não sensível para debug
-  console.log("[autopay] Tokenizando cartão:", {
+  const url = apiJoin("/api/autopay/vindi/tokenize");
+  console.debug("[autopay] Tokenizando cartão - chamando BACKEND:", {
+    url,
     brand,
     last4: num.slice(-4),
     expiration: cardExpiration,
     holder_name_length: holder.length,
     has_document: !!doc,
+    has_authorization: !!authHeaders().Authorization,
   });
 
-  const url = apiJoin("/api/autopay/vindi/tokenize");
   const headers = {
     "Content-Type": "application/json",
     ...authHeaders(), // Garante Authorization: Bearer <token>
   };
+
+  // Confirma que não está chamando Vindi diretamente
+  if (url.includes("app.vindi.com.br") || url.includes("vindi.com.br")) {
+    throw new Error("Erro de configuração: tentando chamar Vindi diretamente do frontend. Use o backend.");
+  }
 
   const response = await fetch(url, {
     method: "POST",
