@@ -281,18 +281,21 @@ export default function AutoPaySection() {
       return;
     }
 
-    // Valida holder_name antes de prosseguir
     const holderName = (holder || "").trim();
-    if (!holderName) {
+    const hasSavedCard = !!card.has_card;
+    const needsTokenize = cardFieldsDirty || (active && !hasSavedCard);
+
+    // Só exige holder quando realmente precisar tokenizar/ativar sem cartão salvo
+    if (needsTokenize && !holderName) {
       alert("Por favor, informe o nome impresso no cartão.");
       return;
     }
 
     setSaving(true);
     try {
-      // Se há atualização de cartão, tokeniza via backend primeiro
+      // Se há atualização de cartão ou precisa ativar sem cartão salvo, tokeniza via backend
       let gatewayToken = null;
-      if (cardFieldsDirty) {
+      if (needsTokenize) {
         console.debug("[autopay] Will call tokenize", {
           has_card_number: !!(cardNumber || ""),
           has_cvv: !!(cvv || ""),
@@ -334,7 +337,7 @@ export default function AutoPaySection() {
       try {
         const result = await setupAutopayVindi({
           gatewayToken: gatewayToken || undefined, // undefined se não houver
-          holderName,
+          holderName: holderName || undefined,
           docNumber: doc,
           numbers,
           active,

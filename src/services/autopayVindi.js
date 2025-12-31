@@ -83,43 +83,32 @@ export async function tokenizeCardWithVindi({
     throw new Error("Dados do cartão incompletos.");
   }
 
-  // Detecta bandeira pelo BIN (6 primeiros dígitos)
-  const brand = detectCardBrand(num);
-  if (!brand) {
-    throw new Error("Bandeira do cartão não identificada. Verifique o número do cartão.");
-  }
+  // (Opcional) Detecta bandeira só para log/UI, sem bloquear fluxo
+  const brand = detectCardBrand(num) || null;
 
-  // Valida se bandeira está na lista suportada
-  if (!SUPPORTED_BRANDS.has(brand)) {
-    throw new Error(`Bandeira ${brand} não é suportada. Use Visa, Mastercard, Elo, Amex, Diners, Hipercard ou JCB.`);
-  }
-
-  // Monta card_expiration como MM/YYYY (formato esperado pela Vindi)
-  const cardExpiration = `${mm}/${yyyy}`;
-
-  // Monta o payload para o backend em snake_case
+  // Monta payload compatível com o BACKEND (/api/autopay/vindi/tokenize)
+  // Backend aceita camelCase (expMonth/expYear) OU snake_case (card_expiration_month/year).
   const payload = {
-    holder_name: holder,
-    card_number: num,
-    card_expiration: cardExpiration, // Formato MM/YYYY
-    card_cvv: sc,
+    holderName: holder,
+    cardNumber: num,
+    expMonth: mm,
+    expYear: yyyy,
+    cvv: sc,
     payment_method_code: "credit_card",
-    payment_company_code: brand, // visa, mastercard, elo, etc.
   };
 
   // Adiciona documento se fornecido
   if (doc) {
-    payload.document_number = doc;
-    payload.registry_code = doc; // backend decide qual usar
+    payload.documentNumber = doc;
   }
 
   // Log não sensível para debug
   const url = apiJoin("/api/autopay/vindi/tokenize");
   console.debug("[autopay] Tokenizando cartão - chamando BACKEND:", {
     url,
-    brand,
+    brand: brand || "não detectada",
     last4: num.slice(-4),
-    expiration: cardExpiration,
+    expiration: `${mm}/${yyyy}`,
     holder_name_length: holder.length,
     has_document: !!doc,
     has_authorization: !!authHeaders().Authorization,
@@ -270,14 +259,13 @@ export async function setupAutopayVindi({
   numbers,
   active,
 }) {
-  if (!holderName) {
-    throw new Error("holder_name é obrigatório.");
-  }
-
   // Constrói o body convertendo camelCase para snake_case
-  const body = {
-    holder_name: String(holderName || "").trim(),
-  };
+  const body = {};
+  
+  // holder_name só é obrigatório quando tem gateway_token (atualizando cartão)
+  if (holderName) {
+    body.holder_name = String(holderName || "").trim();
+  }
 
   // Adiciona gateway_token apenas se fornecido
   if (gatewayToken) {
