@@ -303,31 +303,9 @@ export default function AutoPaySection() {
         try {
           gatewayToken = await createVindiGatewayToken();
         } catch (tokenizeError) {
-          // Tratamento específico de erros de tokenização
-          // Mostra a mensagem real do erro (já processada no service)
+          // Usa a mensagem já montada pelo service (incluindo details quando houver)
           const errorMessage = tokenizeError?.message || "Falha ao tokenizar cartão.";
-          
-          // Erros de validação local (antes de enviar ao backend)
-          if (tokenizeError?.message && (
-            tokenizeError.message.includes("CPF/CNPJ") ||
-            tokenizeError.message.includes("Número do cartão") ||
-            tokenizeError.message.includes("Data de validade") ||
-            tokenizeError.message.includes("CVV") ||
-            tokenizeError.message.includes("Nome do titular") ||
-            tokenizeError.message.includes("Bandeira") ||
-            tokenizeError.message.includes("bandeira")
-          )) {
-            alert(errorMessage);
-            return;
-          }
-          
-          // Erros do backend - mostra mensagem real (já processada)
-          // Trata mensagens específicas do backend/Vindi
-          if (errorMessage.includes("bandeira") || errorMessage.includes("banco") || errorMessage.includes("não suportado")) {
-            alert(errorMessage);
-          } else {
-            alert(errorMessage);
-          }
+          alert(errorMessage);
           return;
         }
       }
@@ -420,7 +398,7 @@ export default function AutoPaySection() {
       }
     } catch (e) {
       console.error("[autopay] save error:", e?.message || e);
-      // Se não foi tratado acima, mostra mensagem genérica
+      // Usa a mensagem do erro (já montada pelo service quando aplicável)
       const errorMsg = e?.message || "Falha ao salvar preferências. Verifique os dados do cartão.";
       alert(errorMsg);
     } finally {

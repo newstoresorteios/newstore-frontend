@@ -152,8 +152,21 @@ export async function tokenizeCardWithVindi({
     try {
       const errorJson = await response.json();
       
-      // Ordem de prioridade: a) json.error, b) json.message, c) json.errors[0].message, d) fallback HTTP ${status}
-      if (errorJson?.error) {
+      // Prioridade: se vier response.data.details (lista de erros), concatena "campo: <parameter> - <message>"
+      if (errorJson?.data?.details && Array.isArray(errorJson.data.details) && errorJson.data.details.length > 0) {
+        const detailsMessages = errorJson.data.details.map((detail) => {
+          const parameter = detail.parameter || detail.field || "campo";
+          const message = detail.message || detail.error || "";
+          return `${parameter}: ${message}`;
+        });
+        errorMsg = detailsMessages.join("; ");
+      } 
+      // Caso contrário, mostra response.data.message
+      else if (errorJson?.data?.message) {
+        errorMsg = errorJson.data.message;
+      }
+      // Fallback para estruturas alternativas
+      else if (errorJson?.error) {
         errorMsg = errorJson.error;
       } else if (errorJson?.message) {
         errorMsg = errorJson.message;
@@ -161,7 +174,7 @@ export async function tokenizeCardWithVindi({
         errorMsg = errorJson.errors[0].message || errorMsg;
       }
       
-      errorCode = errorJson?.code || null;
+      errorCode = errorJson?.code || errorJson?.data?.code || null;
       
       // Tratamento específico por status
       if (response.status === 401) {
