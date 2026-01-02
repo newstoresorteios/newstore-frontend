@@ -7,7 +7,7 @@ import { apiJoin, authHeaders } from "../lib/api";
 /**
  * Bandeiras suportadas pela Vindi
  */
-const SUPPORTED_BRANDS = new Set(['visa', 'mastercard', 'elo', 'amex', 'diners', 'hipercard', 'jcb']);
+const SUPPORTED_BRANDS = new Set(['visa', 'mastercard', 'elo', 'american_express', 'diners_club', 'hipercard']);
 
 /**
  * Detecta a bandeira do cartão pelo BIN (6 primeiros dígitos)
@@ -31,16 +31,16 @@ function detectCardBrand(cardNumber) {
   if (/^(5067|509[0-9]|4314|4514|6363|6500|6277|4389|5041)/.test(bin)) return 'elo';
   
   // Amex: 34xxxx ou 37xxxx
-  if (/^3[47]/.test(bin)) return 'amex';
+  if (/^3[47]/.test(bin)) return 'american_express';
   
   // Diners: 36xxxx ou 38xxxx
-  if (/^3[68]/.test(bin)) return 'diners';
+  if (/^3[68]/.test(bin)) return 'diners_club';
   
   // Hipercard: 606282, 384100-384199
   if (/^606282/.test(bin) || /^3841/.test(bin)) return 'hipercard';
   
-  // JCB: 35xxxx
-  if (/^35/.test(bin)) return 'jcb';
+  // JCB não está listado como suportado nessa referência da Vindi; não setar.
+  // if (/^35/.test(bin)) return null;
   
   return null;
 }
@@ -83,8 +83,9 @@ export async function tokenizeCardWithVindi({
     throw new Error("Dados do cartão incompletos.");
   }
 
-  // (Opcional) Detecta bandeira só para log/UI, sem bloquear fluxo
-  const brand = detectCardBrand(num) || null;
+  // Detecta bandeira - não barra no frontend. Se detectar e for suportada, envia; se não, deixa Vindi decidir.
+  const brand = detectCardBrand(num);
+  const shouldSendBrand = brand && SUPPORTED_BRANDS.has(brand);
 
   // Monta payload compatível com o BACKEND (/api/autopay/vindi/tokenize)
   // Backend aceita camelCase (expMonth/expYear) OU snake_case (card_expiration_month/year).
@@ -96,6 +97,11 @@ export async function tokenizeCardWithVindi({
     cvv: sc,
     payment_method_code: "credit_card",
   };
+
+  // Adiciona payment_company_code apenas se detectar bandeira suportada
+  if (shouldSendBrand) {
+    payload.payment_company_code = brand;
+  }
 
   // Adiciona documento se fornecido
   if (doc) {
