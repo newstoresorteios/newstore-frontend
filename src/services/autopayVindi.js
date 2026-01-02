@@ -6,71 +6,82 @@ import { apiJoin, authHeaders } from "../lib/api";
 
 /**
  * Bandeiras suportadas pela Vindi
+ * Códigos exatos esperados pelo backend/Vindi
  */
-const SUPPORTED_BRANDS = new Set(['visa', 'mastercard', 'elo', 'american_express', 'diners_club', 'hipercard']);
+const SUPPORTED_BRANDS = new Set(['visa', 'mastercard', 'elo', 'american_express', 'diners_club', 'hipercard', 'hiper']);
 
 /**
- * Detecta a bandeira do cartão pelo BIN (6 primeiros dígitos)
+ * Detecta a bandeira do cartão pelo BIN/IIN
  * Remove tudo que não for dígito antes da detecção
- * @param {string} cardNumber - Número do cartão
- * @returns {"visa" | "mastercard" | "elo" | "american_express" | "diners_club" | "hipercard" | null} Código da bandeira ou null se não detectada
+ * @param {string} cardNumber - Número do cartão (pode conter espaços/hífens)
+ * @returns {"visa" | "mastercard" | "elo" | "american_express" | "diners_club" | "hipercard" | "hiper" | null} Código exato esperado pelo backend/Vindi ou null
  */
 function detectBrandCode(cardNumber) {
-  // Remove tudo que não for dígito
-  const num = String(cardNumber || "").replace(/\D+/g, "");
-  if (num.length < 6) return null;
+  // Sanitiza: remove tudo que não for dígito
+  const digitsOnly = String(cardNumber || "").replace(/\D/g, "");
+  if (digitsOnly.length < 6) return null;
   
-  const bin = num.slice(0, 6);
-  const binNum = parseInt(bin);
+  const bin = digitsOnly.slice(0, 6);
+  const binPrefix4 = digitsOnly.slice(0, 4);
+  const binPrefix3 = digitsOnly.slice(0, 3);
+  const binPrefix2 = digitsOnly.slice(0, 2);
+  const binNum = parseInt(bin, 10);
+  const binPrefix4Num = parseInt(binPrefix4, 10);
+  const binPrefix3Num = parseInt(binPrefix3, 10);
+  const binPrefix2Num = parseInt(binPrefix2, 10);
   
   // IMPORTANTE: Elo deve ser detectado ANTES de Visa para evitar sobreposição
-  // Elo: prefixos conhecidos - ordem dos mais específicos primeiro
-  // Prefixos de 6 dígitos exatos
-  if (bin === '636368' || bin === '636369' || bin === '627780' || 
-      bin === '636297' || bin === '401178' || bin === '431274' || bin === '438935' ||
-      bin === '451416' || bin === '457393' || bin === '504175' || bin === '506768' ||
-      bin === '509048' || bin === '509067' || bin === '509151' || bin === '509389' ||
-      bin === '637095' || bin === '637568') {
-    return 'elo';
-  }
-  // Prefixos de 4 dígitos para Elo
-  if (bin.startsWith('6504') || bin.startsWith('6505') || bin.startsWith('6506') || 
-      bin.startsWith('6507') || bin.startsWith('6509') || bin.startsWith('6516') || 
-      bin.startsWith('6550') || bin.startsWith('5067') || bin.startsWith('5090') ||
-      bin.startsWith('5091') || bin.startsWith('5092') || bin.startsWith('5093') ||
-      bin.startsWith('5094') || bin.startsWith('5095') || bin.startsWith('5096') ||
-      bin.startsWith('5097') || bin.startsWith('5098') || bin.startsWith('5099') ||
-      bin.startsWith('4314') || bin.startsWith('4514') || bin.startsWith('6363') ||
-      bin.startsWith('6500') || bin.startsWith('6277') || bin.startsWith('4389') ||
-      bin.startsWith('5041')) {
+  // Elo: prefixos conhecidos - verificação por ordem de especificidade (6 dígitos primeiro, depois 4, depois 2)
+  
+  // Prefixos de 6 dígitos exatos para Elo
+  const eloBin6 = ['636368', '636369', '627780', '636297', '401178', '431274', '438935',
+                    '451416', '457393', '504175', '506768', '509048', '509067', '509151', '509389'];
+  if (eloBin6.includes(bin)) {
     return 'elo';
   }
   
-  // Mastercard: 51-55 ou range 222100-272099 (2221-2720 nos primeiros 4 dígitos)
-  if (/^5[1-5]/.test(bin) || (binNum >= 222100 && binNum <= 272099)) {
+  // Prefixos de 4 dígitos para Elo
+  const eloPrefix4 = ['6504', '6505', '6506', '6507', '6509', '6516', '6550', '5067', 
+                       '4314', '4514', '6363', '6500', '6277', '4389', '5041'];
+  if (eloPrefix4.some(prefix => bin.startsWith(prefix))) {
+    return 'elo';
+  }
+  
+  // Prefixos de 2 dígitos para Elo (5090-5099)
+  if (binPrefix2 === '50' && binPrefix4Num >= 5090 && binPrefix4Num <= 5099) {
+    return 'elo';
+  }
+  
+  // Mastercard: 51-55 (prefixo de 2 dígitos) OU 2221-2720 (prefixo de 4 dígitos)
+  if ((binPrefix2Num >= 51 && binPrefix2Num <= 55) || 
+      (binPrefix4Num >= 2221 && binPrefix4Num <= 2720)) {
     return 'mastercard';
   }
   
   // Visa: começa com 4 (após Elo para evitar sobreposição)
-  if (/^4/.test(bin)) return 'visa';
+  if (digitsOnly.startsWith('4')) {
+    return 'visa';
+  }
   
-  // Amex: 34 ou 37
-  if (bin.startsWith('34') || bin.startsWith('37')) return 'american_express';
+  // Amex: começa com 34 ou 37
+  if (binPrefix2 === '34' || binPrefix2 === '37') {
+    return 'american_express';
+  }
   
-  // Diners: 300-305, 36, 38-39 (primeiros 3 dígitos ou 2 dígitos)
-  if (bin.startsWith('300') || bin.startsWith('301') || bin.startsWith('302') ||
-      bin.startsWith('303') || bin.startsWith('304') || bin.startsWith('305') ||
-      bin.startsWith('36') || bin.startsWith('38') || bin.startsWith('39')) {
+  // Diners: 300-305 (prefixo de 3 dígitos) OU começa com 36, 38 ou 39 (prefixo de 2 dígitos)
+  if ((binPrefix3Num >= 300 && binPrefix3Num <= 305) ||
+      binPrefix2 === '36' || binPrefix2 === '38' || binPrefix2 === '39') {
     return 'diners_club';
   }
   
-  // Hipercard: 606282, 384100-384199, 637095, 637568
-  if (bin === '606282' || bin.startsWith('3841') || bin === '637095' || bin === '637568') {
+  // Hipercard: 606282 (6 dígitos) OU 3841 (4 dígitos)
+  if (bin === '606282' || binPrefix4 === '3841') {
     return 'hipercard';
   }
   
-  // JCB não está listado como suportado nessa referência da Vindi; não setar.
-  // if (/^35/.test(bin)) return null;
+  // Hiper: pode usar os mesmos BINs do Hipercard ou outros específicos
+  // Por enquanto, se não for Hipercard mas for compatível, pode retornar 'hiper'
+  // (ajustar conforme necessário baseado nos BINs reais usados)
   
   return null;
 }
@@ -95,22 +106,23 @@ export async function tokenizeCardWithVindi({
   cvv,
   documentNumber,
 }) {
-  // Valida e normaliza dados do cartão
-  const num = String(cardNumber || "").replace(/\D+/g, "");
-  // Garante expMonth no formato MM (2 dígitos)
+  // Sanitiza número do cartão: remove tudo que não for dígito
+  const num = String(cardNumber || "").replace(/\D/g, "");
+  
+  // Garante expMonth no formato MM (zero-padded, 2 dígitos)
   const mm = String(expMonth || "").padStart(2, "0");
-  // Garante expYear no formato YYYY (4 dígitos) - se vier com 2 dígitos, adiciona 20
+  
+  // Garante expYear no formato YYYY (4 dígitos)
+  // Se usuário digitar 2 dígitos, prefixa com 20
   let yyyy = String(expYear || "");
   if (yyyy.length === 2) {
     yyyy = `20${yyyy}`;
   } else if (yyyy.length === 4) {
+    // Já está com 4 dígitos, usar como está
     yyyy = yyyy;
-  } else {
-    // Se não tiver 2 ou 4 dígitos, tenta pegar os últimos 4
+  } else if (yyyy.length > 4) {
+    // Se tiver mais de 4 dígitos, pega os últimos 4
     yyyy = yyyy.slice(-4);
-    if (yyyy.length === 2) {
-      yyyy = `20${yyyy}`;
-    }
   }
   
   // CVV apenas dígitos, máximo 4 caracteres
@@ -148,20 +160,22 @@ export async function tokenizeCardWithVindi({
     payload.documentNumber = doc;
   }
 
-  // Log não sensível para debug
+  // Log não sensível para debug (nunca logar PAN completo)
   const url = apiJoin("/api/autopay/vindi/tokenize");
-  console.debug("[autopay] Tokenizando cartão - chamando BACKEND:", {
-    url,
-    bin: num.slice(0, 6),
-    brand: brand || "não detectada",
-    payment_company_code: brand && SUPPORTED_BRANDS.has(brand) ? brand : "não enviado",
-    last4: num.slice(-4),
-    card_expiration: `${mm}/${yyyy}`,
-    holder_name_length: holder.length,
-    has_document: !!doc,
-    has_authorization: !!authHeaders().Authorization,
-    payload_keys: Object.keys(payload),
-  });
+  if (process.env.NODE_ENV === 'development') {
+    console.debug("[autopay] Tokenizando cartão - chamando BACKEND:", {
+      url,
+      bin: num.slice(0, 6), // Apenas 6 primeiros dígitos (BIN), nunca o cartão completo
+      detectedBrandCode: brand || "não detectada",
+      payment_company_code: brand && SUPPORTED_BRANDS.has(brand) ? brand : "não enviado",
+      last4: num.slice(-4),
+      card_expiration: `${mm}/${yyyy}`,
+      holder_name_length: holder.length,
+      has_document: !!doc,
+      has_authorization: !!authHeaders().Authorization,
+      payload_keys: Object.keys(payload),
+    });
+  }
 
   const headers = {
     "Content-Type": "application/json",
