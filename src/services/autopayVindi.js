@@ -22,15 +22,24 @@ function detectBrandCode(cardNumber) {
   
   const bin = num.slice(0, 6);
   
-  // Visa: 4xxxxx
-  if (/^4/.test(bin)) return 'visa';
+  // IMPORTANTE: Elo deve ser detectado ANTES de Visa para evitar sobreposição
+  // Elo: padrões principais incluindo 6504, 6505, 6506, 6507, 6509, 6516, 6550, 636368, 636369
+  // e os demais: 5067xx, 5090xx-5099xx, 4314xx, 4514xx, 6363xx, 6500xx, 6277xx, 4389xx, 5041xx
+  // Ordem: prefixos mais longos primeiro para evitar match parcial
+  // Verificação específica para 6504 (caso crítico mencionado)
+  if (bin.startsWith('6504') || bin.startsWith('6505') || bin.startsWith('6506') || 
+      bin.startsWith('6507') || bin.startsWith('6509') || bin.startsWith('6516') || 
+      bin.startsWith('6550') || bin.startsWith('636368') || bin.startsWith('636369') ||
+      /^(5067|509[0-9]|4314|4514|6363|6500|6277|4389|5041)/.test(bin)) {
+    return 'elo';
+  }
   
   // Mastercard: 5xxxxx (51-55) ou 2xxxxx (range 222100-272099)
   const binNum = parseInt(bin);
   if (/^5[1-5]/.test(bin) || (binNum >= 222100 && binNum <= 272099)) return 'mastercard';
   
-  // Elo: padrões principais (5067xx, 5090xx-5099xx, 4314xx, 4514xx, 6363xx, 6500xx, 6277xx, 4389xx, 5041xx)
-  if (/^(5067|509[0-9]|4314|4514|6363|6500|6277|4389|5041)/.test(bin)) return 'elo';
+  // Visa: 4xxxxx (após Elo para evitar sobreposição)
+  if (/^4/.test(bin)) return 'visa';
   
   // Amex: 34xxxx ou 37xxxx
   if (/^3[47]/.test(bin)) return 'american_express';
@@ -71,11 +80,13 @@ export async function tokenizeCardWithVindi({
   const num = String(cardNumber || "").replace(/\D+/g, "");
   // Garante expMonth no formato MM (2 dígitos)
   const mm = String(expMonth || "").padStart(2, "0");
-  // Garante expYear no formato YYYY (4 dígitos)
+  // Garante expYear no formato YYYY (4 dígitos) para uso interno
   let yyyy = String(expYear || "").slice(-4);
   if (yyyy.length === 2) {
     yyyy = `20${yyyy}`;
   }
+  // card_expiration deve ser MM/YY (2 dígitos do ano)
+  const yy = yyyy.slice(-2);
   // CVV apenas dígitos, máximo 4 caracteres
   const sc = String(cvv || "").replace(/\D+/g, "").slice(0, 4);
   // Trim para evitar enviar strings vazias
@@ -86,24 +97,24 @@ export async function tokenizeCardWithVindi({
     throw new Error("Dados do cartão incompletos.");
   }
 
-  // Detecta bandeira - não barra no frontend. Se detectar e for suportada, envia; se não, deixa Vindi decidir.
+  // Detecta bandeira - não barra no frontend. Se detectar e for suportada, SEMPRE envia payment_company_code
   const brand = detectBrandCode(num);
   const shouldSendBrand = brand && SUPPORTED_BRANDS.has(brand);
 
   // Monta payload compatível com o BACKEND (/api/autopay/vindi/tokenize)
-  // Backend aceita camelCase (expMonth/expYear) e também card_expiration no formato MM/YYYY
+  // Backend aceita camelCase (expMonth/expYear) e também card_expiration no formato MM/YY
   const payload = {
     holderName: holder,
     cardNumber: num,
     expMonth: mm,
     expYear: yyyy,
-    card_expiration: `${mm}/${yyyy}`, // Formato preferido pela Vindi API
+    card_expiration: `${mm}/${yy}`, // Formato MM/YY conforme documentação Vindi
     cvv: sc,
     payment_method_code: "credit_card",
   };
 
-  // Adiciona payment_company_code apenas se detectar bandeira suportada
-  if (shouldSendBrand) {
+  // SEMPRE adiciona payment_company_code quando detectar bandeira suportada
+  if (shouldSendBrand && brand) {
     payload.payment_company_code = brand;
   }
 
@@ -116,13 +127,16 @@ export async function tokenizeCardWithVindi({
   const url = apiJoin("/api/autopay/vindi/tokenize");
   console.debug("[autopay] Tokenizando cartão - chamando BACKEND:", {
     url,
+    bin: num.slice(0, 6),
     brand: brand || "não detectada",
-    payment_company_code: shouldSendBrand ? brand : "não enviado",
+    payment_company_code: (shouldSendBrand && brand) ? brand : "não enviado",
     last4: num.slice(-4),
-    expiration: `${mm}/${yyyy}`,
+    card_expiration: `${mm}/${yy}`,
+    expiration_full: `${mm}/${yyyy}`,
     holder_name_length: holder.length,
     has_document: !!doc,
     has_authorization: !!authHeaders().Authorization,
+    payload_keys: Object.keys(payload),
   });
 
   const headers = {

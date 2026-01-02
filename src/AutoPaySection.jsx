@@ -303,9 +303,9 @@ export default function AutoPaySection() {
         try {
           gatewayToken = await createVindiGatewayToken();
         } catch (tokenizeError) {
-          // Se o erro está relacionado a payment_company_id (não conseguiu detectar bandeira)
+          // Se o erro está relacionado a payment_company_id/payment_company_code (não conseguiu detectar bandeira)
           if (tokenizeError?.hasPaymentCompanyIdError) {
-            alert("Não foi possível detectar a bandeira do cartão. Verifique o número do cartão.");
+            alert("Não foi possível detectar a bandeira do cartão. Selecione a bandeira e tente novamente.");
           } else {
             // Usa a mensagem já montada pelo service (incluindo details quando houver)
             const errorMessage = tokenizeError?.message || "Falha ao tokenizar cartão.";
