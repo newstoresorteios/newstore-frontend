@@ -303,9 +303,14 @@ export default function AutoPaySection() {
         try {
           gatewayToken = await createVindiGatewayToken();
         } catch (tokenizeError) {
-          // Usa a mensagem já montada pelo service (incluindo details quando houver)
-          const errorMessage = tokenizeError?.message || "Falha ao tokenizar cartão.";
-          alert(errorMessage);
+          // Se o erro está relacionado a payment_company_id (não conseguiu detectar bandeira)
+          if (tokenizeError?.hasPaymentCompanyIdError) {
+            alert("Não foi possível detectar a bandeira do cartão. Verifique o número do cartão.");
+          } else {
+            // Usa a mensagem já montada pelo service (incluindo details quando houver)
+            const errorMessage = tokenizeError?.message || "Falha ao tokenizar cartão.";
+            alert(errorMessage);
+          }
           return;
         }
       }
@@ -313,10 +318,14 @@ export default function AutoPaySection() {
       // Sempre chama setupAutopayVindi para persistir preferências
       // Se não houver gatewayToken mas houver mudanças, tenta salvar mesmo assim
       try {
+        // Garante que holderName não seja string vazia (trim já foi feito acima)
+        const cleanHolderName = holderName || undefined;
+        const cleanDocNumber = doc && doc.trim() ? doc.trim() : undefined;
+        
         const result = await setupAutopayVindi({
           gatewayToken: gatewayToken || undefined, // undefined se não houver
-          holderName: holderName || undefined,
-          docNumber: doc,
+          holderName: cleanHolderName,
+          docNumber: cleanDocNumber,
           numbers,
           active,
         });

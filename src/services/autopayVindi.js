@@ -11,10 +11,12 @@ const SUPPORTED_BRANDS = new Set(['visa', 'mastercard', 'elo', 'american_express
 
 /**
  * Detecta a bandeira do cartão pelo BIN (6 primeiros dígitos)
- * @param {string} cardNumber - Número do cartão (apenas dígitos)
- * @returns {string|null} Código da bandeira (visa, mastercard, elo, etc.) ou null se não detectada
+ * Remove tudo que não for dígito antes da detecção
+ * @param {string} cardNumber - Número do cartão
+ * @returns {"visa" | "mastercard" | "elo" | "american_express" | "diners_club" | "hipercard" | null} Código da bandeira ou null se não detectada
  */
-function detectCardBrand(cardNumber) {
+function detectBrandCode(cardNumber) {
+  // Remove tudo que não for dígito
   const num = String(cardNumber || "").replace(/\D+/g, "");
   if (num.length < 6) return null;
   
@@ -76,6 +78,7 @@ export async function tokenizeCardWithVindi({
   }
   // CVV apenas dígitos, máximo 4 caracteres
   const sc = String(cvv || "").replace(/\D+/g, "").slice(0, 4);
+  // Trim para evitar enviar strings vazias
   const holder = String(holderName || "").trim();
   const doc = String(documentNumber || "").replace(/\D+/g, "");
 
@@ -84,16 +87,17 @@ export async function tokenizeCardWithVindi({
   }
 
   // Detecta bandeira - não barra no frontend. Se detectar e for suportada, envia; se não, deixa Vindi decidir.
-  const brand = detectCardBrand(num);
+  const brand = detectBrandCode(num);
   const shouldSendBrand = brand && SUPPORTED_BRANDS.has(brand);
 
   // Monta payload compatível com o BACKEND (/api/autopay/vindi/tokenize)
-  // Backend aceita camelCase (expMonth/expYear) OU snake_case (card_expiration_month/year).
+  // Backend aceita camelCase (expMonth/expYear) e também card_expiration no formato MM/YYYY
   const payload = {
     holderName: holder,
     cardNumber: num,
     expMonth: mm,
     expYear: yyyy,
+    card_expiration: `${mm}/${yyyy}`, // Formato preferido pela Vindi API
     cvv: sc,
     payment_method_code: "credit_card",
   };
@@ -103,7 +107,7 @@ export async function tokenizeCardWithVindi({
     payload.payment_company_code = brand;
   }
 
-  // Adiciona documento se fornecido
+  // Adiciona documento apenas se fornecido (não envia string vazia)
   if (doc) {
     payload.documentNumber = doc;
   }
@@ -113,6 +117,7 @@ export async function tokenizeCardWithVindi({
   console.debug("[autopay] Tokenizando cartão - chamando BACKEND:", {
     url,
     brand: brand || "não detectada",
+    payment_company_code: shouldSendBrand ? brand : "não enviado",
     last4: num.slice(-4),
     expiration: `${mm}/${yyyy}`,
     holder_name_length: holder.length,
@@ -152,6 +157,31 @@ export async function tokenizeCardWithVindi({
     try {
       const errorJson = await response.json();
       
+      // Verifica se há error_parameters com payment_company_id (indica problema de detecção de bandeira)
+      let hasPaymentCompanyIdError = false;
+      if (errorJson?.error_parameters) {
+        const errorParams = errorJson.error_parameters;
+        if (typeof errorParams === "string") {
+          hasPaymentCompanyIdError = errorParams.includes("payment_company_id") || 
+                                     errorParams.includes("payment_company_code");
+        } else if (Array.isArray(errorParams)) {
+          hasPaymentCompanyIdError = errorParams.some(p => 
+            (typeof p === "string" && (p.includes("payment_company_id") || p.includes("payment_company_code"))) ||
+            (typeof p === "object" && (p?.parameter === "payment_company_id" || p?.parameter === "payment_company_code"))
+          );
+        } else if (typeof errorParams === "object") {
+          hasPaymentCompanyIdError = "payment_company_id" in errorParams || "payment_company_code" in errorParams;
+        }
+      }
+      
+      // Também verifica nos details se algum erro é sobre payment_company
+      if (!hasPaymentCompanyIdError && errorJson?.data?.details && Array.isArray(errorJson.data.details)) {
+        hasPaymentCompanyIdError = errorJson.data.details.some(detail => {
+          const param = detail.parameter || detail.field || "";
+          return param.includes("payment_company");
+        });
+      }
+
       // Prioridade: se vier response.data.details (lista de erros), concatena "campo: <parameter> - <message>"
       if (errorJson?.data?.details && Array.isArray(errorJson.data.details) && errorJson.data.details.length > 0) {
         const detailsMessages = errorJson.data.details.map((detail) => {
@@ -176,6 +206,11 @@ export async function tokenizeCardWithVindi({
       
       errorCode = errorJson?.code || errorJson?.data?.code || null;
       
+      // Preserva informação sobre erro de payment_company_id para uso no componente
+      if (hasPaymentCompanyIdError) {
+        errorCode = errorCode || "PAYMENT_COMPANY_ID_ERROR";
+      }
+      
       // Tratamento específico por status
       if (response.status === 401) {
         // Sessão expirada ou não autorizado
@@ -197,7 +232,8 @@ export async function tokenizeCardWithVindi({
         // Validação do cartão falhou - mostra mensagem real do backend/Vindi (ex: "bandeira/banco não suportado", "não pode ficar em branco")
         const err = new Error(errorMsg);
         err.status = 422;
-        err.code = "CARD_VALIDATION_FAILED";
+        err.code = errorCode || "CARD_VALIDATION_FAILED";
+        err.hasPaymentCompanyIdError = hasPaymentCompanyIdError;
         throw err;
       }
       
@@ -205,7 +241,17 @@ export async function tokenizeCardWithVindi({
         // Validação do cartão ou requisição inválida
         const err = new Error(errorMsg);
         err.status = 400;
-        err.code = "CARD_VALIDATION_FAILED";
+        err.code = errorCode || "CARD_VALIDATION_FAILED";
+        err.hasPaymentCompanyIdError = hasPaymentCompanyIdError;
+        throw err;
+      }
+      
+      // Para outros status codes, também preserva informação sobre payment_company_id
+      if (hasPaymentCompanyIdError) {
+        const err = new Error(errorMsg);
+        err.status = response.status;
+        err.code = errorCode;
+        err.hasPaymentCompanyIdError = true;
         throw err;
       }
     } catch (innerError) {
