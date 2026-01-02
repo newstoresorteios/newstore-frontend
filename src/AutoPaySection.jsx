@@ -305,9 +305,9 @@ export default function AutoPaySection() {
         } catch (tokenizeError) {
           // Se o erro está relacionado a payment_company_id/payment_company_code
           if (tokenizeError?.hasPaymentCompanyIdError) {
-            alert("Não foi possível detectar a bandeira do cartão. Verifique o número do cartão.");
+            alert("Não foi possível validar a bandeira do cartão. Verifique o número e tente novamente.");
           } else {
-            // Caso contrário, mostrar mensagem/fields retornados do backend
+            // Caso contrário, mostrar mensagem formatada do backend
             const errorMessage = tokenizeError?.message || "Falha ao tokenizar cartão.";
             alert(errorMessage);
           }

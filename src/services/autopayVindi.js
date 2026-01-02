@@ -8,15 +8,15 @@ import { apiJoin, authHeaders } from "../lib/api";
  * Bandeiras suportadas pela Vindi
  * Códigos exatos esperados pelo backend/Vindi
  */
-const SUPPORTED_BRANDS = new Set(['visa', 'mastercard', 'elo', 'american_express', 'diners_club', 'hipercard', 'hiper']);
+const SUPPORTED_BRANDS = new Set(['visa', 'mastercard', 'elo', 'american_express', 'diners_club', 'hipercard']);
 
 /**
  * Detecta a bandeira do cartão pelo BIN/IIN
  * Remove tudo que não for dígito antes da detecção
  * @param {string} cardNumber - Número do cartão (pode conter espaços/hífens)
- * @returns {"visa" | "mastercard" | "elo" | "american_express" | "diners_club" | "hipercard" | "hiper" | null} Código exato esperado pelo backend/Vindi ou null
+ * @returns {"visa" | "mastercard" | "elo" | "american_express" | "diners_club" | "hipercard" | null} Código exato esperado pelo backend/Vindi ou null
  */
-function detectBrandCode(cardNumber) {
+export function detectBrandCode(cardNumber) {
   // Sanitiza: remove tudo que não for dígito
   const digitsOnly = String(cardNumber || "").replace(/\D/g, "");
   if (digitsOnly.length < 6) return null;
@@ -68,20 +68,16 @@ function detectBrandCode(cardNumber) {
     return 'american_express';
   }
   
-  // Diners: 300-305 (prefixo de 3 dígitos) OU começa com 36, 38 ou 39 (prefixo de 2 dígitos)
+  // Diners: 300-305 (prefixo de 3 dígitos) OU começa com 36 OU 38 (prefixo de 2 dígitos)
   if ((binPrefix3Num >= 300 && binPrefix3Num <= 305) ||
-      binPrefix2 === '36' || binPrefix2 === '38' || binPrefix2 === '39') {
+      binPrefix2 === '36' || binPrefix2 === '38') {
     return 'diners_club';
   }
   
-  // Hipercard: 606282 (6 dígitos) OU 3841 (4 dígitos)
-  if (bin === '606282' || binPrefix4 === '3841') {
+  // Hipercard: 606282 (6 dígitos) OU 384100-384199 (range de 4 dígitos)
+  if (bin === '606282' || (binPrefix4 === '3841' && binNum >= 384100 && binNum <= 384199)) {
     return 'hipercard';
   }
-  
-  // Hiper: pode usar os mesmos BINs do Hipercard ou outros específicos
-  // Por enquanto, se não for Hipercard mas for compatível, pode retornar 'hiper'
-  // (ajustar conforme necessário baseado nos BINs reais usados)
   
   return null;
 }
@@ -136,29 +132,25 @@ export async function tokenizeCardWithVindi({
   }
 
   // Detecta bandeira - não barra no frontend. Se detectar e for suportada, envia payment_company_code
-  const brand = detectBrandCode(num);
+  const brandCode = detectBrandCode(num);
   
   // Monta payload compatível com o BACKEND (/api/autopay/vindi/tokenize)
   // Backend aceita camelCase (expMonth/expYear) e também card_expiration no formato MM/YYYY (4 dígitos)
+  const card_expiration = `${mm}/${yyyy}`; // Sempre MM/YYYY (4 dígitos no ano)
+  
   const payload = {
     holderName: holder,
     cardNumber: num,
     expMonth: mm,
     expYear: yyyy,
-    card_expiration: `${mm}/${yyyy}`, // Formato MM/YYYY (4 dígitos no ano)
+    card_expiration,
     cvv: sc,
     payment_method_code: "credit_card",
+    // Adiciona payment_company_code apenas se detectar bandeira suportada (não envia null/undefined)
+    ...(brandCode && SUPPORTED_BRANDS.has(brandCode) ? { payment_company_code: brandCode } : {}),
+    // Adiciona documento apenas se fornecido (não envia string vazia)
+    ...(doc ? { documentNumber: doc } : {}),
   };
-
-  // Adiciona payment_company_code apenas se detectar bandeira suportada (não envia null/undefined)
-  if (brand && SUPPORTED_BRANDS.has(brand)) {
-    payload.payment_company_code = brand;
-  }
-
-  // Adiciona documento apenas se fornecido (não envia string vazia)
-  if (doc) {
-    payload.documentNumber = doc;
-  }
 
   // Log não sensível para debug (nunca logar PAN completo)
   const url = apiJoin("/api/autopay/vindi/tokenize");
@@ -166,8 +158,8 @@ export async function tokenizeCardWithVindi({
     console.debug("[autopay] Tokenizando cartão - chamando BACKEND:", {
       url,
       bin: num.slice(0, 6), // Apenas 6 primeiros dígitos (BIN), nunca o cartão completo
-      detectedBrandCode: brand || "não detectada",
-      payment_company_code: brand && SUPPORTED_BRANDS.has(brand) ? brand : "não enviado",
+      detectedBrandCode: brandCode || "não detectada",
+      payment_company_code: brandCode && SUPPORTED_BRANDS.has(brandCode) ? brandCode : "não enviado",
       last4: num.slice(-4),
       card_expiration: `${mm}/${yyyy}`,
       holder_name_length: holder.length,
@@ -373,7 +365,7 @@ export async function tokenizeCardWithVindi({
 
   // Log não sensível de sucesso
   console.log("[autopay] Tokenização bem-sucedida:", {
-    brand,
+    brandCode: brandCode || "não detectada",
     has_token: !!gatewayToken,
     token_length: gatewayToken.length,
   });
