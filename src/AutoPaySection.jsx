@@ -108,6 +108,16 @@ export default function AutoPaySection() {
       );
       return true;
     }
+    if (code === "vindi_auth_error") {
+      console.error("[autopay] Erro de autenticação Vindi:", err);
+      alert(err?.message || "Falha na Vindi: verifique configuração do cartão/ambiente. Contate o suporte.");
+      return true;
+    }
+    if (code === "service_unavailable") {
+      console.error("[autopay] Serviço indisponível:", err);
+      alert(err?.message || "Serviço temporariamente indisponível. Tente novamente.");
+      return true;
+    }
     return false;
   }, []);
 
@@ -512,11 +522,6 @@ export default function AutoPaySection() {
         credentials: "include",
       });
 
-      if (r.status === 401) {
-        handleSessionExpired();
-        return;
-      }
-      
       // Se não existir, tenta o endpoint antigo
       if (!r.ok && r.status === 404) {
         r = await fetch(apiJoin("/api/me/autopay/cancel"), {
@@ -526,14 +531,31 @@ export default function AutoPaySection() {
         });
       }
 
-      if (r.status === 401) {
-        handleSessionExpired();
-        return;
-      }
-
       if (!r.ok) {
         const j = await r.json().catch(() => ({}));
-        throw new Error(j?.error || "cancel_failed");
+        const errorCode = j?.code || null;
+        const errorMsg = j?.error || j?.message || "cancel_failed";
+        
+        if (r.status === 401) {
+          // Só trata como SESSION_EXPIRED se for erro real de autenticação JWT
+          const isSessionExpired = 
+            errorCode === "SESSION_EXPIRED" ||
+            errorCode === "UNAUTHORIZED" ||
+            (j?.error && String(j.error).toLowerCase() === "unauthorized") ||
+            (errorMsg && (
+              errorMsg.toLowerCase().includes("jwt") ||
+              errorMsg.toLowerCase().includes("token expired") ||
+              errorMsg.toLowerCase().includes("token inválido") ||
+              errorMsg.toLowerCase().includes("não autorizado")
+            ));
+          
+          if (isSessionExpired) {
+            handleSessionExpired();
+            return;
+          }
+        }
+        
+        throw new Error(errorMsg);
       }
 
       setActive(false);

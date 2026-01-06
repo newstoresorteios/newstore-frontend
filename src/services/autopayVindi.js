@@ -285,18 +285,52 @@ export async function tokenizeCardWithVindi({
       
       // Tratamento específico por status
       if (response.status === 401) {
-        // Sessão expirada ou não autorizado
-        const err = new Error("Sessão expirada, faça login novamente.");
-        err.status = 401;
-        err.code = "SESSION_EXPIRED";
-        throw err;
+        // Só trata como SESSION_EXPIRED se for erro real de autenticação JWT
+        const isSessionExpired = 
+          errorCode === "SESSION_EXPIRED" ||
+          errorCode === "UNAUTHORIZED" ||
+          (errorJson?.error && String(errorJson.error).toLowerCase() === "unauthorized") ||
+          (errorMsg && (
+            errorMsg.toLowerCase().includes("jwt") ||
+            errorMsg.toLowerCase().includes("token expired") ||
+            errorMsg.toLowerCase().includes("token inválido") ||
+            errorMsg.toLowerCase().includes("não autorizado")
+          ));
+        
+        if (isSessionExpired) {
+          const err = new Error("Sessão expirada, faça login novamente.");
+          err.status = 401;
+          err.code = "SESSION_EXPIRED";
+          throw err;
+        } else {
+          // 401 mas não é sessão expirada (ex: erro Vindi de autorização)
+          const err = new Error(errorMsg || "Erro de autorização ao processar cartão.");
+          err.status = 401;
+          err.code = errorCode || "VINDI_BACKEND_ERROR";
+          throw err;
+        }
       }
       
       if (response.status === 403) {
         // Chave da API inválida ou não autorizado
         const err = new Error(errorMsg);
         err.status = 403;
-        err.code = "VINDI_KEY_INVALID";
+        err.code = errorCode || "VINDI_KEY_INVALID";
+        throw err;
+      }
+      
+      if (response.status === 502 || response.status === 503) {
+        // Bad Gateway / Service Unavailable - pode ser erro de comunicação com Vindi
+        if (errorCode === "VINDI_AUTH_ERROR") {
+          const err = new Error("Falha na Vindi: verifique configuração do cartão/ambiente. Contate o suporte.");
+          err.status = response.status;
+          err.code = "VINDI_AUTH_ERROR";
+          throw err;
+        }
+        // Outros erros 502/503
+        const err = new Error(errorMsg || "Serviço temporariamente indisponível. Tente novamente.");
+        err.status = response.status;
+        err.code = errorCode || "SERVICE_UNAVAILABLE";
         throw err;
       }
       
@@ -330,7 +364,10 @@ export async function tokenizeCardWithVindi({
       // Se já foi lançado erro específico, re-lança
       if (innerError.code === "TOKENIZE_ENDPOINT_NOT_FOUND" ||
           innerError.code === "SESSION_EXPIRED" ||
-          innerError.code === "VINDI_KEY_INVALID" || 
+          innerError.code === "VINDI_KEY_INVALID" ||
+          innerError.code === "VINDI_AUTH_ERROR" ||
+          innerError.code === "VINDI_BACKEND_ERROR" ||
+          innerError.code === "SERVICE_UNAVAILABLE" ||
           innerError.code === "CARD_VALIDATION_FAILED") {
         throw innerError;
       }
@@ -507,9 +544,44 @@ export async function setupAutopayVindi({
     } catch {}
 
     if (response.status === 401) {
-      const err = new Error("Sessão expirada, faça login novamente.");
-      err.status = 401;
-      err.code = "SESSION_EXPIRED";
+      // Só trata como SESSION_EXPIRED se for erro real de autenticação JWT
+      const isSessionExpired = 
+        errorCode === "SESSION_EXPIRED" ||
+        errorCode === "UNAUTHORIZED" ||
+        (errorJson?.error && String(errorJson.error).toLowerCase() === "unauthorized") ||
+        (errorMsg && (
+          errorMsg.toLowerCase().includes("jwt") ||
+          errorMsg.toLowerCase().includes("token expired") ||
+          errorMsg.toLowerCase().includes("token inválido") ||
+          errorMsg.toLowerCase().includes("não autorizado")
+        ));
+      
+      if (isSessionExpired) {
+        const err = new Error("Sessão expirada, faça login novamente.");
+        err.status = 401;
+        err.code = "SESSION_EXPIRED";
+        throw err;
+      } else {
+        // 401 mas não é sessão expirada (ex: erro Vindi de autorização)
+        const err = new Error(errorMsg || "Erro de autorização ao processar cartão.");
+        err.status = 401;
+        err.code = errorCode || "VINDI_BACKEND_ERROR";
+        throw err;
+      }
+    }
+
+    if (response.status === 502 || response.status === 503) {
+      // Bad Gateway / Service Unavailable - pode ser erro de comunicação com Vindi
+      if (errorCode === "VINDI_AUTH_ERROR") {
+        const err = new Error("Falha na Vindi: verifique configuração do cartão/ambiente. Contate o suporte.");
+        err.status = response.status;
+        err.code = "VINDI_AUTH_ERROR";
+        throw err;
+      }
+      // Outros erros 502/503
+      const err = new Error(errorMsg || "Serviço temporariamente indisponível. Tente novamente.");
+      err.status = response.status;
+      err.code = errorCode || "SERVICE_UNAVAILABLE";
       throw err;
     }
 
@@ -559,23 +631,62 @@ export async function getAutopayVindiStatus() {
   });
 
   if (!response.ok) {
-    if (response.status === 401) {
-      const err = new Error("Sessão expirada, faça login novamente.");
-      err.status = 401;
-      err.code = "SESSION_EXPIRED";
-      throw err;
-    }
     // Se 404, pode ser que o autopay não esteja configurado ainda
     if (response.status === 404) {
       return { active: false, has_card: false };
     }
+    
     let errorMsg = "Falha ao buscar status do autopay";
     let errorCode = null;
+    let errorJson = null;
     try {
-      const errorJson = await response.json();
+      errorJson = await response.json();
       errorMsg = errorJson?.error || errorJson?.message || errorMsg;
       errorCode = errorJson?.code || null;
     } catch {}
+    
+    if (response.status === 401) {
+      // Só trata como SESSION_EXPIRED se for erro real de autenticação JWT
+      const isSessionExpired = 
+        errorCode === "SESSION_EXPIRED" ||
+        errorCode === "UNAUTHORIZED" ||
+        (errorJson?.error && String(errorJson.error).toLowerCase() === "unauthorized") ||
+        (errorMsg && (
+          errorMsg.toLowerCase().includes("jwt") ||
+          errorMsg.toLowerCase().includes("token expired") ||
+          errorMsg.toLowerCase().includes("token inválido") ||
+          errorMsg.toLowerCase().includes("não autorizado")
+        ));
+      
+      if (isSessionExpired) {
+        const err = new Error("Sessão expirada, faça login novamente.");
+        err.status = 401;
+        err.code = "SESSION_EXPIRED";
+        throw err;
+      } else {
+        // 401 mas não é sessão expirada (ex: erro Vindi de autorização)
+        const err = new Error(errorMsg || "Erro de autorização ao buscar status.");
+        err.status = 401;
+        err.code = errorCode || "VINDI_BACKEND_ERROR";
+        throw err;
+      }
+    }
+    
+    if (response.status === 502 || response.status === 503) {
+      // Bad Gateway / Service Unavailable - pode ser erro de comunicação com Vindi
+      if (errorCode === "VINDI_AUTH_ERROR") {
+        const err = new Error("Falha na Vindi: verifique configuração do cartão/ambiente. Contate o suporte.");
+        err.status = response.status;
+        err.code = "VINDI_AUTH_ERROR";
+        throw err;
+      }
+      // Outros erros 502/503
+      const err = new Error(errorMsg || "Serviço temporariamente indisponível. Tente novamente.");
+      err.status = response.status;
+      err.code = errorCode || "SERVICE_UNAVAILABLE";
+      throw err;
+    }
+    
     const err = new Error(errorMsg);
     err.status = response.status;
     if (errorCode) err.code = errorCode;
