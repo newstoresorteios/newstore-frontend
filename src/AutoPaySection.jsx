@@ -49,6 +49,18 @@ const authHeaders = _authHeaders || defaultAuthHeaders;
 const pad2 = (n) => String(n).padStart(2, "0");
 const onlyDigits = (s) => String(s || "").replace(/\D+/g, "");
 
+// Hoisted (function declaration) para evitar qualquer risco de TDZ em builds/minificação.
+function cleanHolderName(name) {
+  const s = String(name || "").trim();
+  return s ? s : undefined;
+}
+
+function cleanDocNumber(doc) {
+  const s = String(doc || "").trim();
+  const digits = s ? s.replace(/\D+/g, "") : "";
+  return digits ? digits : undefined;
+}
+
 function parseExpiry(exp) {
   // Aceita MM/AA ou MM/AAAA
   const str = String(exp || "").trim();
@@ -78,6 +90,26 @@ function parseExpiry(exp) {
 export default function AutoPaySection() {
   const [loading, setLoading] = React.useState(true);
   const [saving, setSaving] = React.useState(false);
+  const redirectingToLoginRef = React.useRef(false);
+
+  const handleSessionExpired = React.useCallback(() => {
+    if (redirectingToLoginRef.current) return;
+    redirectingToLoginRef.current = true;
+    alert("Sessão expirada, faça login novamente.");
+    window.location.assign("/login");
+  }, []);
+
+  const handleVindiFriendlyError = React.useCallback((err) => {
+    const code = String(err?.code || "").toLowerCase();
+    if (code === "vindi_not_configured" || code === "vindi_error") {
+      console.error("[autopay] Erro Vindi:", err);
+      alert(
+        "No momento não foi possível configurar o pagamento automático. Tente novamente mais tarde ou fale com o suporte."
+      );
+      return true;
+    }
+    return false;
+  }, []);
 
   const [active, setActive] = React.useState(true);
   const [savedActive, setSavedActive] = React.useState(true);
@@ -167,6 +199,10 @@ export default function AutoPaySection() {
           }
         }
       } catch (e) {
+        if (e?.status === 401 || e?.code === "SESSION_EXPIRED") {
+          if (alive) handleSessionExpired();
+          return;
+        }
         console.error("[autopay] GET error:", e?.message || e);
         // Se falhar, assume estado vazio (autopay não configurado)
         if (alive) {
@@ -294,23 +330,52 @@ export default function AutoPaySection() {
     setSaving(true);
     try {
       // Se há atualização de cartão ou precisa ativar sem cartão salvo, tokeniza via backend
-      let gatewayToken = null;
+      let tokenizeResult = null;
+      let paymentProfileId = null;
+      let customerId = null;
+      let cardLast4 = null;
+      let paymentCompanyCode = null;
+      let gatewayToken = null; // fallback modo antigo
       if (needsTokenize) {
         console.debug("[autopay] Will call tokenize", {
           has_card_number: !!(cardNumber || ""),
           has_cvv: !!(cvv || ""),
         });
         try {
-          gatewayToken = await createVindiGatewayToken();
-        } catch (tokenizeError) {
-          // Se o erro está relacionado a payment_company_id/payment_company_code
-          if (tokenizeError?.hasPaymentCompanyIdError) {
-            alert("Não foi possível validar a bandeira do cartão. Verifique o número e tente novamente.");
-          } else {
-            // Caso contrário, mostrar mensagem formatada do backend
-            const errorMessage = tokenizeError?.message || "Falha ao tokenizar cartão.";
-            alert(errorMessage);
+          tokenizeResult = await createVindiGatewayToken();
+          paymentProfileId = tokenizeResult?.payment_profile_id || null;
+          customerId = tokenizeResult?.customer_id || null;
+          cardLast4 = tokenizeResult?.card_last4 || onlyDigits(cardNumber).slice(-4) || null;
+          paymentCompanyCode = tokenizeResult?.payment_company_code || null;
+          gatewayToken = tokenizeResult?.gateway_token || null;
+
+          console.debug("[autopay] Tokenize OK", {
+            has_payment_profile_id: !!paymentProfileId,
+            has_customer_id: !!customerId,
+            card_last4: cardLast4,
+            payment_company_code: paymentCompanyCode,
+            has_gateway_token: !!gatewayToken,
+          });
+
+          // Feedback imediato (sem exigir bandeira do usuário)
+          if (cardLast4 || paymentCompanyCode) {
+            setCard({
+              brand: paymentCompanyCode || card.brand || null,
+              last4: cardLast4 || card.last4 || null,
+              has_card: true,
+            });
           }
+        } catch (tokenizeError) {
+          if (tokenizeError?.status === 401 || tokenizeError?.code === "SESSION_EXPIRED") {
+            handleSessionExpired();
+            return;
+          }
+          if (handleVindiFriendlyError(tokenizeError)) return;
+
+          // Mensagem formatada do backend
+          const errorMessage = tokenizeError?.message || "Falha ao tokenizar cartão.";
+          console.error("[autopay] Tokenize error:", tokenizeError);
+          alert(errorMessage);
           return;
         }
       }
@@ -318,14 +383,14 @@ export default function AutoPaySection() {
       // Sempre chama setupAutopayVindi para persistir preferências
       // Se não houver gatewayToken mas houver mudanças, tenta salvar mesmo assim
       try {
-        // Garante que holderName não seja string vazia (trim já foi feito acima)
-        const cleanHolderName = holderName || undefined;
-        const cleanDocNumber = doc && doc.trim() ? doc.trim() : undefined;
+        const cleanedHolderName = cleanHolderName(holderName);
+        const cleanedDocNumber = cleanDocNumber(doc);
         
         const result = await setupAutopayVindi({
-          gatewayToken: gatewayToken || undefined, // undefined se não houver
-          holderName: cleanHolderName,
-          docNumber: cleanDocNumber,
+          paymentProfileId: paymentProfileId || undefined, // modo novo
+          gatewayToken: gatewayToken || undefined, // fallback modo antigo
+          holderName: cleanedHolderName,
+          docNumber: cleanedDocNumber,
           numbers,
           active,
         });
@@ -340,7 +405,7 @@ export default function AutoPaySection() {
         }
 
         // Limpa campos do cartão após tokenizar (só se houve tokenização)
-        if (gatewayToken) {
+        if (tokenizeResult) {
           setCardNumber("");
           setExpiry("");
           setCvv("");
@@ -354,10 +419,17 @@ export default function AutoPaySection() {
 
         alert("Preferências salvas!");
       } catch (setupError) {
+        if (setupError?.status === 401 || setupError?.code === "SESSION_EXPIRED") {
+          handleSessionExpired();
+          return;
+        }
+        if (handleVindiFriendlyError(setupError)) return;
+
         // Se o erro for porque gateway_token é obrigatório
         if (
           setupError?.message === "GATEWAY_TOKEN_REQUIRED" ||
           (setupError?.status === 400 &&
+            !paymentProfileId &&
             !gatewayToken &&
             String(setupError?.message || "")
               .toLowerCase()
@@ -403,9 +475,18 @@ export default function AutoPaySection() {
           setSavedDoc(status.doc_number);
         }
       } catch (e) {
+        if (e?.status === 401 || e?.code === "SESSION_EXPIRED") {
+          handleSessionExpired();
+          return;
+        }
         console.warn("[autopay] refresh status error:", e);
       }
     } catch (e) {
+      if (e?.status === 401 || e?.code === "SESSION_EXPIRED") {
+        handleSessionExpired();
+        return;
+      }
+      if (handleVindiFriendlyError(e)) return;
       console.error("[autopay] save error:", e?.message || e);
       // Usa a mensagem do erro (já montada pelo service quando aplicável)
       const errorMsg = e?.message || "Falha ao salvar preferências. Verifique os dados do cartão.";
@@ -430,6 +511,11 @@ export default function AutoPaySection() {
         headers: { "Content-Type": "application/json", ...authHeaders() },
         credentials: "include",
       });
+
+      if (r.status === 401) {
+        handleSessionExpired();
+        return;
+      }
       
       // Se não existir, tenta o endpoint antigo
       if (!r.ok && r.status === 404) {
@@ -438,6 +524,11 @@ export default function AutoPaySection() {
           headers: { "Content-Type": "application/json", ...authHeaders() },
           credentials: "include",
         });
+      }
+
+      if (r.status === 401) {
+        handleSessionExpired();
+        return;
       }
 
       if (!r.ok) {

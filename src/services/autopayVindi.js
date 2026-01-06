@@ -68,23 +68,29 @@ export function detectBrandCode(cardNumber) {
     return 'american_express';
   }
   
-  // Diners: 300-305 (prefixo de 3 dígitos) OU começa com 36 OU 38 (prefixo de 2 dígitos)
-  if ((binPrefix3Num >= 300 && binPrefix3Num <= 305) ||
-      binPrefix2 === '36' || binPrefix2 === '38') {
-    return 'diners_club';
-  }
-  
   // Hipercard: 606282 (6 dígitos) OU 384100-384199 (range de 4 dígitos)
   if (bin === '606282' || (binPrefix4 === '3841' && binNum >= 384100 && binNum <= 384199)) {
     return 'hipercard';
+  }
+
+  // Diners: 300-305 (prefixo de 3 dígitos) OU começa com 36 OU 38 (prefixo de 2 dígitos)
+  // IMPORTANTE: Hipercard (3841...) deve ser detectado antes de Diners (38...) para evitar sobreposição.
+  if ((binPrefix3Num >= 300 && binPrefix3Num <= 305) ||
+      binPrefix2 === '36' || binPrefix2 === '38') {
+    return 'diners_club';
   }
   
   return null;
 }
 
 /**
- * Tokeniza um cartão via backend (endpoint proxy para Vindi)
- * O backend usa a chave privada da Vindi de forma segura
+ * Tokeniza um cartão via backend (endpoint proxy para Vindi).
+ * Modo novo (backend atualizado): retorna payment_profile_id e customer_id.
+ * Modo antigo (fallback): pode retornar gateway_token.
+ *
+ * Formato esperado (novo):
+ * { ok, customer_id, payment_profile_id, card_last4, payment_company_code }
+ *
  * @param {Object} params - Dados do cartão
  * @param {string} params.holderName - Nome do titular
  * @param {string} params.cardNumber - Número do cartão (apenas dígitos)
@@ -92,7 +98,7 @@ export function detectBrandCode(cardNumber) {
  * @param {string} params.expYear - Ano de expiração (YYYY)
  * @param {string} params.cvv - CVV
  * @param {string} [params.documentNumber] - CPF/CNPJ do titular (opcional)
- * @returns {Promise<string>} gateway_token
+ * @returns {Promise<{ok: boolean, customer_id?: string|number, payment_profile_id?: string|number, card_last4?: string, payment_company_code?: string, gateway_token?: string}>}
  */
 export async function tokenizeCardWithVindi({
   holderName,
@@ -343,7 +349,7 @@ export async function tokenizeCardWithVindi({
 
   const result = await response.json();
 
-  // Extrai gateway_token de forma resiliente - aceita múltiplos formatos
+  // Extrai gateway_token de forma resiliente - aceita múltiplos formatos (fallback modo antigo)
   const gatewayToken =
     result?.gateway_token ||
     result?.payment_profile?.gateway_token ||
@@ -351,32 +357,87 @@ export async function tokenizeCardWithVindi({
     result?.data?.payment_profile?.gateway_token ||
     null;
 
-  if (!gatewayToken) {
-    console.error("[autopay] Resposta do backend não contém gateway_token:", {
+  // Extrai campos do modo novo
+  const ok = typeof result?.ok === "boolean" ? result.ok : true;
+  const payment_profile_id =
+    result?.payment_profile_id ||
+    result?.paymentProfileId ||
+    result?.payment_profile?.id ||
+    result?.data?.payment_profile_id ||
+    result?.data?.paymentProfileId ||
+    result?.data?.payment_profile?.id ||
+    null;
+  const customer_id =
+    result?.customer_id ||
+    result?.customerId ||
+    result?.customer?.id ||
+    result?.data?.customer_id ||
+    result?.data?.customerId ||
+    result?.data?.customer?.id ||
+    null;
+  const card_last4 =
+    (result?.card_last4 ||
+      result?.cardLast4 ||
+      result?.card?.last4 ||
+      result?.data?.card_last4 ||
+      result?.data?.cardLast4 ||
+      result?.data?.card?.last4 ||
+      null) ??
+    null;
+  const payment_company_code =
+    result?.payment_company_code ||
+    result?.paymentCompanyCode ||
+    result?.card?.payment_company_code ||
+    result?.data?.payment_company_code ||
+    result?.data?.paymentCompanyCode ||
+    brandCode ||
+    null;
+
+  // Se backend antigo: não vem payment_profile_id, mas vem gateway_token
+  // Se backend novo: deve vir payment_profile_id (e opcionalmente gateway_token)
+  if (!payment_profile_id && !gatewayToken) {
+    console.error("[autopay] Resposta do backend não contém payment_profile_id nem gateway_token:", {
+      ok,
+      has_payment_profile_id: !!result?.payment_profile_id,
       has_gateway_token: !!result?.gateway_token,
       has_payment_profile: !!result?.payment_profile,
       has_data: !!result?.data,
       response_keys: Object.keys(result || {}),
     });
-    throw new Error(
-      "Resposta do backend não contém gateway_token. Verifique a estrutura da resposta."
+    const err = new Error(
+      "Resposta do backend inválida: não contém payment_profile_id (modo novo) nem gateway_token (modo antigo)."
     );
+    err.code = "TOKENIZE_INVALID_RESPONSE";
+    throw err;
   }
 
   // Log não sensível de sucesso
   console.log("[autopay] Tokenização bem-sucedida:", {
+    ok,
     brandCode: brandCode || "não detectada",
-    has_token: !!gatewayToken,
-    token_length: gatewayToken.length,
+    payment_profile_id: payment_profile_id ? "[present]" : null,
+    customer_id: customer_id ? "[present]" : null,
+    card_last4: card_last4 || num.slice(-4),
+    payment_company_code: payment_company_code || null,
+    has_gateway_token: !!gatewayToken,
   });
 
-  return gatewayToken;
+  return {
+    ok,
+    customer_id: customer_id || undefined,
+    payment_profile_id: payment_profile_id || undefined,
+    card_last4: (card_last4 || num.slice(-4) || undefined),
+    payment_company_code: payment_company_code || undefined,
+    ...(gatewayToken ? { gateway_token: gatewayToken } : {}),
+  };
 }
 
 /**
- * Configura o autopay no backend usando gateway_token (opcional)
+ * Configura o autopay no backend usando payment_profile_id (modo novo) ou gateway_token (fallback).
  * @param {Object} params
- * @param {string} [params.gatewayToken] - Token retornado pela Vindi (opcional)
+ * @param {string|number} [params.paymentProfileId] - payment_profile_id (modo novo)
+ * @param {string|number} [params.payment_profile_id] - payment_profile_id (modo novo, snake_case)
+ * @param {string} [params.gatewayToken] - Token retornado pela Vindi (modo antigo / fallback)
  * @param {string} params.holderName - Nome do titular
  * @param {string} params.docNumber - CPF/CNPJ do titular
  * @param {number[]} params.numbers - Array de números cativos
@@ -384,6 +445,8 @@ export async function tokenizeCardWithVindi({
  * @returns {Promise<Object>} Resposta do backend (pode incluir card.last4, card.brand, etc.)
  */
 export async function setupAutopayVindi({
+  paymentProfileId,
+  payment_profile_id,
   gatewayToken,
   holderName,
   docNumber,
@@ -398,8 +461,12 @@ export async function setupAutopayVindi({
     body.holder_name = String(holderName || "").trim();
   }
 
-  // Adiciona gateway_token apenas se fornecido
-  if (gatewayToken) {
+  // Modo novo: envia payment_profile_id (preferencial).
+  const ppId = payment_profile_id ?? paymentProfileId;
+  if (ppId) {
+    body.payment_profile_id = ppId;
+  } else if (gatewayToken) {
+    // Fallback (modo antigo): envia gateway_token
     body.gateway_token = String(gatewayToken);
   }
 
@@ -432,24 +499,32 @@ export async function setupAutopayVindi({
   if (!response.ok) {
     let errorMsg = "Falha ao configurar autopay";
     let errorCode = null;
+    let errorJson = null;
     try {
-      const errorJson = await response.json();
+      errorJson = await response.json();
       errorMsg = errorJson?.error || errorJson?.message || errorMsg;
       errorCode = errorJson?.code || null;
-      
-      // Verifica se o erro indica que gateway_token é obrigatório
-      const errorStr = String(errorMsg || "").toLowerCase();
-      if (
-        response.status === 400 &&
-        (!gatewayToken || gatewayToken === null) &&
-        (errorStr.includes("gateway_token") ||
-          errorStr.includes("gateway token") ||
-          errorStr.includes("obrigatório") ||
-          errorStr.includes("required"))
-      ) {
-        errorMsg = "GATEWAY_TOKEN_REQUIRED";
-      }
     } catch {}
+
+    if (response.status === 401) {
+      const err = new Error("Sessão expirada, faça login novamente.");
+      err.status = 401;
+      err.code = "SESSION_EXPIRED";
+      throw err;
+    }
+
+    // Verifica se o erro indica que gateway_token é obrigatório
+    const errorStr = String(errorMsg || "").toLowerCase();
+    if (
+      response.status === 400 &&
+      (!ppId && (!gatewayToken || gatewayToken === null)) &&
+      (errorStr.includes("gateway_token") ||
+        errorStr.includes("gateway token") ||
+        errorStr.includes("obrigatório") ||
+        errorStr.includes("required"))
+    ) {
+      errorMsg = "GATEWAY_TOKEN_REQUIRED";
+    }
     
     const error = new Error(errorMsg);
     if (errorCode) error.code = errorCode;
@@ -458,6 +533,14 @@ export async function setupAutopayVindi({
   }
 
   return await response.json();
+}
+
+/**
+ * Alias sem quebrar imports antigos/novos
+ * (Alguns lugares podem referenciar "tokenizeVindiCard" ao invés de tokenizeCardWithVindi)
+ */
+export async function tokenizeVindiCard(params) {
+  return tokenizeCardWithVindi(params);
 }
 
 /**
@@ -476,16 +559,27 @@ export async function getAutopayVindiStatus() {
   });
 
   if (!response.ok) {
+    if (response.status === 401) {
+      const err = new Error("Sessão expirada, faça login novamente.");
+      err.status = 401;
+      err.code = "SESSION_EXPIRED";
+      throw err;
+    }
     // Se 404, pode ser que o autopay não esteja configurado ainda
     if (response.status === 404) {
       return { active: false, has_card: false };
     }
     let errorMsg = "Falha ao buscar status do autopay";
+    let errorCode = null;
     try {
       const errorJson = await response.json();
       errorMsg = errorJson?.error || errorJson?.message || errorMsg;
+      errorCode = errorJson?.code || null;
     } catch {}
-    throw new Error(errorMsg);
+    const err = new Error(errorMsg);
+    err.status = response.status;
+    if (errorCode) err.code = errorCode;
+    throw err;
   }
 
   return await response.json();
