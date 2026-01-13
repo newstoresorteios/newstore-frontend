@@ -249,15 +249,22 @@ export async function tokenizeCardWithVindi({
     // Log útil para debug com requestId retornado pelo backend
     console.error(`[autopay] Error - route: ${url}, status: ${response.status}, code: ${errorCode || 'N/A'}, requestId: ${extractedRequestId || 'N/A'}, message: ${errorMessage}`);
     
-    // CRÍTICO: Se status === 401 do backend, é sessão expirada (mostra mensagem, não desloga automaticamente)
-    // Outros erros (400/422/500/502/VINDI_*) NÃO deslogam
+    // CRÍTICO: Só trata como sessão expirada se o backend retornar explicitamente um code de autenticação
+    // Não desloga automaticamente por qualquer 401 - apenas se code for AUTH_EXPIRED, JWT_EXPIRED, SESSION_EXPIRED, etc
     if (response.status === 401) {
-      throw new ApiError("Sessão expirada. Faça login novamente para continuar.", {
-        status: 401,
-        code: "SESSION_EXPIRED",
-        requestId: extractedRequestId,
-        payload: body,
-      });
+      const authExpiredCodes = ['AUTH_EXPIRED', 'JWT_EXPIRED', 'SESSION_EXPIRED', 'TOKEN_EXPIRED', 'INVALID_TOKEN', 'UNAUTHORIZED'];
+      const isAuthExpired = errorCode && authExpiredCodes.includes(String(errorCode).toUpperCase());
+      
+      if (isAuthExpired) {
+        throw new ApiError("Sessão expirada. Faça login novamente para continuar.", {
+          status: 401,
+          code: errorCode || "SESSION_EXPIRED",
+          requestId: extractedRequestId,
+          payload: body,
+        });
+      }
+      // 401 mas não é erro de autenticação do app (ex: erro Vindi)
+      // Trata como erro normal, não desloga - continua para propagar erro normalizado abaixo
     }
     
     // Monta mensagem de erro priorizando details se disponível
@@ -270,8 +277,8 @@ export async function tokenizeCardWithVindi({
       errorMessage = detailsMessages.join("; ");
     }
     
-    // Para outros status codes (400/422/500/502/503), propaga erro normalizado
-    // NÃO desloga - apenas mostra mensagem de erro
+    // Para outros status codes (400/422/500/502/503) ou 401 sem code de auth, propaga erro normalizado
+    // NÃO desloga - apenas mostra mensagem de erro real do backend
     throw new ApiError(errorMessage, {
       status: response.status,
       code: errorCode || null, // Usa code do backend (ex: VINDI_AUTH_ERROR, VINDI_BACKEND_ERROR, etc)
@@ -491,18 +498,25 @@ export async function setupAutopayVindi({
       errorMessage = detailsMessages.join("; ");
     }
     
-    // CRÍTICO: Se status === 401 do backend, é sessão expirada (mostra mensagem, não desloga automaticamente)
-    // Outros erros (400/422/500/502/VINDI_*) NÃO deslogam
+    // CRÍTICO: Só trata como sessão expirada se o backend retornar explicitamente um code de autenticação
+    // Não desloga automaticamente por qualquer 401 - apenas se code for AUTH_EXPIRED, JWT_EXPIRED, SESSION_EXPIRED, etc
     if (response.status === 401) {
-      throw new ApiError("Sessão expirada. Faça login novamente para continuar.", {
-        status: 401,
-        code: "SESSION_EXPIRED",
-        requestId: extractedRequestId,
-        payload: body,
-      });
+      const authExpiredCodes = ['AUTH_EXPIRED', 'JWT_EXPIRED', 'SESSION_EXPIRED', 'TOKEN_EXPIRED', 'INVALID_TOKEN', 'UNAUTHORIZED'];
+      const isAuthExpired = errorCode && authExpiredCodes.includes(String(errorCode).toUpperCase());
+      
+      if (isAuthExpired) {
+        throw new ApiError("Sessão expirada. Faça login novamente para continuar.", {
+          status: 401,
+          code: errorCode || "SESSION_EXPIRED",
+          requestId: extractedRequestId,
+          payload: body,
+        });
+      }
+      // 401 mas não é erro de autenticação do app (ex: erro Vindi)
+      // Trata como erro normal, não desloga - continua para propagar erro normalizado abaixo
     }
     
-    // Para outros status codes, propaga erro normalizado (NÃO desloga)
+    // Para outros status codes ou 401 sem code de auth, propaga erro normalizado (NÃO desloga)
     throw new ApiError(errorMessage, {
       status: response.status,
       code: errorCode || null, // Usa code do backend (ex: VINDI_AUTH_ERROR, VINDI_BACKEND_ERROR, etc)
@@ -582,15 +596,22 @@ export async function getAutopayVindiStatus({ requestId } = {}) {
     // Log útil para debug com requestId retornado pelo backend
     console.error(`[autopay] Error - route: ${url}, status: ${response.status}, code: ${errorCode || 'N/A'}, requestId: ${extractedRequestId || 'N/A'}, message: ${errorMessage}`);
     
-    // CRÍTICO: Se status === 401 do backend, é sessão expirada (mostra mensagem, não desloga automaticamente)
-    // Outros erros (400/422/500/502/VINDI_*) NÃO deslogam
+    // CRÍTICO: Só trata como sessão expirada se o backend retornar explicitamente um code de autenticação
+    // Não desloga automaticamente por qualquer 401 - apenas se code for AUTH_EXPIRED, JWT_EXPIRED, SESSION_EXPIRED, etc
     if (response.status === 401) {
-      throw new ApiError("Sessão expirada. Faça login novamente para continuar.", {
-        status: 401,
-        code: "SESSION_EXPIRED",
-        requestId: extractedRequestId,
-        payload: body,
-      });
+      const authExpiredCodes = ['AUTH_EXPIRED', 'JWT_EXPIRED', 'SESSION_EXPIRED', 'TOKEN_EXPIRED', 'INVALID_TOKEN', 'UNAUTHORIZED'];
+      const isAuthExpired = errorCode && authExpiredCodes.includes(String(errorCode).toUpperCase());
+      
+      if (isAuthExpired) {
+        throw new ApiError("Sessão expirada. Faça login novamente para continuar.", {
+          status: 401,
+          code: errorCode || "SESSION_EXPIRED",
+          requestId: extractedRequestId,
+          payload: body,
+        });
+      }
+      // 401 mas não é erro de autenticação do app (ex: erro Vindi)
+      // Trata como erro normal, não desloga - continua para propagar erro normalizado abaixo
     }
     
     // Monta mensagem de erro priorizando details se disponível
@@ -604,7 +625,7 @@ export async function getAutopayVindiStatus({ requestId } = {}) {
       finalErrorMessage = detailsMessages.join("; ");
     }
     
-    // Para outros status codes, propaga erro normalizado (NÃO desloga)
+    // Para outros status codes ou 401 sem code de auth, propaga erro normalizado (NÃO desloga)
     throw new ApiError(finalErrorMessage, {
       status: response.status,
       code: errorCode || null, // Usa code do backend (ex: VINDI_AUTH_ERROR, VINDI_BACKEND_ERROR, etc)

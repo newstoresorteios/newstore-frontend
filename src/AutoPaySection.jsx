@@ -99,18 +99,12 @@ export default function AutoPaySection() {
   
   // Função auxiliar para formatar mensagem de erro com requestId
   const formatErrorMessage = React.useCallback((err) => {
-    const status = err?.status || null;
-    const code = err?.code || null;
     const requestId = err?.requestId || null;
     const message = err?.message || "Erro desconhecido";
     
-    const parts = [];
-    if (code) parts.push(`code=${code}`);
-    if (status) parts.push(`status=${status}`);
-    if (requestId) parts.push(`requestId=${requestId}`);
-    
-    if (parts.length > 0) {
-      return `Falha ao salvar cartão. (${parts.join(", ")}). Mensagem: ${message}`;
+    // Formata mensagem incluindo requestId se disponível
+    if (requestId) {
+      return `${message} (requestId: ${requestId})`;
     }
     return message;
   }, []);
@@ -227,9 +221,11 @@ export default function AutoPaySection() {
           }
         }
       } catch (e) {
-        // CRÍTICO: Só desloga se status === 401 do backend (SESSION_EXPIRED)
-        // Não desloga por erros Vindi (502/500/400/422 do fluxo Vindi)
-        if (e?.code === "SESSION_EXPIRED" || e?.status === 401) {
+        // CRÍTICO: Só desloga se code for explicitamente AUTH_EXPIRED, JWT_EXPIRED, SESSION_EXPIRED, etc
+        // Não desloga por qualquer 401 - apenas se for erro de autenticação do app
+        const authExpiredCodes = ['AUTH_EXPIRED', 'JWT_EXPIRED', 'SESSION_EXPIRED', 'TOKEN_EXPIRED', 'INVALID_TOKEN', 'UNAUTHORIZED'];
+        const isAuthExpired = e?.code && authExpiredCodes.includes(String(e.code).toUpperCase());
+        if (isAuthExpired) {
           if (alive) handleSessionExpired();
           return;
         }
@@ -399,9 +395,11 @@ export default function AutoPaySection() {
             });
           }
         } catch (tokenizeError) {
-          // CRÍTICO: Só desloga se status === 401 do backend (SESSION_EXPIRED)
-          // Não desloga por erros Vindi (502/500/400/422 do fluxo Vindi)
-          if (tokenizeError?.code === "SESSION_EXPIRED" || tokenizeError?.status === 401) {
+          // CRÍTICO: Só desloga se code for explicitamente AUTH_EXPIRED, JWT_EXPIRED, SESSION_EXPIRED, etc
+          // Não desloga por qualquer 401 - apenas se for erro de autenticação do app
+          const authExpiredCodes = ['AUTH_EXPIRED', 'JWT_EXPIRED', 'SESSION_EXPIRED', 'TOKEN_EXPIRED', 'INVALID_TOKEN', 'UNAUTHORIZED'];
+          const isAuthExpired = tokenizeError?.code && authExpiredCodes.includes(String(tokenizeError.code).toUpperCase());
+          if (isAuthExpired) {
             handleSessionExpired();
             return;
           }
@@ -458,9 +456,11 @@ export default function AutoPaySection() {
 
         alert("Preferências salvas!");
       } catch (setupError) {
-        // CRÍTICO: Só desloga se status === 401 do backend (SESSION_EXPIRED)
-        // Não desloga por erros Vindi (502/500/400/422 do fluxo Vindi)
-        if (setupError?.code === "SESSION_EXPIRED" || setupError?.status === 401) {
+        // CRÍTICO: Só desloga se code for explicitamente AUTH_EXPIRED, JWT_EXPIRED, SESSION_EXPIRED, etc
+        // Não desloga por qualquer 401 - apenas se for erro de autenticação do app
+        const authExpiredCodes = ['AUTH_EXPIRED', 'JWT_EXPIRED', 'SESSION_EXPIRED', 'TOKEN_EXPIRED', 'INVALID_TOKEN', 'UNAUTHORIZED'];
+        const isAuthExpired = setupError?.code && authExpiredCodes.includes(String(setupError.code).toUpperCase());
+        if (isAuthExpired) {
           handleSessionExpired();
           return;
         }
@@ -523,9 +523,11 @@ export default function AutoPaySection() {
           setSavedDoc(status.doc_number);
         }
       } catch (e) {
-        // CRÍTICO: Só desloga se status === 401 do backend (SESSION_EXPIRED)
-        // Não desloga por erros Vindi (502/500/400/422 do fluxo Vindi)
-        if (e?.code === "SESSION_EXPIRED" || e?.status === 401) {
+        // CRÍTICO: Só desloga se code for explicitamente AUTH_EXPIRED, JWT_EXPIRED, SESSION_EXPIRED, etc
+        // Não desloga por qualquer 401 - apenas se for erro de autenticação do app
+        const authExpiredCodes = ['AUTH_EXPIRED', 'JWT_EXPIRED', 'SESSION_EXPIRED', 'TOKEN_EXPIRED', 'INVALID_TOKEN', 'UNAUTHORIZED'];
+        const isAuthExpired = e?.code && authExpiredCodes.includes(String(e.code).toUpperCase());
+        if (isAuthExpired) {
           handleSessionExpired();
           return;
         }
