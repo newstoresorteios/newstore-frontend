@@ -6,15 +6,17 @@ import { apiJoin, authHeaders } from "../lib/api";
 
 /**
  * Classe de erro padronizada para erros de API
- * Inclui status, code, requestId e payload para melhor rastreamento
+ * Inclui status, code, requestId, provider_status, details e payload para melhor rastreamento
  */
 export class ApiError extends Error {
-  constructor(message, { status, code, requestId, payload } = {}) {
+  constructor(message, { status, code, requestId, provider_status, details, payload } = {}) {
     super(message);
     this.name = "ApiError";
     this.status = status || null;
     this.code = code || null;
     this.requestId = requestId || null;
+    this.provider_status = provider_status || null;
+    this.details = details || null;
     this.payload = payload || null;
   }
 }
@@ -242,12 +244,13 @@ export async function tokenizeCardWithVindi({
     const body = errorBody || {};
     const extractedRequestId = body.requestId || body.request_id || response.headers.get("x-request-id") || requestId || null;
     const errorCode = body.code || body.error_code || body.name || null;
+    const providerStatus = body.provider_status || body.providerStatus || null;
     // Prioriza error_message, depois msg, depois message, depois error, depois errorText
     let errorMessage = body.error_message || body.msg || body.message || body.error || errorText || `HTTP ${response.status}`;
     const errorDetails = body.details || body.data?.details || null;
     
-    // Log útil para debug com requestId retornado pelo backend
-    console.error(`[autopay] Error - route: ${url}, status: ${response.status}, code: ${errorCode || 'N/A'}, requestId: ${extractedRequestId || 'N/A'}, message: ${errorMessage}`);
+    // Log útil para debug com requestId e provider_status retornado pelo backend
+    console.error(`[autopay] Error - route: ${url}, status: ${response.status}, code: ${errorCode || 'N/A'}, provider_status: ${providerStatus || 'N/A'}, requestId: ${extractedRequestId || 'N/A'}, message: ${errorMessage}`);
     
     // CRÍTICO: Só trata como sessão expirada se o backend retornar explicitamente um code de autenticação
     // Não desloga automaticamente por qualquer 401 - apenas se code for AUTH_EXPIRED, JWT_EXPIRED, SESSION_EXPIRED, etc
@@ -278,11 +281,13 @@ export async function tokenizeCardWithVindi({
     }
     
     // Para outros status codes (400/422/500/502/503) ou 401 sem code de auth, propaga erro normalizado
-    // NÃO desloga - apenas mostra mensagem de erro real do backend
+    // NÃO desloga - preserva metadados completos do erro (code, provider_status, details) para uso no componente
     throw new ApiError(errorMessage, {
       status: response.status,
       code: errorCode || null, // Usa code do backend (ex: VINDI_AUTH_ERROR, VINDI_BACKEND_ERROR, etc)
       requestId: extractedRequestId,
+      provider_status: providerStatus,
+      details: body, // Preserva todos os metadados do erro do backend
       payload: body,
     });
   }
@@ -468,12 +473,13 @@ export async function setupAutopayVindi({
     const body = errorBody || {};
     const extractedRequestId = body.requestId || body.request_id || response.headers.get("x-request-id") || requestId || null;
     const errorCode = body.code || body.error_code || body.name || null;
+    const providerStatus = body.provider_status || body.providerStatus || null;
     // Prioriza error_message, depois msg, depois message, depois error, depois errorText
     let errorMessage = body.error_message || body.msg || body.message || body.error || errorText || "Falha ao configurar autopay";
     const errorDetails = body.details || body.data?.details || null;
     
-    // Log útil para debug com requestId retornado pelo backend
-    console.error(`[autopay] Error - route: ${url}, status: ${response.status}, code: ${errorCode || 'N/A'}, requestId: ${extractedRequestId || 'N/A'}, message: ${errorMessage}`);
+    // Log útil para debug com requestId e provider_status retornado pelo backend
+    console.error(`[autopay] Error - route: ${url}, status: ${response.status}, code: ${errorCode || 'N/A'}, provider_status: ${providerStatus || 'N/A'}, requestId: ${extractedRequestId || 'N/A'}, message: ${errorMessage}`);
     
     // Verifica se o erro indica que gateway_token é obrigatório
     const errorStr = String(errorMessage || "").toLowerCase();
@@ -509,6 +515,8 @@ export async function setupAutopayVindi({
           status: 401,
           code: errorCode || "SESSION_EXPIRED",
           requestId: extractedRequestId,
+          provider_status: providerStatus,
+          details: body,
           payload: body,
         });
       }
@@ -517,10 +525,13 @@ export async function setupAutopayVindi({
     }
     
     // Para outros status codes ou 401 sem code de auth, propaga erro normalizado (NÃO desloga)
+    // Preserva metadados completos do erro (code, provider_status, details) para uso no componente
     throw new ApiError(errorMessage, {
       status: response.status,
       code: errorCode || null, // Usa code do backend (ex: VINDI_AUTH_ERROR, VINDI_BACKEND_ERROR, etc)
       requestId: extractedRequestId,
+      provider_status: providerStatus,
+      details: body, // Preserva todos os metadados do erro do backend
       payload: body,
     });
   }
@@ -589,12 +600,13 @@ export async function getAutopayVindiStatus({ requestId } = {}) {
     const body = errorBody || {};
     const extractedRequestId = body.requestId || body.request_id || response.headers.get("x-request-id") || requestId || null;
     const errorCode = body.code || body.error_code || body.name || null;
+    const providerStatus = body.provider_status || body.providerStatus || null;
     // Prioriza error_message, depois msg, depois message, depois error, depois errorText
     const errorMessage = body.error_message || body.msg || body.message || body.error || errorText || "Falha ao buscar status do autopay";
     const errorDetails = body.details || body.data?.details || null;
     
-    // Log útil para debug com requestId retornado pelo backend
-    console.error(`[autopay] Error - route: ${url}, status: ${response.status}, code: ${errorCode || 'N/A'}, requestId: ${extractedRequestId || 'N/A'}, message: ${errorMessage}`);
+    // Log útil para debug com requestId e provider_status retornado pelo backend
+    console.error(`[autopay] Error - route: ${url}, status: ${response.status}, code: ${errorCode || 'N/A'}, provider_status: ${providerStatus || 'N/A'}, requestId: ${extractedRequestId || 'N/A'}, message: ${errorMessage}`);
     
     // CRÍTICO: Só trata como sessão expirada se o backend retornar explicitamente um code de autenticação
     // Não desloga automaticamente por qualquer 401 - apenas se code for AUTH_EXPIRED, JWT_EXPIRED, SESSION_EXPIRED, etc
@@ -607,6 +619,8 @@ export async function getAutopayVindiStatus({ requestId } = {}) {
           status: 401,
           code: errorCode || "SESSION_EXPIRED",
           requestId: extractedRequestId,
+          provider_status: providerStatus,
+          details: body,
           payload: body,
         });
       }
@@ -626,10 +640,13 @@ export async function getAutopayVindiStatus({ requestId } = {}) {
     }
     
     // Para outros status codes ou 401 sem code de auth, propaga erro normalizado (NÃO desloga)
+    // Preserva metadados completos do erro (code, provider_status, details) para uso no componente
     throw new ApiError(finalErrorMessage, {
       status: response.status,
       code: errorCode || null, // Usa code do backend (ex: VINDI_AUTH_ERROR, VINDI_BACKEND_ERROR, etc)
       requestId: extractedRequestId,
+      provider_status: providerStatus,
+      details: body, // Preserva todos os metadados do erro do backend
       payload: body,
     });
   }

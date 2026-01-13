@@ -482,10 +482,23 @@ export default function AutoPaySection() {
           return;
         }
         
-        // Mensagem formatada com requestId se disponível
+        // Detecta erro de autenticação Vindi específico
+        const isVindiAuthError = 
+          setupError?.code === 'VINDI_AUTH_ERROR' ||
+          setupError?.provider_status === 401 ||
+          (setupError?.message && String(setupError.message).includes('Chave da API inválida'));
+        
+        if (isVindiAuthError) {
+          const requestId = setupError?.requestId || setupError?.details?.requestId || 'N/A';
+          alert(`Falha de autenticação na Vindi (API KEY privada inválida ou ambiente incorreto). Verifique env do backend. (requestId: ${requestId})`);
+          console.error(`[autopay] VINDI_AUTH_ERROR - status: ${setupError?.status || 'N/A'}, provider_status: ${setupError?.provider_status || 'N/A'}, requestId: ${requestId}, message:`, setupError?.message || setupError);
+          return;
+        }
+        
+        // Mensagem formatada com requestId se disponível (fallback para outros erros)
         const errorMessage = formatErrorMessage(setupError);
-        console.error(`[autopay] Setup error - status: ${setupError?.status || 'N/A'}, code: ${setupError?.code || 'N/A'}, requestId: ${setupError?.requestId || 'N/A'}, message:`, setupError?.message || setupError);
-        alert(errorMessage);
+        console.error(`[autopay] Setup error - status: ${setupError?.status || 'N/A'}, code: ${setupError?.code || 'N/A'}, provider_status: ${setupError?.provider_status || 'N/A'}, requestId: ${setupError?.requestId || 'N/A'}, message:`, setupError?.message || setupError);
+        alert(`Falha ao salvar compra automática: ${errorMessage}`);
         return;
       }
 
