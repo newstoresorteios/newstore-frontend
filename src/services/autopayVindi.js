@@ -5,6 +5,21 @@
 import { apiJoin, authHeaders } from "../lib/api";
 
 /**
+ * Classe de erro padronizada para erros de API
+ * Inclui status, code, requestId e payload para melhor rastreamento
+ */
+export class ApiError extends Error {
+  constructor(message, { status, code, requestId, payload } = {}) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status || null;
+    this.code = code || null;
+    this.requestId = requestId || null;
+    this.payload = payload || null;
+  }
+}
+
+/**
  * Bandeiras suportadas pela Vindi
  * Códigos exatos esperados pelo backend/Vindi
  */
@@ -203,24 +218,86 @@ export async function tokenizeCardWithVindi({
   if (!response.ok) {
     // Tratamento específico para 404 - endpoint não existe
     if (response.status === 404) {
-      const err = new Error("Endpoint de tokenização não encontrado (backend desatualizado).");
-      err.status = 404;
-      err.code = "TOKENIZE_ENDPOINT_NOT_FOUND";
-      throw err;
+      throw new ApiError("Endpoint de tokenização não encontrado (backend desatualizado).", {
+        status: 404,
+        code: "TOKENIZE_ENDPOINT_NOT_FOUND",
+        requestId,
+      });
     }
     
-    let errorMsg = `HTTP ${response.status}`;
-    let errorCode = null;
+    // Tenta parsear JSON do erro
+    let errorBody = null;
+    let errorText = null;
+    const contentType = response.headers.get("content-type") || "";
     
     try {
-      const errorJson = await response.json();
+      if (contentType.includes("application/json")) {
+        errorBody = await response.json();
+      } else {
+        errorText = await response.text();
+      }
+    } catch (parseError) {
+      // Se falhar ao parsear, usa texto vazio
+      errorText = "";
+    }
+    
+    // Extrai informações do erro
+    const body = errorBody || {};
+    const extractedRequestId = body.requestId || body.request_id || response.headers.get("x-request-id") || requestId || null;
+    const errorCode = body.code || body.error_code || body.name || null;
+    const errorMessage = body.error_message || body.message || body.error || errorText || `HTTP ${response.status}`;
+    
+    // CRÍTICO: Só trata como sessão expirada se for erro real de autenticação do APP (não Vindi)
+    // Critério: status 401/403 E code AUTH_EXPIRED ou INVALID_TOKEN
+    if (response.status === 401 || response.status === 403) {
+      const isAppAuthError = 
+        errorCode === "AUTH_EXPIRED" ||
+        errorCode === "INVALID_TOKEN" ||
+        errorCode === "SESSION_EXPIRED" ||
+        errorCode === "UNAUTHORIZED";
       
-      // Verifica se há erro relacionado a payment_company_id/payment_company_code
-      // Pode vir em error_parameters, data.details, ou na mensagem de erro
-      let hasPaymentCompanyIdError = false;
-      const errorStr = JSON.stringify(errorJson || {}).toLowerCase();
-      
-      // Verifica se menciona payment_company
+      if (isAppAuthError) {
+        throw new ApiError("Sessão expirada, faça login novamente.", {
+          status: response.status,
+          code: "AUTH_EXPIRED",
+          requestId: extractedRequestId,
+          payload: body,
+        });
+      }
+      // 401/403 mas não é sessão expirada do app (ex: erro Vindi de autorização)
+      // Propaga como erro de integração Vindi, NÃO como logout
+      throw new ApiError(errorMessage, {
+        status: response.status,
+        code: errorCode || "VINDI_BACKEND_ERROR",
+        requestId: extractedRequestId,
+        payload: body,
+      });
+    }
+    
+    // Tratamento para outros status codes
+    if (response.status === 502 || response.status === 503 || response.status === 500) {
+      // Bad Gateway / Service Unavailable / Internal Server Error
+      // Pode ser erro de comunicação com Vindi ou backend
+      if (errorCode && String(errorCode).startsWith("VINDI_")) {
+        throw new ApiError(errorMessage || "Falha na integração com Vindi. Tente novamente ou contate o suporte.", {
+          status: response.status,
+          code: errorCode,
+          requestId: extractedRequestId,
+          payload: body,
+        });
+      }
+      throw new ApiError(errorMessage || "Serviço temporariamente indisponível. Tente novamente.", {
+        status: response.status,
+        code: errorCode || "SERVICE_UNAVAILABLE",
+        requestId: extractedRequestId,
+        payload: body,
+      });
+    }
+    
+    // Verifica se há erro relacionado a payment_company_id/payment_company_code
+    let hasPaymentCompanyIdError = false;
+    if (body) {
+      const errorStr = JSON.stringify(body).toLowerCase();
       if (errorStr.includes("payment_company_id") || 
           errorStr.includes("payment_company_code") ||
           errorStr.includes("payment_company_code_not_supported")) {
@@ -228,8 +305,8 @@ export async function tokenizeCardWithVindi({
       }
       
       // Verifica error_parameters explicitamente
-      if (errorJson?.error_parameters) {
-        const errorParams = errorJson.error_parameters;
+      if (body.error_parameters) {
+        const errorParams = body.error_parameters;
         if (typeof errorParams === "string") {
           hasPaymentCompanyIdError = errorParams.includes("payment_company_id") || 
                                      errorParams.includes("payment_company_code");
@@ -244,8 +321,8 @@ export async function tokenizeCardWithVindi({
       }
       
       // Também verifica nos details se algum erro é sobre payment_company
-      if (!hasPaymentCompanyIdError && errorJson?.data?.details && Array.isArray(errorJson.data.details)) {
-        hasPaymentCompanyIdError = errorJson.data.details.some(detail => {
+      if (!hasPaymentCompanyIdError && body.data?.details && Array.isArray(body.data.details)) {
+        hasPaymentCompanyIdError = body.data.details.some(detail => {
           const param = (detail.parameter || detail.field || "").toLowerCase();
           return param.includes("payment_company") || 
                  (detail.message && typeof detail.message === "string" && detail.message.toLowerCase().includes("payment_company"));
@@ -253,143 +330,33 @@ export async function tokenizeCardWithVindi({
       }
       
       // Log para debug se vier valid_codes
-      if (errorJson?.data?.details && Array.isArray(errorJson.data.details)) {
-        const validCodesDetail = errorJson.data.details.find(d => 
+      if (body.data?.details && Array.isArray(body.data.details)) {
+        const validCodesDetail = body.data.details.find(d => 
           d?.valid_codes || (typeof d?.message === "string" && d.message.toLowerCase().includes("valid"))
         );
         if (validCodesDetail?.valid_codes) {
           console.debug("[autopay] Códigos válidos retornados pelo backend:", validCodesDetail.valid_codes);
         }
       }
-
-      // Prioridade: se vier response.data.details (lista de erros), concatena "campo: <parameter> - <message>"
-      if (errorJson?.data?.details && Array.isArray(errorJson.data.details) && errorJson.data.details.length > 0) {
-        const detailsMessages = errorJson.data.details.map((detail) => {
+      
+      // Monta mensagem de erro priorizando details
+      if (body.data?.details && Array.isArray(body.data.details) && body.data.details.length > 0) {
+        const detailsMessages = body.data.details.map((detail) => {
           const parameter = detail.parameter || detail.field || "campo";
           const message = detail.message || detail.error || "";
           return `${parameter}: ${message}`;
         });
-        errorMsg = detailsMessages.join("; ");
-      } 
-      // Caso contrário, mostra response.data.message
-      else if (errorJson?.data?.message) {
-        errorMsg = errorJson.data.message;
+        errorMessage = detailsMessages.join("; ");
       }
-      // Fallback para estruturas alternativas
-      else if (errorJson?.error) {
-        errorMsg = errorJson.error;
-      } else if (errorJson?.message) {
-        errorMsg = errorJson.message;
-      } else if (errorJson?.errors && Array.isArray(errorJson.errors) && errorJson.errors.length > 0) {
-        errorMsg = errorJson.errors[0].message || errorMsg;
-      }
-      
-      errorCode = errorJson?.code || errorJson?.data?.code || null;
-      
-      // Preserva informação sobre erro de payment_company_id para uso no componente
-      if (hasPaymentCompanyIdError) {
-        errorCode = errorCode || "PAYMENT_COMPANY_ID_ERROR";
-      }
-      
-      // Tratamento específico por status
-      if (response.status === 401) {
-        // Só trata como SESSION_EXPIRED se for erro real de autenticação JWT
-        const isSessionExpired = 
-          errorCode === "SESSION_EXPIRED" ||
-          errorCode === "UNAUTHORIZED" ||
-          (errorJson?.error && String(errorJson.error).toLowerCase() === "unauthorized") ||
-          (errorMsg && (
-            errorMsg.toLowerCase().includes("jwt") ||
-            errorMsg.toLowerCase().includes("token expired") ||
-            errorMsg.toLowerCase().includes("token inválido") ||
-            errorMsg.toLowerCase().includes("não autorizado")
-          ));
-        
-        if (isSessionExpired) {
-          const err = new Error("Sessão expirada, faça login novamente.");
-          err.status = 401;
-          err.code = "SESSION_EXPIRED";
-          throw err;
-        } else {
-          // 401 mas não é sessão expirada (ex: erro Vindi de autorização)
-          const err = new Error(errorMsg || "Erro de autorização ao processar cartão.");
-          err.status = 401;
-          err.code = errorCode || "VINDI_BACKEND_ERROR";
-          throw err;
-        }
-      }
-      
-      if (response.status === 403) {
-        // Chave da API inválida ou não autorizado
-        const err = new Error(errorMsg);
-        err.status = 403;
-        err.code = errorCode || "VINDI_KEY_INVALID";
-        throw err;
-      }
-      
-      if (response.status === 502 || response.status === 503) {
-        // Bad Gateway / Service Unavailable - pode ser erro de comunicação com Vindi
-        if (errorCode === "VINDI_AUTH_ERROR") {
-          const err = new Error("Falha na Vindi: verifique configuração do cartão/ambiente. Contate o suporte.");
-          err.status = response.status;
-          err.code = "VINDI_AUTH_ERROR";
-          throw err;
-        }
-        // Outros erros 502/503
-        const err = new Error(errorMsg || "Serviço temporariamente indisponível. Tente novamente.");
-        err.status = response.status;
-        err.code = errorCode || "SERVICE_UNAVAILABLE";
-        throw err;
-      }
-      
-      if (response.status === 422) {
-        // Validação do cartão falhou - mostra mensagem real do backend/Vindi (ex: "bandeira/banco não suportado", "não pode ficar em branco")
-        const err = new Error(errorMsg);
-        err.status = 422;
-        err.code = errorCode || "CARD_VALIDATION_FAILED";
-        err.hasPaymentCompanyIdError = hasPaymentCompanyIdError;
-        throw err;
-      }
-      
-      if (response.status === 400) {
-        // Validação do cartão ou requisição inválida
-        const err = new Error(errorMsg);
-        err.status = 400;
-        err.code = errorCode || "CARD_VALIDATION_FAILED";
-        err.hasPaymentCompanyIdError = hasPaymentCompanyIdError;
-        throw err;
-      }
-      
-      // Para outros status codes, também preserva informação sobre payment_company_id
-      if (hasPaymentCompanyIdError) {
-        const err = new Error(errorMsg);
-        err.status = response.status;
-        err.code = errorCode;
-        err.hasPaymentCompanyIdError = true;
-        throw err;
-      }
-    } catch (innerError) {
-      // Se já foi lançado erro específico, re-lança
-      if (innerError.code === "TOKENIZE_ENDPOINT_NOT_FOUND" ||
-          innerError.code === "SESSION_EXPIRED" ||
-          innerError.code === "VINDI_KEY_INVALID" ||
-          innerError.code === "VINDI_AUTH_ERROR" ||
-          innerError.code === "VINDI_BACKEND_ERROR" ||
-          innerError.code === "SERVICE_UNAVAILABLE" ||
-          innerError.code === "CARD_VALIDATION_FAILED") {
-        throw innerError;
-      }
-      // Se o erro tem mensagem e status, re-lança
-      if (innerError.message && innerError.status) {
-        throw innerError;
-      }
-      // Caso contrário, continua para criar erro genérico
     }
     
-    const error = new Error(errorMsg);
-    if (errorCode) error.code = errorCode;
-    error.status = response.status;
-    throw error;
+    // Lança ApiError com todas as informações
+    throw new ApiError(errorMessage, {
+      status: response.status,
+      code: errorCode || (hasPaymentCompanyIdError ? "PAYMENT_COMPANY_ID_ERROR" : null),
+      requestId: extractedRequestId,
+      payload: body,
+    });
   }
 
   const result = await response.json();
@@ -549,59 +516,29 @@ export async function setupAutopayVindi({
   });
 
   if (!response.ok) {
-    let errorMsg = "Falha ao configurar autopay";
-    let errorCode = null;
-    let errorJson = null;
+    // Tenta parsear JSON do erro
+    let errorBody = null;
+    let errorText = null;
+    const contentType = response.headers.get("content-type") || "";
+    
     try {
-      errorJson = await response.json();
-      errorMsg = errorJson?.error || errorJson?.message || errorMsg;
-      errorCode = errorJson?.code || null;
-    } catch {}
-
-    if (response.status === 401) {
-      // Só trata como SESSION_EXPIRED se for erro real de autenticação JWT
-      const isSessionExpired = 
-        errorCode === "SESSION_EXPIRED" ||
-        errorCode === "UNAUTHORIZED" ||
-        (errorJson?.error && String(errorJson.error).toLowerCase() === "unauthorized") ||
-        (errorMsg && (
-          errorMsg.toLowerCase().includes("jwt") ||
-          errorMsg.toLowerCase().includes("token expired") ||
-          errorMsg.toLowerCase().includes("token inválido") ||
-          errorMsg.toLowerCase().includes("não autorizado")
-        ));
-      
-      if (isSessionExpired) {
-        const err = new Error("Sessão expirada, faça login novamente.");
-        err.status = 401;
-        err.code = "SESSION_EXPIRED";
-        throw err;
+      if (contentType.includes("application/json")) {
+        errorBody = await response.json();
       } else {
-        // 401 mas não é sessão expirada (ex: erro Vindi de autorização)
-        const err = new Error(errorMsg || "Erro de autorização ao processar cartão.");
-        err.status = 401;
-        err.code = errorCode || "VINDI_BACKEND_ERROR";
-        throw err;
+        errorText = await response.text();
       }
+    } catch (parseError) {
+      errorText = "";
     }
-
-    if (response.status === 502 || response.status === 503) {
-      // Bad Gateway / Service Unavailable - pode ser erro de comunicação com Vindi
-      if (errorCode === "VINDI_AUTH_ERROR") {
-        const err = new Error("Falha na Vindi: verifique configuração do cartão/ambiente. Contate o suporte.");
-        err.status = response.status;
-        err.code = "VINDI_AUTH_ERROR";
-        throw err;
-      }
-      // Outros erros 502/503
-      const err = new Error(errorMsg || "Serviço temporariamente indisponível. Tente novamente.");
-      err.status = response.status;
-      err.code = errorCode || "SERVICE_UNAVAILABLE";
-      throw err;
-    }
-
+    
+    // Extrai informações do erro
+    const body = errorBody || {};
+    const extractedRequestId = body.requestId || body.request_id || response.headers.get("x-request-id") || requestId || null;
+    const errorCode = body.code || body.error_code || body.name || null;
+    let errorMessage = body.error_message || body.message || body.error || errorText || "Falha ao configurar autopay";
+    
     // Verifica se o erro indica que gateway_token é obrigatório
-    const errorStr = String(errorMsg || "").toLowerCase();
+    const errorStr = String(errorMessage || "").toLowerCase();
     if (
       response.status === 400 &&
       (!ppId && (!gatewayToken || gatewayToken === null)) &&
@@ -610,13 +547,62 @@ export async function setupAutopayVindi({
         errorStr.includes("obrigatório") ||
         errorStr.includes("required"))
     ) {
-      errorMsg = "GATEWAY_TOKEN_REQUIRED";
+      errorMessage = "GATEWAY_TOKEN_REQUIRED";
     }
     
-    const error = new Error(errorMsg);
-    if (errorCode) error.code = errorCode;
-    error.status = response.status;
-    throw error;
+    // CRÍTICO: Só trata como sessão expirada se for erro real de autenticação do APP (não Vindi)
+    // Critério: status 401/403 E code AUTH_EXPIRED ou INVALID_TOKEN
+    if (response.status === 401 || response.status === 403) {
+      const isAppAuthError = 
+        errorCode === "AUTH_EXPIRED" ||
+        errorCode === "INVALID_TOKEN" ||
+        errorCode === "SESSION_EXPIRED" ||
+        errorCode === "UNAUTHORIZED";
+      
+      if (isAppAuthError) {
+        throw new ApiError("Sessão expirada, faça login novamente.", {
+          status: response.status,
+          code: "AUTH_EXPIRED",
+          requestId: extractedRequestId,
+          payload: body,
+        });
+      }
+      // 401/403 mas não é sessão expirada do app (ex: erro Vindi de autorização)
+      // Propaga como erro de integração Vindi, NÃO como logout
+      throw new ApiError(errorMessage, {
+        status: response.status,
+        code: errorCode || "VINDI_BACKEND_ERROR",
+        requestId: extractedRequestId,
+        payload: body,
+      });
+    }
+    
+    // Tratamento para outros status codes
+    if (response.status === 502 || response.status === 503 || response.status === 500) {
+      // Bad Gateway / Service Unavailable / Internal Server Error
+      if (errorCode && String(errorCode).startsWith("VINDI_")) {
+        throw new ApiError(errorMessage || "Falha na integração com Vindi. Tente novamente ou contate o suporte.", {
+          status: response.status,
+          code: errorCode,
+          requestId: extractedRequestId,
+          payload: body,
+        });
+      }
+      throw new ApiError(errorMessage || "Serviço temporariamente indisponível. Tente novamente.", {
+        status: response.status,
+        code: errorCode || "SERVICE_UNAVAILABLE",
+        requestId: extractedRequestId,
+        payload: body,
+      });
+    }
+    
+    // Lança ApiError com todas as informações
+    throw new ApiError(errorMessage, {
+      status: response.status,
+      code: errorCode,
+      requestId: extractedRequestId,
+      payload: body,
+    });
   }
 
   return await response.json();
@@ -658,61 +644,80 @@ export async function getAutopayVindiStatus({ requestId } = {}) {
       return { active: false, has_card: false };
     }
     
-    let errorMsg = "Falha ao buscar status do autopay";
-    let errorCode = null;
-    let errorJson = null;
+    // Tenta parsear JSON do erro
+    let errorBody = null;
+    let errorText = null;
+    const contentType = response.headers.get("content-type") || "";
+    
     try {
-      errorJson = await response.json();
-      errorMsg = errorJson?.error || errorJson?.message || errorMsg;
-      errorCode = errorJson?.code || null;
-    } catch {}
-    
-    if (response.status === 401) {
-      // Só trata como SESSION_EXPIRED se for erro real de autenticação JWT
-      const isSessionExpired = 
-        errorCode === "SESSION_EXPIRED" ||
-        errorCode === "UNAUTHORIZED" ||
-        (errorJson?.error && String(errorJson.error).toLowerCase() === "unauthorized") ||
-        (errorMsg && (
-          errorMsg.toLowerCase().includes("jwt") ||
-          errorMsg.toLowerCase().includes("token expired") ||
-          errorMsg.toLowerCase().includes("token inválido") ||
-          errorMsg.toLowerCase().includes("não autorizado")
-        ));
-      
-      if (isSessionExpired) {
-        const err = new Error("Sessão expirada, faça login novamente.");
-        err.status = 401;
-        err.code = "SESSION_EXPIRED";
-        throw err;
+      if (contentType.includes("application/json")) {
+        errorBody = await response.json();
       } else {
-        // 401 mas não é sessão expirada (ex: erro Vindi de autorização)
-        const err = new Error(errorMsg || "Erro de autorização ao buscar status.");
-        err.status = 401;
-        err.code = errorCode || "VINDI_BACKEND_ERROR";
-        throw err;
+        errorText = await response.text();
       }
+    } catch (parseError) {
+      errorText = "";
     }
     
-    if (response.status === 502 || response.status === 503) {
-      // Bad Gateway / Service Unavailable - pode ser erro de comunicação com Vindi
-      if (errorCode === "VINDI_AUTH_ERROR") {
-        const err = new Error("Falha na Vindi: verifique configuração do cartão/ambiente. Contate o suporte.");
-        err.status = response.status;
-        err.code = "VINDI_AUTH_ERROR";
-        throw err;
+    // Extrai informações do erro
+    const body = errorBody || {};
+    const extractedRequestId = body.requestId || body.request_id || response.headers.get("x-request-id") || requestId || null;
+    const errorCode = body.code || body.error_code || body.name || null;
+    const errorMessage = body.error_message || body.message || body.error || errorText || "Falha ao buscar status do autopay";
+    
+    // CRÍTICO: Só trata como sessão expirada se for erro real de autenticação do APP (não Vindi)
+    // Critério: status 401/403 E code AUTH_EXPIRED ou INVALID_TOKEN
+    if (response.status === 401 || response.status === 403) {
+      const isAppAuthError = 
+        errorCode === "AUTH_EXPIRED" ||
+        errorCode === "INVALID_TOKEN" ||
+        errorCode === "SESSION_EXPIRED" ||
+        errorCode === "UNAUTHORIZED";
+      
+      if (isAppAuthError) {
+        throw new ApiError("Sessão expirada, faça login novamente.", {
+          status: response.status,
+          code: "AUTH_EXPIRED",
+          requestId: extractedRequestId,
+          payload: body,
+        });
       }
-      // Outros erros 502/503
-      const err = new Error(errorMsg || "Serviço temporariamente indisponível. Tente novamente.");
-      err.status = response.status;
-      err.code = errorCode || "SERVICE_UNAVAILABLE";
-      throw err;
+      // 401/403 mas não é sessão expirada do app (ex: erro Vindi de autorização)
+      // Propaga como erro de integração Vindi, NÃO como logout
+      throw new ApiError(errorMessage, {
+        status: response.status,
+        code: errorCode || "VINDI_BACKEND_ERROR",
+        requestId: extractedRequestId,
+        payload: body,
+      });
     }
     
-    const err = new Error(errorMsg);
-    err.status = response.status;
-    if (errorCode) err.code = errorCode;
-    throw err;
+    // Tratamento para outros status codes
+    if (response.status === 502 || response.status === 503 || response.status === 500) {
+      // Bad Gateway / Service Unavailable / Internal Server Error
+      if (errorCode && String(errorCode).startsWith("VINDI_")) {
+        throw new ApiError(errorMessage || "Falha na integração com Vindi. Tente novamente ou contate o suporte.", {
+          status: response.status,
+          code: errorCode,
+          requestId: extractedRequestId,
+          payload: body,
+        });
+      }
+      throw new ApiError(errorMessage || "Serviço temporariamente indisponível. Tente novamente.", {
+        status: response.status,
+        code: errorCode || "SERVICE_UNAVAILABLE",
+        requestId: extractedRequestId,
+        payload: body,
+      });
+    }
+    
+    // Lança ApiError com todas as informações
+    throw new ApiError(errorMessage, {
+      status: response.status,
+      code: errorCode,
+      requestId: extractedRequestId,
+      payload: body,
+    });
   }
 
   return await response.json();

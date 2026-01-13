@@ -54,17 +54,8 @@ const createRequestId = () => {
   return `${Date.now()}-${Math.random().toString(36).substring(2, 11)}`;
 };
 
-// Hoisted (function declaration) para evitar qualquer risco de TDZ em builds/minificação.
-function cleanHolderName(name) {
-  const s = String(name || "").trim();
-  return s ? s : undefined;
-}
-
-function cleanDocNumber(doc) {
-  const s = String(doc || "").trim();
-  const digits = s ? s.replace(/\D+/g, "") : "";
-  return digits ? digits : undefined;
-}
+// Funções removidas - substituídas por inline para evitar TDZ
+// cleanHolderName e cleanDocNumber agora são inline onde usadas
 
 function parseExpiry(exp) {
   // Aceita MM/AA ou MM/AAAA
@@ -100,8 +91,32 @@ export default function AutoPaySection() {
   const handleSessionExpired = React.useCallback(() => {
     if (redirectingToLoginRef.current) return;
     redirectingToLoginRef.current = true;
+    // Limpa tokens de autenticação
+    localStorage.removeItem("ns_auth_token");
+    sessionStorage.removeItem("ns_auth_token");
+    localStorage.removeItem("token");
+    localStorage.removeItem("access_token");
+    sessionStorage.removeItem("token");
     alert("Sessão expirada, faça login novamente.");
     window.location.assign("/login");
+  }, []);
+  
+  // Função auxiliar para formatar mensagem de erro com requestId
+  const formatErrorMessage = React.useCallback((err) => {
+    const status = err?.status || null;
+    const code = err?.code || null;
+    const requestId = err?.requestId || null;
+    const message = err?.message || "Erro desconhecido";
+    
+    const parts = [];
+    if (code) parts.push(`code=${code}`);
+    if (status) parts.push(`status=${status}`);
+    if (requestId) parts.push(`requestId=${requestId}`);
+    
+    if (parts.length > 0) {
+      return `Falha ao salvar cartão. (${parts.join(", ")}). Mensagem: ${message}`;
+    }
+    return message;
   }, []);
 
   const handleVindiFriendlyError = React.useCallback((err) => {
@@ -216,9 +231,9 @@ export default function AutoPaySection() {
           }
         }
       } catch (e) {
-        // CRÍTICO: Só desloga se for SESSION_EXPIRED, não apenas por status 401
-        // Status 401 pode ser VINDI_AUTH_ERROR ou outro erro upstream, não JWT expirado
-        if (e?.code === "SESSION_EXPIRED") {
+        // CRÍTICO: Só desloga se for erro real de autenticação do APP (AUTH_EXPIRED ou INVALID_TOKEN)
+        // Não desloga por erros Vindi (502/500/401 do fluxo Vindi)
+        if (e?.code === "AUTH_EXPIRED" || e?.code === "INVALID_TOKEN" || e?.code === "SESSION_EXPIRED") {
           if (alive) handleSessionExpired();
           return;
         }
@@ -388,15 +403,16 @@ export default function AutoPaySection() {
             });
           }
         } catch (tokenizeError) {
-          // CRÍTICO: Só desloga se for SESSION_EXPIRED, não apenas por status 401
-          if (tokenizeError?.code === "SESSION_EXPIRED") {
+          // CRÍTICO: Só desloga se for erro real de autenticação do APP (AUTH_EXPIRED ou INVALID_TOKEN)
+          // Não desloga por erros Vindi (502/500/401 do fluxo Vindi)
+          if (tokenizeError?.code === "AUTH_EXPIRED" || tokenizeError?.code === "INVALID_TOKEN" || tokenizeError?.code === "SESSION_EXPIRED") {
             handleSessionExpired();
             return;
           }
           if (handleVindiFriendlyError(tokenizeError)) return;
 
-          // Mensagem formatada do backend
-          const errorMessage = tokenizeError?.message || "Falha ao tokenizar cartão.";
+          // Mensagem formatada com requestId se disponível
+          const errorMessage = formatErrorMessage(tokenizeError);
           console.error("[autopay] Tokenize error:", tokenizeError);
           alert(errorMessage);
           return;
@@ -406,8 +422,9 @@ export default function AutoPaySection() {
       // Sempre chama setupAutopayVindi para persistir preferências
       // Se não houver gatewayToken mas houver mudanças, tenta salvar mesmo assim
       try {
-        const cleanedHolderName = cleanHolderName(holderName);
-        const cleanedDocNumber = cleanDocNumber(doc);
+        // Inline: substitui cleanHolderName e cleanDocNumber para evitar TDZ
+        const cleanedHolderName = holderName?.trim() || undefined;
+        const cleanedDocNumber = doc ? String(doc).replace(/\D+/g, "") : undefined;
         
         const requestId = createRequestId();
         console.log(`[autopay] Setup - requestId: ${requestId}, route: /api/autopay/vindi/setup`);
@@ -445,8 +462,9 @@ export default function AutoPaySection() {
 
         alert("Preferências salvas!");
       } catch (setupError) {
-        // CRÍTICO: Só desloga se for SESSION_EXPIRED, não apenas por status 401
-        if (setupError?.code === "SESSION_EXPIRED") {
+        // CRÍTICO: Só desloga se for erro real de autenticação do APP (AUTH_EXPIRED ou INVALID_TOKEN)
+        // Não desloga por erros Vindi (502/500/401 do fluxo Vindi)
+        if (setupError?.code === "AUTH_EXPIRED" || setupError?.code === "INVALID_TOKEN" || setupError?.code === "SESSION_EXPIRED") {
           handleSessionExpired();
           return;
         }
@@ -467,7 +485,11 @@ export default function AutoPaySection() {
           );
           return;
         }
-        throw setupError;
+        
+        // Mensagem formatada com requestId se disponível
+        const errorMessage = formatErrorMessage(setupError);
+        alert(errorMessage);
+        return;
       }
 
       // Recarrega status para garantir sincronização
@@ -504,23 +526,25 @@ export default function AutoPaySection() {
           setSavedDoc(status.doc_number);
         }
       } catch (e) {
-        // CRÍTICO: Só desloga se for SESSION_EXPIRED, não apenas por status 401
-        if (e?.code === "SESSION_EXPIRED") {
+        // CRÍTICO: Só desloga se for erro real de autenticação do APP (AUTH_EXPIRED ou INVALID_TOKEN)
+        // Não desloga por erros Vindi (502/500/401 do fluxo Vindi)
+        if (e?.code === "AUTH_EXPIRED" || e?.code === "INVALID_TOKEN" || e?.code === "SESSION_EXPIRED") {
           handleSessionExpired();
           return;
         }
         console.warn("[autopay] refresh status error:", e);
       }
     } catch (e) {
-      // CRÍTICO: Só desloga se for SESSION_EXPIRED, não apenas por status 401
-      if (e?.code === "SESSION_EXPIRED") {
+      // CRÍTICO: Só desloga se for erro real de autenticação do APP (AUTH_EXPIRED ou INVALID_TOKEN)
+      // Não desloga por erros Vindi (502/500/401 do fluxo Vindi)
+      if (e?.code === "AUTH_EXPIRED" || e?.code === "INVALID_TOKEN" || e?.code === "SESSION_EXPIRED") {
         handleSessionExpired();
         return;
       }
       if (handleVindiFriendlyError(e)) return;
       console.error("[autopay] save error:", e?.message || e);
-      // Usa a mensagem do erro (já montada pelo service quando aplicável)
-      const errorMsg = e?.message || "Falha ao salvar preferências. Verifique os dados do cartão.";
+      // Mensagem formatada com requestId se disponível
+      const errorMsg = formatErrorMessage(e);
       alert(errorMsg);
     } finally {
       setSaving(false);
@@ -568,8 +592,9 @@ export default function AutoPaySection() {
         const errorCode = j?.code || null;
         const errorMsg = j?.error || j?.message || "cancel_failed";
         
-        // CRÍTICO: Só desloga se for SESSION_EXPIRED, não apenas por status 401
-        if (r.status === 401 && errorCode === "SESSION_EXPIRED") {
+        // CRÍTICO: Só desloga se for erro real de autenticação do APP (AUTH_EXPIRED ou INVALID_TOKEN)
+        // Não desloga por erros Vindi (502/500/401 do fluxo Vindi)
+        if (r.status === 401 && (errorCode === "AUTH_EXPIRED" || errorCode === "INVALID_TOKEN" || errorCode === "SESSION_EXPIRED")) {
           handleSessionExpired();
           return;
         }
