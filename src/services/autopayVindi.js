@@ -157,22 +157,19 @@ export async function tokenizeCardWithVindi({
   // Detecta bandeira - não barra no frontend. Se detectar e for suportada, envia payment_company_code
   const brandCode = detectBrandCode(num);
   
-  // Monta payload compatível com o BACKEND (/api/autopay/vindi/tokenize)
-  // Backend aceita camelCase (expMonth/expYear) e também card_expiration no formato MM/YYYY (4 dígitos)
+  // Monta payload em snake_case conforme especificado pelo backend
+  // Formato: { holder_name, card_number, card_expiration, card_cvv, payment_company_code? }
   const card_expiration = `${mm}/${yyyy}`; // Sempre MM/YYYY (4 dígitos no ano)
   
   const payload = {
-    holderName: holder,
-    cardNumber: num,
-    expMonth: mm,
-    expYear: yyyy,
+    holder_name: holder,
+    card_number: num,
     card_expiration,
-    cvv: sc,
-    payment_method_code: "credit_card",
-    // Adiciona payment_company_code apenas se detectar bandeira suportada (não envia null/undefined)
+    card_cvv: sc,
+    // Adiciona payment_company_code apenas se detectar bandeira suportada (opcional, não bloqueia)
     ...(brandCode && SUPPORTED_BRANDS.has(brandCode) ? { payment_company_code: brandCode } : {}),
     // Adiciona documento apenas se fornecido (não envia string vazia)
-    ...(doc ? { documentNumber: doc } : {}),
+    ...(doc ? { document_number: doc } : {}),
   };
 
   // Log não sensível para debug (nunca logar PAN completo, CVV ou dados sensíveis)
@@ -245,16 +242,17 @@ export async function tokenizeCardWithVindi({
     const body = errorBody || {};
     const extractedRequestId = body.requestId || body.request_id || response.headers.get("x-request-id") || requestId || null;
     const errorCode = body.code || body.error_code || body.name || null;
-    let errorMessage = body.error_message || body.message || body.error || errorText || `HTTP ${response.status}`;
+    // Prioriza error_message, depois msg, depois message, depois error, depois errorText
+    let errorMessage = body.error_message || body.msg || body.message || body.error || errorText || `HTTP ${response.status}`;
     const errorDetails = body.details || body.data?.details || null;
     
-    // Log útil para debug
-    console.error(`[autopay] Error - route: ${url}, status: ${response.status}, code: ${errorCode || 'N/A'}, requestId: ${extractedRequestId || 'N/A'}`);
+    // Log útil para debug com requestId retornado pelo backend
+    console.error(`[autopay] Error - route: ${url}, status: ${response.status}, code: ${errorCode || 'N/A'}, requestId: ${extractedRequestId || 'N/A'}, message: ${errorMessage}`);
     
-    // CRÍTICO: Se status === 401 do backend, é sessão expirada (logout)
+    // CRÍTICO: Se status === 401 do backend, é sessão expirada (mostra mensagem, não desloga automaticamente)
     // Outros erros (400/422/500/502/VINDI_*) NÃO deslogam
     if (response.status === 401) {
-      throw new ApiError("Sessão expirada, faça login novamente.", {
+      throw new ApiError("Sessão expirada. Faça login novamente para continuar.", {
         status: 401,
         code: "SESSION_EXPIRED",
         requestId: extractedRequestId,
@@ -282,7 +280,12 @@ export async function tokenizeCardWithVindi({
     });
   }
 
+  // Sucesso - extrai requestId retornado pelo backend para logs
   const result = await response.json();
+  const backendRequestId = result?.requestId || result?.request_id || response.headers.get("x-request-id") || requestId || null;
+  if (backendRequestId) {
+    console.log(`[autopay] Tokenize success - route: ${url}, requestId: ${backendRequestId}`);
+  }
 
   // Extrai gateway_token de forma resiliente - aceita múltiplos formatos (fallback modo antigo)
   const gatewayToken =
@@ -458,11 +461,12 @@ export async function setupAutopayVindi({
     const body = errorBody || {};
     const extractedRequestId = body.requestId || body.request_id || response.headers.get("x-request-id") || requestId || null;
     const errorCode = body.code || body.error_code || body.name || null;
-    let errorMessage = body.error_message || body.message || body.error || errorText || "Falha ao configurar autopay";
+    // Prioriza error_message, depois msg, depois message, depois error, depois errorText
+    let errorMessage = body.error_message || body.msg || body.message || body.error || errorText || "Falha ao configurar autopay";
     const errorDetails = body.details || body.data?.details || null;
     
-    // Log útil para debug
-    console.error(`[autopay] Error - route: ${url}, status: ${response.status}, code: ${errorCode || 'N/A'}, requestId: ${extractedRequestId || 'N/A'}`);
+    // Log útil para debug com requestId retornado pelo backend
+    console.error(`[autopay] Error - route: ${url}, status: ${response.status}, code: ${errorCode || 'N/A'}, requestId: ${extractedRequestId || 'N/A'}, message: ${errorMessage}`);
     
     // Verifica se o erro indica que gateway_token é obrigatório
     const errorStr = String(errorMessage || "").toLowerCase();
@@ -487,10 +491,10 @@ export async function setupAutopayVindi({
       errorMessage = detailsMessages.join("; ");
     }
     
-    // CRÍTICO: Se status === 401 do backend, é sessão expirada (logout)
+    // CRÍTICO: Se status === 401 do backend, é sessão expirada (mostra mensagem, não desloga automaticamente)
     // Outros erros (400/422/500/502/VINDI_*) NÃO deslogam
     if (response.status === 401) {
-      throw new ApiError("Sessão expirada, faça login novamente.", {
+      throw new ApiError("Sessão expirada. Faça login novamente para continuar.", {
         status: 401,
         code: "SESSION_EXPIRED",
         requestId: extractedRequestId,
@@ -507,7 +511,13 @@ export async function setupAutopayVindi({
     });
   }
 
-  return await response.json();
+  // Sucesso - extrai requestId retornado pelo backend para logs
+  const result = await response.json();
+  const backendRequestId = result?.requestId || result?.request_id || response.headers.get("x-request-id") || requestId || null;
+  if (backendRequestId && backendRequestId !== requestId) {
+    console.log(`[autopay] Setup success - route: ${url}, requestId: ${backendRequestId}`);
+  }
+  return result;
 }
 
 /**
@@ -565,16 +575,17 @@ export async function getAutopayVindiStatus({ requestId } = {}) {
     const body = errorBody || {};
     const extractedRequestId = body.requestId || body.request_id || response.headers.get("x-request-id") || requestId || null;
     const errorCode = body.code || body.error_code || body.name || null;
-    const errorMessage = body.error_message || body.message || body.error || errorText || "Falha ao buscar status do autopay";
+    // Prioriza error_message, depois msg, depois message, depois error, depois errorText
+    const errorMessage = body.error_message || body.msg || body.message || body.error || errorText || "Falha ao buscar status do autopay";
     const errorDetails = body.details || body.data?.details || null;
     
-    // Log útil para debug
-    console.error(`[autopay] Error - route: ${url}, status: ${response.status}, code: ${errorCode || 'N/A'}, requestId: ${extractedRequestId || 'N/A'}`);
+    // Log útil para debug com requestId retornado pelo backend
+    console.error(`[autopay] Error - route: ${url}, status: ${response.status}, code: ${errorCode || 'N/A'}, requestId: ${extractedRequestId || 'N/A'}, message: ${errorMessage}`);
     
-    // CRÍTICO: Se status === 401 do backend, é sessão expirada (logout)
+    // CRÍTICO: Se status === 401 do backend, é sessão expirada (mostra mensagem, não desloga automaticamente)
     // Outros erros (400/422/500/502/VINDI_*) NÃO deslogam
     if (response.status === 401) {
-      throw new ApiError("Sessão expirada, faça login novamente.", {
+      throw new ApiError("Sessão expirada. Faça login novamente para continuar.", {
         status: 401,
         code: "SESSION_EXPIRED",
         requestId: extractedRequestId,
@@ -602,6 +613,12 @@ export async function getAutopayVindiStatus({ requestId } = {}) {
     });
   }
 
-  return await response.json();
+  // Sucesso - extrai requestId retornado pelo backend para logs
+  const result = await response.json();
+  const backendRequestId = result?.requestId || result?.request_id || response.headers.get("x-request-id") || requestId || null;
+  if (backendRequestId) {
+    console.log(`[autopay] GET status success - route: ${url}, requestId: ${backendRequestId}`);
+  }
+  return result;
 }
 

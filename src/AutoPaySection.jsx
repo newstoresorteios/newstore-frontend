@@ -91,14 +91,10 @@ export default function AutoPaySection() {
   const handleSessionExpired = React.useCallback(() => {
     if (redirectingToLoginRef.current) return;
     redirectingToLoginRef.current = true;
-    // Limpa tokens de autenticação
-    localStorage.removeItem("ns_auth_token");
-    sessionStorage.removeItem("ns_auth_token");
-    localStorage.removeItem("token");
-    localStorage.removeItem("access_token");
-    sessionStorage.removeItem("token");
-    alert("Sessão expirada, faça login novamente.");
-    window.location.assign("/login");
+    // Não desloga automaticamente - apenas mostra mensagem e sugere login
+    alert("Sessão expirada. Faça login novamente para continuar.");
+    // Opcional: redirecionar para login (comentado para não deslogar automaticamente)
+    // window.location.assign("/login");
   }, []);
   
   // Função auxiliar para formatar mensagem de erro com requestId
