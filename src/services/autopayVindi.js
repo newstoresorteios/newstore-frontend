@@ -98,6 +98,7 @@ export function detectBrandCode(cardNumber) {
  * @param {string} params.expYear - Ano de expiração (YYYY)
  * @param {string} params.cvv - CVV
  * @param {string} [params.documentNumber] - CPF/CNPJ do titular (opcional)
+ * @param {string} [params.requestId] - Request ID para rastreamento (opcional)
  * @returns {Promise<{ok: boolean, customer_id?: string|number, payment_profile_id?: string|number, card_last4?: string, payment_company_code?: string, gateway_token?: string}>}
  */
 export async function tokenizeCardWithVindi({
@@ -107,6 +108,7 @@ export async function tokenizeCardWithVindi({
   expYear,
   cvv,
   documentNumber,
+  requestId,
 }) {
   // Sanitiza número do cartão: remove tudo que não for dígito
   const num = String(cardNumber || "").replace(/\D/g, "");
@@ -158,10 +160,14 @@ export async function tokenizeCardWithVindi({
     ...(doc ? { documentNumber: doc } : {}),
   };
 
-  // Log não sensível para debug (nunca logar PAN completo)
+  // Log não sensível para debug (nunca logar PAN completo, CVV ou dados sensíveis)
   const url = apiJoin("/api/autopay/vindi/tokenize");
+  if (requestId) {
+    console.log(`[autopay] Tokenize - requestId: ${requestId}, route: ${url}`);
+  }
   if (process.env.NODE_ENV === 'development') {
     console.debug("[autopay] Tokenizando cartão - chamando BACKEND:", {
+      requestId: requestId || "não fornecido",
       url,
       bin: num.slice(0, 6), // Apenas 6 primeiros dígitos (BIN), nunca o cartão completo
       detectedBrandCode: brandCode || "não detectada",
@@ -178,6 +184,8 @@ export async function tokenizeCardWithVindi({
   const headers = {
     "Content-Type": "application/json",
     ...authHeaders(), // Garante Authorization: Bearer <token>
+    // Adiciona X-Request-Id se fornecido para rastreamento
+    ...(requestId ? { "X-Request-Id": requestId } : {}),
   };
 
   // Confirma que não está chamando Vindi diretamente
@@ -479,6 +487,7 @@ export async function tokenizeCardWithVindi({
  * @param {string} params.docNumber - CPF/CNPJ do titular
  * @param {number[]} params.numbers - Array de números cativos
  * @param {boolean} params.active - Status ativo/inativo do autopay
+ * @param {string} [params.requestId] - Request ID para rastreamento (opcional)
  * @returns {Promise<Object>} Resposta do backend (pode incluir card.last4, card.brand, etc.)
  */
 export async function setupAutopayVindi({
@@ -489,6 +498,7 @@ export async function setupAutopayVindi({
   docNumber,
   numbers,
   active,
+  requestId,
 }) {
   // Constrói o body convertendo camelCase para snake_case
   const body = {};
@@ -523,11 +533,16 @@ export async function setupAutopayVindi({
   }
 
   const url = apiJoin("/api/autopay/vindi/setup");
+  if (requestId) {
+    console.log(`[autopay] Setup - requestId: ${requestId}, route: ${url}`);
+  }
   const response = await fetch(url, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       ...authHeaders(),
+      // Adiciona X-Request-Id se fornecido para rastreamento
+      ...(requestId ? { "X-Request-Id": requestId } : {}),
     },
     credentials: "include",
     body: JSON.stringify(body),
@@ -617,15 +632,22 @@ export async function tokenizeVindiCard(params) {
 
 /**
  * Busca o status do autopay via backend
+ * @param {Object} [params] - Parâmetros opcionais
+ * @param {string} [params.requestId] - Request ID para rastreamento (opcional)
  * @returns {Promise<Object>} Status do autopay (active, card.last4, card.brand, etc.)
  */
-export async function getAutopayVindiStatus() {
+export async function getAutopayVindiStatus({ requestId } = {}) {
   const url = apiJoin("/api/autopay/vindi/status");
+  if (requestId) {
+    console.log(`[autopay] GET status - requestId: ${requestId}, route: ${url}`);
+  }
   const response = await fetch(url, {
     method: "GET",
     headers: {
       "Content-Type": "application/json",
       ...authHeaders(),
+      // Adiciona X-Request-Id se fornecido para rastreamento
+      ...(requestId ? { "X-Request-Id": requestId } : {}),
     },
     credentials: "include",
   });

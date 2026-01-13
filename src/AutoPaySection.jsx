@@ -49,6 +49,11 @@ const authHeaders = _authHeaders || defaultAuthHeaders;
 const pad2 = (n) => String(n).padStart(2, "0");
 const onlyDigits = (s) => String(s || "").replace(/\D+/g, "");
 
+// Gera um requestId único para rastreamento de requisições
+const createRequestId = () => {
+  return `${Date.now()}-${Math.random().toString(36).substring(2, 11)}`;
+};
+
 // Hoisted (function declaration) para evitar qualquer risco de TDZ em builds/minificação.
 function cleanHolderName(name) {
   const s = String(name || "").trim();
@@ -182,7 +187,9 @@ export default function AutoPaySection() {
       try {
         setLoading(true);
         // Usa o novo endpoint Vindi para buscar status
-        const j = await getAutopayVindiStatus();
+        const requestId = createRequestId();
+        console.log(`[autopay] GET status - requestId: ${requestId}, route: /api/autopay/vindi/status`);
+        const j = await getAutopayVindiStatus({ requestId });
         if (alive && j) {
           const gotNumbers = Array.isArray(j.numbers)
             ? j.numbers.map(Number)
@@ -209,7 +216,9 @@ export default function AutoPaySection() {
           }
         }
       } catch (e) {
-        if (e?.status === 401 || e?.code === "SESSION_EXPIRED") {
+        // CRÍTICO: Só desloga se for SESSION_EXPIRED, não apenas por status 401
+        // Status 401 pode ser VINDI_AUTH_ERROR ou outro erro upstream, não JWT expirado
+        if (e?.code === "SESSION_EXPIRED") {
           if (alive) handleSessionExpired();
           return;
         }
@@ -286,6 +295,8 @@ export default function AutoPaySection() {
     });
 
     try {
+      const requestId = createRequestId();
+      console.log(`[autopay] Tokenize - requestId: ${requestId}, route: /api/autopay/vindi/tokenize`);
       const result = await tokenizeCardWithVindi({
         holderName,
         cardNumber: num,
@@ -293,6 +304,7 @@ export default function AutoPaySection() {
         expYear: yyyy, // Formato YYYY
         cvv: sc,       // Apenas dígitos
         documentNumber: docDigits,
+        requestId,
       });
       console.debug("[autopay] Tokenize end - success");
       return result;
@@ -376,7 +388,8 @@ export default function AutoPaySection() {
             });
           }
         } catch (tokenizeError) {
-          if (tokenizeError?.status === 401 || tokenizeError?.code === "SESSION_EXPIRED") {
+          // CRÍTICO: Só desloga se for SESSION_EXPIRED, não apenas por status 401
+          if (tokenizeError?.code === "SESSION_EXPIRED") {
             handleSessionExpired();
             return;
           }
@@ -396,6 +409,8 @@ export default function AutoPaySection() {
         const cleanedHolderName = cleanHolderName(holderName);
         const cleanedDocNumber = cleanDocNumber(doc);
         
+        const requestId = createRequestId();
+        console.log(`[autopay] Setup - requestId: ${requestId}, route: /api/autopay/vindi/setup`);
         const result = await setupAutopayVindi({
           paymentProfileId: paymentProfileId || undefined, // modo novo
           gatewayToken: gatewayToken || undefined, // fallback modo antigo
@@ -403,6 +418,7 @@ export default function AutoPaySection() {
           docNumber: cleanedDocNumber,
           numbers,
           active,
+          requestId,
         });
 
         // Atualiza estado do cartão se retornado
@@ -429,7 +445,8 @@ export default function AutoPaySection() {
 
         alert("Preferências salvas!");
       } catch (setupError) {
-        if (setupError?.status === 401 || setupError?.code === "SESSION_EXPIRED") {
+        // CRÍTICO: Só desloga se for SESSION_EXPIRED, não apenas por status 401
+        if (setupError?.code === "SESSION_EXPIRED") {
           handleSessionExpired();
           return;
         }
@@ -455,7 +472,9 @@ export default function AutoPaySection() {
 
       // Recarrega status para garantir sincronização
       try {
-        const status = await getAutopayVindiStatus();
+        const requestId = createRequestId();
+        console.log(`[autopay] Refresh status - requestId: ${requestId}, route: /api/autopay/vindi/status`);
+        const status = await getAutopayVindiStatus({ requestId });
         if (status.card) {
           setCard({
             brand: status.card.brand || null,
@@ -485,14 +504,16 @@ export default function AutoPaySection() {
           setSavedDoc(status.doc_number);
         }
       } catch (e) {
-        if (e?.status === 401 || e?.code === "SESSION_EXPIRED") {
+        // CRÍTICO: Só desloga se for SESSION_EXPIRED, não apenas por status 401
+        if (e?.code === "SESSION_EXPIRED") {
           handleSessionExpired();
           return;
         }
         console.warn("[autopay] refresh status error:", e);
       }
     } catch (e) {
-      if (e?.status === 401 || e?.code === "SESSION_EXPIRED") {
+      // CRÍTICO: Só desloga se for SESSION_EXPIRED, não apenas por status 401
+      if (e?.code === "SESSION_EXPIRED") {
         handleSessionExpired();
         return;
       }
@@ -515,18 +536,29 @@ export default function AutoPaySection() {
       return;
     setSaving(true);
     try {
+      const requestId = createRequestId();
+      console.log(`[autopay] Cancel - requestId: ${requestId}, route: /api/autopay/vindi/cancel`);
       // Tenta o endpoint Vindi primeiro, depois fallback para o antigo
       let r = await fetch(apiJoin("/api/autopay/vindi/cancel"), {
         method: "POST",
-        headers: { "Content-Type": "application/json", ...authHeaders() },
+        headers: { 
+          "Content-Type": "application/json", 
+          "X-Request-Id": requestId,
+          ...authHeaders() 
+        },
         credentials: "include",
       });
 
       // Se não existir, tenta o endpoint antigo
       if (!r.ok && r.status === 404) {
+        console.log(`[autopay] Cancel fallback - requestId: ${requestId}, route: /api/me/autopay/cancel`);
         r = await fetch(apiJoin("/api/me/autopay/cancel"), {
           method: "POST",
-          headers: { "Content-Type": "application/json", ...authHeaders() },
+          headers: { 
+            "Content-Type": "application/json", 
+            "X-Request-Id": requestId,
+            ...authHeaders() 
+          },
           credentials: "include",
         });
       }
@@ -536,23 +568,10 @@ export default function AutoPaySection() {
         const errorCode = j?.code || null;
         const errorMsg = j?.error || j?.message || "cancel_failed";
         
-        if (r.status === 401) {
-          // Só trata como SESSION_EXPIRED se for erro real de autenticação JWT
-          const isSessionExpired = 
-            errorCode === "SESSION_EXPIRED" ||
-            errorCode === "UNAUTHORIZED" ||
-            (j?.error && String(j.error).toLowerCase() === "unauthorized") ||
-            (errorMsg && (
-              errorMsg.toLowerCase().includes("jwt") ||
-              errorMsg.toLowerCase().includes("token expired") ||
-              errorMsg.toLowerCase().includes("token inválido") ||
-              errorMsg.toLowerCase().includes("não autorizado")
-            ));
-          
-          if (isSessionExpired) {
-            handleSessionExpired();
-            return;
-          }
+        // CRÍTICO: Só desloga se for SESSION_EXPIRED, não apenas por status 401
+        if (r.status === 401 && errorCode === "SESSION_EXPIRED") {
+          handleSessionExpired();
+          return;
         }
         
         throw new Error(errorMsg);
