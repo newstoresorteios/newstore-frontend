@@ -241,119 +241,42 @@ export async function tokenizeCardWithVindi({
       errorText = "";
     }
     
-    // Extrai informações do erro
+    // Extrai informações do erro de forma padronizada
     const body = errorBody || {};
     const extractedRequestId = body.requestId || body.request_id || response.headers.get("x-request-id") || requestId || null;
     const errorCode = body.code || body.error_code || body.name || null;
-    const errorMessage = body.error_message || body.message || body.error || errorText || `HTTP ${response.status}`;
+    let errorMessage = body.error_message || body.message || body.error || errorText || `HTTP ${response.status}`;
+    const errorDetails = body.details || body.data?.details || null;
     
-    // CRÍTICO: Só trata como sessão expirada se for erro real de autenticação do APP (não Vindi)
-    // Critério: status 401/403 E code AUTH_EXPIRED ou INVALID_TOKEN
-    if (response.status === 401 || response.status === 403) {
-      const isAppAuthError = 
-        errorCode === "AUTH_EXPIRED" ||
-        errorCode === "INVALID_TOKEN" ||
-        errorCode === "SESSION_EXPIRED" ||
-        errorCode === "UNAUTHORIZED";
-      
-      if (isAppAuthError) {
-        throw new ApiError("Sessão expirada, faça login novamente.", {
-          status: response.status,
-          code: "AUTH_EXPIRED",
-          requestId: extractedRequestId,
-          payload: body,
-        });
-      }
-      // 401/403 mas não é sessão expirada do app (ex: erro Vindi de autorização)
-      // Propaga como erro de integração Vindi, NÃO como logout
-      throw new ApiError(errorMessage, {
-        status: response.status,
-        code: errorCode || "VINDI_BACKEND_ERROR",
+    // Log útil para debug
+    console.error(`[autopay] Error - route: ${url}, status: ${response.status}, code: ${errorCode || 'N/A'}, requestId: ${extractedRequestId || 'N/A'}`);
+    
+    // CRÍTICO: Se status === 401 do backend, é sessão expirada (logout)
+    // Outros erros (400/422/500/502/VINDI_*) NÃO deslogam
+    if (response.status === 401) {
+      throw new ApiError("Sessão expirada, faça login novamente.", {
+        status: 401,
+        code: "SESSION_EXPIRED",
         requestId: extractedRequestId,
         payload: body,
       });
     }
     
-    // Tratamento para outros status codes
-    if (response.status === 502 || response.status === 503 || response.status === 500) {
-      // Bad Gateway / Service Unavailable / Internal Server Error
-      // Pode ser erro de comunicação com Vindi ou backend
-      if (errorCode && String(errorCode).startsWith("VINDI_")) {
-        throw new ApiError(errorMessage || "Falha na integração com Vindi. Tente novamente ou contate o suporte.", {
-          status: response.status,
-          code: errorCode,
-          requestId: extractedRequestId,
-          payload: body,
-        });
-      }
-      throw new ApiError(errorMessage || "Serviço temporariamente indisponível. Tente novamente.", {
-        status: response.status,
-        code: errorCode || "SERVICE_UNAVAILABLE",
-        requestId: extractedRequestId,
-        payload: body,
+    // Monta mensagem de erro priorizando details se disponível
+    if (errorDetails && Array.isArray(errorDetails) && errorDetails.length > 0) {
+      const detailsMessages = errorDetails.map((detail) => {
+        const parameter = detail.parameter || detail.field || "campo";
+        const message = detail.message || detail.error || "";
+        return `${parameter}: ${message}`;
       });
+      errorMessage = detailsMessages.join("; ");
     }
     
-    // Verifica se há erro relacionado a payment_company_id/payment_company_code
-    let hasPaymentCompanyIdError = false;
-    if (body) {
-      const errorStr = JSON.stringify(body).toLowerCase();
-      if (errorStr.includes("payment_company_id") || 
-          errorStr.includes("payment_company_code") ||
-          errorStr.includes("payment_company_code_not_supported")) {
-        hasPaymentCompanyIdError = true;
-      }
-      
-      // Verifica error_parameters explicitamente
-      if (body.error_parameters) {
-        const errorParams = body.error_parameters;
-        if (typeof errorParams === "string") {
-          hasPaymentCompanyIdError = errorParams.includes("payment_company_id") || 
-                                     errorParams.includes("payment_company_code");
-        } else if (Array.isArray(errorParams)) {
-          hasPaymentCompanyIdError = errorParams.some(p => 
-            (typeof p === "string" && (p.includes("payment_company_id") || p.includes("payment_company_code"))) ||
-            (typeof p === "object" && (p?.parameter === "payment_company_id" || p?.parameter === "payment_company_code"))
-          );
-        } else if (typeof errorParams === "object") {
-          hasPaymentCompanyIdError = "payment_company_id" in errorParams || "payment_company_code" in errorParams;
-        }
-      }
-      
-      // Também verifica nos details se algum erro é sobre payment_company
-      if (!hasPaymentCompanyIdError && body.data?.details && Array.isArray(body.data.details)) {
-        hasPaymentCompanyIdError = body.data.details.some(detail => {
-          const param = (detail.parameter || detail.field || "").toLowerCase();
-          return param.includes("payment_company") || 
-                 (detail.message && typeof detail.message === "string" && detail.message.toLowerCase().includes("payment_company"));
-        });
-      }
-      
-      // Log para debug se vier valid_codes
-      if (body.data?.details && Array.isArray(body.data.details)) {
-        const validCodesDetail = body.data.details.find(d => 
-          d?.valid_codes || (typeof d?.message === "string" && d.message.toLowerCase().includes("valid"))
-        );
-        if (validCodesDetail?.valid_codes) {
-          console.debug("[autopay] Códigos válidos retornados pelo backend:", validCodesDetail.valid_codes);
-        }
-      }
-      
-      // Monta mensagem de erro priorizando details
-      if (body.data?.details && Array.isArray(body.data.details) && body.data.details.length > 0) {
-        const detailsMessages = body.data.details.map((detail) => {
-          const parameter = detail.parameter || detail.field || "campo";
-          const message = detail.message || detail.error || "";
-          return `${parameter}: ${message}`;
-        });
-        errorMessage = detailsMessages.join("; ");
-      }
-    }
-    
-    // Lança ApiError com todas as informações
+    // Para outros status codes (400/422/500/502/503), propaga erro normalizado
+    // NÃO desloga - apenas mostra mensagem de erro
     throw new ApiError(errorMessage, {
       status: response.status,
-      code: errorCode || (hasPaymentCompanyIdError ? "PAYMENT_COMPANY_ID_ERROR" : null),
+      code: errorCode || null, // Usa code do backend (ex: VINDI_AUTH_ERROR, VINDI_BACKEND_ERROR, etc)
       requestId: extractedRequestId,
       payload: body,
     });
@@ -531,11 +454,15 @@ export async function setupAutopayVindi({
       errorText = "";
     }
     
-    // Extrai informações do erro
+    // Extrai informações do erro de forma padronizada
     const body = errorBody || {};
     const extractedRequestId = body.requestId || body.request_id || response.headers.get("x-request-id") || requestId || null;
     const errorCode = body.code || body.error_code || body.name || null;
     let errorMessage = body.error_message || body.message || body.error || errorText || "Falha ao configurar autopay";
+    const errorDetails = body.details || body.data?.details || null;
+    
+    // Log útil para debug
+    console.error(`[autopay] Error - route: ${url}, status: ${response.status}, code: ${errorCode || 'N/A'}, requestId: ${extractedRequestId || 'N/A'}`);
     
     // Verifica se o erro indica que gateway_token é obrigatório
     const errorStr = String(errorMessage || "").toLowerCase();
@@ -550,56 +477,31 @@ export async function setupAutopayVindi({
       errorMessage = "GATEWAY_TOKEN_REQUIRED";
     }
     
-    // CRÍTICO: Só trata como sessão expirada se for erro real de autenticação do APP (não Vindi)
-    // Critério: status 401/403 E code AUTH_EXPIRED ou INVALID_TOKEN
-    if (response.status === 401 || response.status === 403) {
-      const isAppAuthError = 
-        errorCode === "AUTH_EXPIRED" ||
-        errorCode === "INVALID_TOKEN" ||
-        errorCode === "SESSION_EXPIRED" ||
-        errorCode === "UNAUTHORIZED";
-      
-      if (isAppAuthError) {
-        throw new ApiError("Sessão expirada, faça login novamente.", {
-          status: response.status,
-          code: "AUTH_EXPIRED",
-          requestId: extractedRequestId,
-          payload: body,
-        });
-      }
-      // 401/403 mas não é sessão expirada do app (ex: erro Vindi de autorização)
-      // Propaga como erro de integração Vindi, NÃO como logout
-      throw new ApiError(errorMessage, {
-        status: response.status,
-        code: errorCode || "VINDI_BACKEND_ERROR",
+    // Monta mensagem de erro priorizando details se disponível
+    if (errorDetails && Array.isArray(errorDetails) && errorDetails.length > 0) {
+      const detailsMessages = errorDetails.map((detail) => {
+        const parameter = detail.parameter || detail.field || "campo";
+        const message = detail.message || detail.error || "";
+        return `${parameter}: ${message}`;
+      });
+      errorMessage = detailsMessages.join("; ");
+    }
+    
+    // CRÍTICO: Se status === 401 do backend, é sessão expirada (logout)
+    // Outros erros (400/422/500/502/VINDI_*) NÃO deslogam
+    if (response.status === 401) {
+      throw new ApiError("Sessão expirada, faça login novamente.", {
+        status: 401,
+        code: "SESSION_EXPIRED",
         requestId: extractedRequestId,
         payload: body,
       });
     }
     
-    // Tratamento para outros status codes
-    if (response.status === 502 || response.status === 503 || response.status === 500) {
-      // Bad Gateway / Service Unavailable / Internal Server Error
-      if (errorCode && String(errorCode).startsWith("VINDI_")) {
-        throw new ApiError(errorMessage || "Falha na integração com Vindi. Tente novamente ou contate o suporte.", {
-          status: response.status,
-          code: errorCode,
-          requestId: extractedRequestId,
-          payload: body,
-        });
-      }
-      throw new ApiError(errorMessage || "Serviço temporariamente indisponível. Tente novamente.", {
-        status: response.status,
-        code: errorCode || "SERVICE_UNAVAILABLE",
-        requestId: extractedRequestId,
-        payload: body,
-      });
-    }
-    
-    // Lança ApiError com todas as informações
+    // Para outros status codes, propaga erro normalizado (NÃO desloga)
     throw new ApiError(errorMessage, {
       status: response.status,
-      code: errorCode,
+      code: errorCode || null, // Usa code do backend (ex: VINDI_AUTH_ERROR, VINDI_BACKEND_ERROR, etc)
       requestId: extractedRequestId,
       payload: body,
     });
@@ -659,62 +561,42 @@ export async function getAutopayVindiStatus({ requestId } = {}) {
       errorText = "";
     }
     
-    // Extrai informações do erro
+    // Extrai informações do erro de forma padronizada
     const body = errorBody || {};
     const extractedRequestId = body.requestId || body.request_id || response.headers.get("x-request-id") || requestId || null;
     const errorCode = body.code || body.error_code || body.name || null;
     const errorMessage = body.error_message || body.message || body.error || errorText || "Falha ao buscar status do autopay";
+    const errorDetails = body.details || body.data?.details || null;
     
-    // CRÍTICO: Só trata como sessão expirada se for erro real de autenticação do APP (não Vindi)
-    // Critério: status 401/403 E code AUTH_EXPIRED ou INVALID_TOKEN
-    if (response.status === 401 || response.status === 403) {
-      const isAppAuthError = 
-        errorCode === "AUTH_EXPIRED" ||
-        errorCode === "INVALID_TOKEN" ||
-        errorCode === "SESSION_EXPIRED" ||
-        errorCode === "UNAUTHORIZED";
-      
-      if (isAppAuthError) {
-        throw new ApiError("Sessão expirada, faça login novamente.", {
-          status: response.status,
-          code: "AUTH_EXPIRED",
-          requestId: extractedRequestId,
-          payload: body,
-        });
-      }
-      // 401/403 mas não é sessão expirada do app (ex: erro Vindi de autorização)
-      // Propaga como erro de integração Vindi, NÃO como logout
-      throw new ApiError(errorMessage, {
-        status: response.status,
-        code: errorCode || "VINDI_BACKEND_ERROR",
+    // Log útil para debug
+    console.error(`[autopay] Error - route: ${url}, status: ${response.status}, code: ${errorCode || 'N/A'}, requestId: ${extractedRequestId || 'N/A'}`);
+    
+    // CRÍTICO: Se status === 401 do backend, é sessão expirada (logout)
+    // Outros erros (400/422/500/502/VINDI_*) NÃO deslogam
+    if (response.status === 401) {
+      throw new ApiError("Sessão expirada, faça login novamente.", {
+        status: 401,
+        code: "SESSION_EXPIRED",
         requestId: extractedRequestId,
         payload: body,
       });
     }
     
-    // Tratamento para outros status codes
-    if (response.status === 502 || response.status === 503 || response.status === 500) {
-      // Bad Gateway / Service Unavailable / Internal Server Error
-      if (errorCode && String(errorCode).startsWith("VINDI_")) {
-        throw new ApiError(errorMessage || "Falha na integração com Vindi. Tente novamente ou contate o suporte.", {
-          status: response.status,
-          code: errorCode,
-          requestId: extractedRequestId,
-          payload: body,
-        });
-      }
-      throw new ApiError(errorMessage || "Serviço temporariamente indisponível. Tente novamente.", {
-        status: response.status,
-        code: errorCode || "SERVICE_UNAVAILABLE",
-        requestId: extractedRequestId,
-        payload: body,
+    // Monta mensagem de erro priorizando details se disponível
+    let finalErrorMessage = errorMessage;
+    if (errorDetails && Array.isArray(errorDetails) && errorDetails.length > 0) {
+      const detailsMessages = errorDetails.map((detail) => {
+        const parameter = detail.parameter || detail.field || "campo";
+        const message = detail.message || detail.error || "";
+        return `${parameter}: ${message}`;
       });
+      finalErrorMessage = detailsMessages.join("; ");
     }
     
-    // Lança ApiError com todas as informações
-    throw new ApiError(errorMessage, {
+    // Para outros status codes, propaga erro normalizado (NÃO desloga)
+    throw new ApiError(finalErrorMessage, {
       status: response.status,
-      code: errorCode,
+      code: errorCode || null, // Usa code do backend (ex: VINDI_AUTH_ERROR, VINDI_BACKEND_ERROR, etc)
       requestId: extractedRequestId,
       payload: body,
     });

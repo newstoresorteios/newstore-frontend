@@ -231,13 +231,13 @@ export default function AutoPaySection() {
           }
         }
       } catch (e) {
-        // CRÍTICO: Só desloga se for erro real de autenticação do APP (AUTH_EXPIRED ou INVALID_TOKEN)
-        // Não desloga por erros Vindi (502/500/401 do fluxo Vindi)
-        if (e?.code === "AUTH_EXPIRED" || e?.code === "INVALID_TOKEN" || e?.code === "SESSION_EXPIRED") {
+        // CRÍTICO: Só desloga se status === 401 do backend (SESSION_EXPIRED)
+        // Não desloga por erros Vindi (502/500/400/422 do fluxo Vindi)
+        if (e?.code === "SESSION_EXPIRED" || e?.status === 401) {
           if (alive) handleSessionExpired();
           return;
         }
-        console.error("[autopay] GET error:", e?.message || e);
+        console.error(`[autopay] GET error - status: ${e?.status || 'N/A'}, code: ${e?.code || 'N/A'}, requestId: ${e?.requestId || 'N/A'}, message:`, e?.message || e);
         // Se falhar, assume estado vazio (autopay não configurado)
         if (alive) {
           setActive(false);
@@ -403,9 +403,9 @@ export default function AutoPaySection() {
             });
           }
         } catch (tokenizeError) {
-          // CRÍTICO: Só desloga se for erro real de autenticação do APP (AUTH_EXPIRED ou INVALID_TOKEN)
-          // Não desloga por erros Vindi (502/500/401 do fluxo Vindi)
-          if (tokenizeError?.code === "AUTH_EXPIRED" || tokenizeError?.code === "INVALID_TOKEN" || tokenizeError?.code === "SESSION_EXPIRED") {
+          // CRÍTICO: Só desloga se status === 401 do backend (SESSION_EXPIRED)
+          // Não desloga por erros Vindi (502/500/400/422 do fluxo Vindi)
+          if (tokenizeError?.code === "SESSION_EXPIRED" || tokenizeError?.status === 401) {
             handleSessionExpired();
             return;
           }
@@ -413,7 +413,7 @@ export default function AutoPaySection() {
 
           // Mensagem formatada com requestId se disponível
           const errorMessage = formatErrorMessage(tokenizeError);
-          console.error("[autopay] Tokenize error:", tokenizeError);
+          console.error(`[autopay] Tokenize error - status: ${tokenizeError?.status || 'N/A'}, code: ${tokenizeError?.code || 'N/A'}, requestId: ${tokenizeError?.requestId || 'N/A'}, message:`, tokenizeError?.message || tokenizeError);
           alert(errorMessage);
           return;
         }
@@ -462,9 +462,9 @@ export default function AutoPaySection() {
 
         alert("Preferências salvas!");
       } catch (setupError) {
-        // CRÍTICO: Só desloga se for erro real de autenticação do APP (AUTH_EXPIRED ou INVALID_TOKEN)
-        // Não desloga por erros Vindi (502/500/401 do fluxo Vindi)
-        if (setupError?.code === "AUTH_EXPIRED" || setupError?.code === "INVALID_TOKEN" || setupError?.code === "SESSION_EXPIRED") {
+        // CRÍTICO: Só desloga se status === 401 do backend (SESSION_EXPIRED)
+        // Não desloga por erros Vindi (502/500/400/422 do fluxo Vindi)
+        if (setupError?.code === "SESSION_EXPIRED" || setupError?.status === 401) {
           handleSessionExpired();
           return;
         }
@@ -488,6 +488,7 @@ export default function AutoPaySection() {
         
         // Mensagem formatada com requestId se disponível
         const errorMessage = formatErrorMessage(setupError);
+        console.error(`[autopay] Setup error - status: ${setupError?.status || 'N/A'}, code: ${setupError?.code || 'N/A'}, requestId: ${setupError?.requestId || 'N/A'}, message:`, setupError?.message || setupError);
         alert(errorMessage);
         return;
       }
@@ -526,23 +527,23 @@ export default function AutoPaySection() {
           setSavedDoc(status.doc_number);
         }
       } catch (e) {
-        // CRÍTICO: Só desloga se for erro real de autenticação do APP (AUTH_EXPIRED ou INVALID_TOKEN)
-        // Não desloga por erros Vindi (502/500/401 do fluxo Vindi)
-        if (e?.code === "AUTH_EXPIRED" || e?.code === "INVALID_TOKEN" || e?.code === "SESSION_EXPIRED") {
+        // CRÍTICO: Só desloga se status === 401 do backend (SESSION_EXPIRED)
+        // Não desloga por erros Vindi (502/500/400/422 do fluxo Vindi)
+        if (e?.code === "SESSION_EXPIRED" || e?.status === 401) {
           handleSessionExpired();
           return;
         }
-        console.warn("[autopay] refresh status error:", e);
+        console.warn(`[autopay] refresh status error - status: ${e?.status || 'N/A'}, code: ${e?.code || 'N/A'}, requestId: ${e?.requestId || 'N/A'}, message:`, e?.message || e);
       }
     } catch (e) {
-      // CRÍTICO: Só desloga se for erro real de autenticação do APP (AUTH_EXPIRED ou INVALID_TOKEN)
-      // Não desloga por erros Vindi (502/500/401 do fluxo Vindi)
-      if (e?.code === "AUTH_EXPIRED" || e?.code === "INVALID_TOKEN" || e?.code === "SESSION_EXPIRED") {
+      // CRÍTICO: Só desloga se status === 401 do backend (SESSION_EXPIRED)
+      // Não desloga por erros Vindi (502/500/400/422 do fluxo Vindi)
+      if (e?.code === "SESSION_EXPIRED" || e?.status === 401) {
         handleSessionExpired();
         return;
       }
       if (handleVindiFriendlyError(e)) return;
-      console.error("[autopay] save error:", e?.message || e);
+      console.error(`[autopay] save error - status: ${e?.status || 'N/A'}, code: ${e?.code || 'N/A'}, requestId: ${e?.requestId || 'N/A'}, message:`, e?.message || e);
       // Mensagem formatada com requestId se disponível
       const errorMsg = formatErrorMessage(e);
       alert(errorMsg);
@@ -592,12 +593,15 @@ export default function AutoPaySection() {
         const errorCode = j?.code || null;
         const errorMsg = j?.error || j?.message || "cancel_failed";
         
-        // CRÍTICO: Só desloga se for erro real de autenticação do APP (AUTH_EXPIRED ou INVALID_TOKEN)
-        // Não desloga por erros Vindi (502/500/401 do fluxo Vindi)
-        if (r.status === 401 && (errorCode === "AUTH_EXPIRED" || errorCode === "INVALID_TOKEN" || errorCode === "SESSION_EXPIRED")) {
+        // CRÍTICO: Só desloga se status === 401 do backend (SESSION_EXPIRED)
+        // Não desloga por erros Vindi (502/500/400/422 do fluxo Vindi)
+        if (r.status === 401) {
           handleSessionExpired();
           return;
         }
+        
+        // Log útil para debug
+        console.error(`[autopay] Cancel error - status: ${r.status}, code: ${errorCode || 'N/A'}, requestId: ${requestId || 'N/A'}, message:`, errorMsg);
         
         throw new Error(errorMsg);
       }
