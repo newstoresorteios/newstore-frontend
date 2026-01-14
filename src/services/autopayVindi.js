@@ -176,24 +176,19 @@ export async function tokenizeCardWithVindi({
 
   // Log não sensível para debug (nunca logar PAN completo, CVV ou dados sensíveis)
   const url = apiJoin("/api/autopay/vindi/tokenize");
-  if (requestId) {
-    console.log(`[autopay] Tokenize - requestId: ${requestId}, route: ${url}`);
-  }
-  if (process.env.NODE_ENV === 'development') {
-    console.debug("[autopay] Tokenizando cartão - chamando BACKEND:", {
-      requestId: requestId || "não fornecido",
-      url,
-      bin: num.slice(0, 6), // Apenas 6 primeiros dígitos (BIN), nunca o cartão completo
-      detectedBrandCode: brandCode || "não detectada",
-      payment_company_code: brandCode && SUPPORTED_BRANDS.has(brandCode) ? brandCode : "não enviado",
-      last4: num.slice(-4),
-      card_expiration: `${mm}/${yyyy}`,
-      holder_name_length: holder.length,
-      has_document: !!doc,
-      has_authorization: !!authHeaders().Authorization,
-      payload_keys: Object.keys(payload),
-    });
-  }
+  
+  // Payload mascarado para logs (sem dados sensíveis)
+  const maskedPayload = {
+    bin: num.slice(0, 6), // Apenas 6 primeiros dígitos (BIN)
+    last4: num.slice(-4),
+    detectedBrandCode: brandCode || "não detectada",
+    payment_company_code: brandCode && SUPPORTED_BRANDS.has(brandCode) ? brandCode : "não enviado",
+    card_expiration: `${mm}/${yyyy}`,
+    holder_name_length: holder.length,
+    has_document: !!doc,
+    payload_keys: Object.keys(payload),
+  };
+  console.log(`[autopay] Tokenize (etapa: tokenizar cartão) - requestId: ${requestId || 'N/A'}, route: ${url}, payload:`, maskedPayload);
 
   const headers = {
     "Content-Type": "application/json",
@@ -384,14 +379,15 @@ export async function tokenizeCardWithVindi({
 
 /**
  * Configura o autopay no backend usando payment_profile_id (modo novo) ou gateway_token (fallback).
+ * Separa dados internos do autopay (holderName/docNumber/números/active) de dados da Vindi (gatewayToken/paymentProfileId).
  * @param {Object} params
  * @param {string|number} [params.paymentProfileId] - payment_profile_id (modo novo)
  * @param {string|number} [params.payment_profile_id] - payment_profile_id (modo novo, snake_case)
  * @param {string} [params.gatewayToken] - Token retornado pela Vindi (modo antigo / fallback)
- * @param {string} params.holderName - Nome do titular
- * @param {string} params.docNumber - CPF/CNPJ do titular
- * @param {number[]} params.numbers - Array de números cativos
- * @param {boolean} params.active - Status ativo/inativo do autopay
+ * @param {string} [params.holderName] - Nome do titular (metadata interna, não enviado para Vindi)
+ * @param {string} [params.docNumber] - CPF/CNPJ do titular (metadata interna, não enviado para Vindi)
+ * @param {number[]} params.numbers - Array de números cativos (config do autopay)
+ * @param {boolean} params.active - Status ativo/inativo do autopay (config do autopay)
  * @param {string} [params.requestId] - Request ID para rastreamento (opcional)
  * @returns {Promise<Object>} Resposta do backend (pode incluir card.last4, card.brand, etc.)
  */
@@ -405,42 +401,50 @@ export async function setupAutopayVindi({
   active,
   requestId,
 }) {
-  // Constrói o body convertendo camelCase para snake_case
+  // Constrói o body separando dados internos dos dados da Vindi
   const body = {};
   
-  // holder_name só é obrigatório quando tem gateway_token (atualizando cartão)
-  if (holderName) {
-    body.holder_name = String(holderName || "").trim();
+  // Config do autopay (dados internos para o backend/DB)
+  if (typeof active === "boolean") {
+    body.active = active;
   }
-
-  // Modo novo: envia payment_profile_id (preferencial).
-  const ppId = payment_profile_id ?? paymentProfileId;
-  if (ppId) {
-    body.payment_profile_id = ppId;
-  } else if (gatewayToken) {
-    // Fallback (modo antigo): envia gateway_token
-    body.gateway_token = String(gatewayToken);
-  }
-
-  // Adiciona doc_number se fornecido
-  if (docNumber) {
-    body.doc_number = String(docNumber).replace(/\D+/g, "");
-  }
-
-  // Adiciona numbers (array de inteiros)
+  
   if (Array.isArray(numbers)) {
     body.numbers = numbers.map((n) => Number(n)).filter(Number.isFinite);
   }
 
-  // Adiciona active (boolean)
-  if (typeof active === "boolean") {
-    body.active = active;
+  // Dados da Vindi (quando houver alteração de cartão)
+  const ppId = payment_profile_id ?? paymentProfileId;
+  if (ppId) {
+    body.payment_profile_id = ppId;
+  } else if (gatewayToken) {
+    body.gateway_token = String(gatewayToken);
+  }
+
+  // Metadata interna do perfil (NÃO deve ser repassado para Vindi como body de /payment_profiles)
+  // Backend usa isso apenas para armazenar no DB, não para criar/atualizar payment_profile na Vindi
+  const profileMetadata = {};
+  if (holderName) {
+    profileMetadata.holder_name = String(holderName || "").trim();
+  }
+  if (docNumber) {
+    profileMetadata.doc_number = String(docNumber).replace(/\D+/g, "");
+  }
+  if (Object.keys(profileMetadata).length > 0) {
+    body.profile_metadata = profileMetadata;
   }
 
   const url = apiJoin("/api/autopay/vindi/setup");
-  if (requestId) {
-    console.log(`[autopay] Setup - requestId: ${requestId}, route: ${url}`);
-  }
+  
+  // Log com requestId, etapa e payload mascarado (sem dados sensíveis)
+  const maskedPayload = {
+    active: body.active,
+    numbers_count: body.numbers?.length || 0,
+    has_payment_profile_id: !!body.payment_profile_id,
+    has_gateway_token: !!body.gateway_token,
+    has_profile_metadata: !!body.profile_metadata,
+  };
+  console.log(`[autopay] Setup (etapa: config autopay) - requestId: ${requestId || 'N/A'}, route: ${url}, payload:`, maskedPayload);
   const response = await fetch(url, {
     method: "POST",
     headers: {
