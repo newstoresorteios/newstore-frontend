@@ -415,13 +415,25 @@ export default function AutoPaySection() {
 
       // Sempre chama setupAutopayVindi para persistir preferências
       // Se não houver gatewayToken mas houver mudanças, tenta salvar mesmo assim
+      
+      // Validação no front antes de chamar backend
+      const cleanedHolderName = holderName?.trim() || "";
+      const cleanedDocNumber = doc ? String(doc).replace(/\D+/g, "") : "";
+      
+      if (!cleanedHolderName || cleanedHolderName.length === 0) {
+        alert("Nome do titular é obrigatório. Por favor, informe o nome impresso no cartão.");
+        setSaving(false);
+        return;
+      }
+      
+      if (!cleanedDocNumber || (cleanedDocNumber.length !== 11 && cleanedDocNumber.length !== 14)) {
+        alert("CPF/CNPJ é obrigatório. Informe um CPF (11 dígitos) ou CNPJ (14 dígitos).");
+        setSaving(false);
+        return;
+      }
+      
       try {
-        // Inline: substitui cleanHolderName e cleanDocNumber para evitar TDZ
-        const cleanedHolderName = holderName?.trim() || undefined;
-        const cleanedDocNumber = doc ? String(doc).replace(/\D+/g, "") : undefined;
-        
         const requestId = createRequestId();
-        console.log(`[autopay] Setup - requestId: ${requestId}, route: /api/autopay/vindi/setup`);
         const result = await setupAutopayVindi({
           paymentProfileId: paymentProfileId || undefined, // modo novo
           gatewayToken: gatewayToken || undefined, // fallback modo antigo

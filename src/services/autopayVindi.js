@@ -401,7 +401,7 @@ export async function setupAutopayVindi({
   active,
   requestId,
 }) {
-  // Constrói o body separando dados internos dos dados da Vindi
+  // Constrói o body conforme esperado pelo backend
   const body = {};
   
   // Config do autopay (dados internos para o backend/DB)
@@ -413,6 +413,14 @@ export async function setupAutopayVindi({
     body.numbers = numbers.map((n) => Number(n)).filter(Number.isFinite);
   }
 
+  // holder_name e doc_number são obrigatórios (dados do perfil para o backend/DB)
+  if (holderName) {
+    body.holder_name = String(holderName || "").trim();
+  }
+  if (docNumber) {
+    body.doc_number = String(docNumber).replace(/\D+/g, "");
+  }
+
   // Dados da Vindi (quando houver alteração de cartão)
   const ppId = payment_profile_id ?? paymentProfileId;
   if (ppId) {
@@ -421,28 +429,30 @@ export async function setupAutopayVindi({
     body.gateway_token = String(gatewayToken);
   }
 
-  // Metadata interna do perfil (NÃO deve ser repassado para Vindi como body de /payment_profiles)
-  // Backend usa isso apenas para armazenar no DB, não para criar/atualizar payment_profile na Vindi
-  const profileMetadata = {};
-  if (holderName) {
-    profileMetadata.holder_name = String(holderName || "").trim();
-  }
-  if (docNumber) {
-    profileMetadata.doc_number = String(docNumber).replace(/\D+/g, "");
-  }
-  if (Object.keys(profileMetadata).length > 0) {
-    body.profile_metadata = profileMetadata;
-  }
-
   const url = apiJoin("/api/autopay/vindi/setup");
   
-  // Log com requestId, etapa e payload mascarado (sem dados sensíveis)
+  // Função auxiliar para mascarar doc_number nos logs (ex.: 830******91)
+  const maskDocNumber = (doc) => {
+    if (!doc || doc.length < 4) return doc;
+    const digits = String(doc).replace(/\D+/g, "");
+    if (digits.length === 11) {
+      // CPF: 830******91
+      return `${digits.slice(0, 3)}${'*'.repeat(5)}${digits.slice(-2)}`;
+    } else if (digits.length === 14) {
+      // CNPJ: 12******0001
+      return `${digits.slice(0, 2)}${'*'.repeat(6)}${digits.slice(-4)}`;
+    }
+    return `${digits.slice(0, 2)}${'*'.repeat(Math.max(0, digits.length - 4))}${digits.slice(-2)}`;
+  };
+  
+  // Log com requestId, etapa e payload mascarado (doc_number mascarado)
   const maskedPayload = {
     active: body.active,
     numbers_count: body.numbers?.length || 0,
+    holder_name: body.holder_name ? `${body.holder_name.slice(0, 3)}...` : undefined,
+    doc_number: body.doc_number ? maskDocNumber(body.doc_number) : undefined,
     has_payment_profile_id: !!body.payment_profile_id,
     has_gateway_token: !!body.gateway_token,
-    has_profile_metadata: !!body.profile_metadata,
   };
   console.log(`[autopay] Setup (etapa: config autopay) - requestId: ${requestId || 'N/A'}, route: ${url}, payload:`, maskedPayload);
   const response = await fetch(url, {
