@@ -22,6 +22,7 @@ import {
   tokenizeCardWithVindi,
   setupAutopayVindi,
   getAutopayVindiStatus,
+  getAutopayClaimedNumbers,
 } from "./services/autopayVindi";
 
 const apiJoin = (p) => {
@@ -132,6 +133,7 @@ export default function AutoPaySection() {
   const [saving, setSaving] = React.useState(false);
   const redirectingToLoginRef = React.useRef(false);
   const hasHydratedNumbersRef = React.useRef(false);
+  const hasHydratedClaimedRef = React.useRef(false);
 
   const handleSessionExpired = React.useCallback(() => {
     if (redirectingToLoginRef.current) return;
@@ -182,6 +184,12 @@ export default function AutoPaySection() {
   const [numbers, setNumbers] = React.useState([]);
   const [savedNumbers, setSavedNumbers] = React.useState([]);
 
+  // claimed global
+  const [claimedMap, setClaimedMap] = React.useState({});
+  const [claimedNumbers, setClaimedNumbers] = React.useState([]);
+  const [claimedLoading, setClaimedLoading] = React.useState(false);
+  const [myUserId, setMyUserId] = React.useState(null);
+
   const [card, setCard] = React.useState({
     brand: null,
     last4: null,
@@ -231,97 +239,184 @@ export default function AutoPaySection() {
     return null; // Pode salvar
   }, [loading, saving, needsAtLeastOne, anyDirty]);
 
+  const loadStatus = React.useCallback(async () => {
+    try {
+      setLoading(true);
+      const requestId = createRequestId();
+      console.log(
+        `[autopay] GET status - requestId: ${requestId}, route: /api/autopay/vindi/status`
+      );
+      const j = await getAutopayVindiStatus({ requestId });
+      if (j) {
+        const rawNumbers =
+          j?.numbers ??
+          j?.autopay_numbers ??
+          j?.captive_numbers ??
+          j?.saved_numbers ??
+          null;
+        const gotNumbers = normalizeNumbers(rawNumbers);
+
+        // Logs úteis (sem dados sensíveis)
+        console.log("[autopay] status payload keys:", Object.keys(j || {}));
+        console.log("[autopay] numbers(raw):", rawNumbers);
+        console.log("[autopay] numbers(normalized):", gotNumbers);
+
+        setActive(!!j.active);
+        setSavedActive(!!j.active);
+        if (!hasHydratedNumbersRef.current || gotNumbers.length > 0) {
+          setNumbers(gotNumbers);
+          setSavedNumbers(gotNumbers);
+          hasHydratedNumbersRef.current = true;
+        }
+        setCard({
+          brand: j.card?.brand || j.brand || null,
+          last4: j.card?.last4 || j.last4 || null,
+          has_card: !!(j.card?.last4 || j.last4 || j.card?.has_card || j.has_card),
+        });
+        if (j.holder_name || j.card?.holder_name) {
+          const h = j.holder_name || j.card?.holder_name || "";
+          setHolder(h);
+          setSavedHolder(h);
+        }
+        if (j.doc_number) {
+          setDoc(j.doc_number);
+          setSavedDoc(j.doc_number);
+        }
+      }
+    } catch (e) {
+      const authExpiredCodes = [
+        "AUTH_EXPIRED",
+        "JWT_EXPIRED",
+        "SESSION_EXPIRED",
+        "TOKEN_EXPIRED",
+        "INVALID_TOKEN",
+        "UNAUTHORIZED",
+      ];
+      const isAuthExpired =
+        e?.code && authExpiredCodes.includes(String(e.code).toUpperCase());
+      if (isAuthExpired) {
+        handleSessionExpired();
+        return;
+      }
+      console.error(
+        `[autopay] GET error - status: ${e?.status || "N/A"}, code: ${e?.code || "N/A"}, requestId: ${e?.requestId || "N/A"}, message:`,
+        e?.message || e
+      );
+      if (!hasHydratedNumbersRef.current) {
+        setActive(false);
+        setSavedActive(false);
+        setNumbers([]);
+        setSavedNumbers([]);
+        setCard({ brand: null, last4: null, has_card: false });
+        hasHydratedNumbersRef.current = true;
+      }
+    } finally {
+      setLoading(false);
+    }
+  }, [handleSessionExpired]);
+
+  const loadClaimed = React.useCallback(async () => {
+    setClaimedLoading(true);
+    try {
+      const requestId = createRequestId();
+      const res = await getAutopayClaimedNumbers({ requestId });
+      const byNumber = res?.byNumber && typeof res.byNumber === "object" ? res.byNumber : {};
+      const gotClaimedNumbers = Array.isArray(res?.claimedNumbers)
+        ? normalizeNumbers(res.claimedNumbers)
+        : normalizeNumbers(Object.keys(byNumber || {}));
+
+      // Hidratação estável (não pisar em claimed já carregado com vazio por falha momentânea)
+      if (!hasHydratedClaimedRef.current || gotClaimedNumbers.length > 0) {
+        setClaimedMap(byNumber || {});
+        setClaimedNumbers(gotClaimedNumbers);
+        hasHydratedClaimedRef.current = true;
+      }
+    } catch (e) {
+      const authExpiredCodes = [
+        "AUTH_EXPIRED",
+        "JWT_EXPIRED",
+        "SESSION_EXPIRED",
+        "TOKEN_EXPIRED",
+        "INVALID_TOKEN",
+        "UNAUTHORIZED",
+      ];
+      const isAuthExpired =
+        e?.code && authExpiredCodes.includes(String(e.code).toUpperCase());
+      if (isAuthExpired) {
+        handleSessionExpired();
+        return;
+      }
+      console.warn(
+        `[autopay] claimed load error - status: ${e?.status || "N/A"}, code: ${e?.code || "N/A"}, requestId: ${e?.requestId || "N/A"}, message:`,
+        e?.message || e
+      );
+      if (!hasHydratedClaimedRef.current) {
+        setClaimedMap({});
+        setClaimedNumbers([]);
+        hasHydratedClaimedRef.current = true;
+      }
+    } finally {
+      setClaimedLoading(false);
+    }
+  }, [handleSessionExpired]);
+
+  React.useEffect(() => {
+    // Best-effort: pega id do usuário para debug/comparações futuras (não bloqueia UI)
+    (async () => {
+      try {
+        const endpoints = ["/api/me", "/me"];
+        for (const ep of endpoints) {
+          const r = await fetch(apiJoin(ep), {
+            method: "GET",
+            headers: { "Content-Type": "application/json", ...authHeaders() },
+            credentials: "include",
+            cache: "no-store",
+          });
+          if (!r.ok) continue;
+          const j = await r.json().catch(() => ({}));
+          const u = j?.user || j;
+          const id = u?.id ?? u?.user_id ?? u?.uid ?? null;
+          if (id != null) {
+            setMyUserId(id);
+            break;
+          }
+        }
+      } catch {}
+    })();
+  }, []);
+
+  // Logs de debug (sem dados sensíveis)
+  React.useEffect(() => {
+    if (myUserId != null) console.log("[autopay] myUserId:", myUserId);
+  }, [myUserId]);
+
+  React.useEffect(() => {
+    if (claimedLoading) console.log("[autopay] loading claimed numbers…");
+  }, [claimedLoading]);
+
   React.useEffect(() => {
     let alive = true;
     (async () => {
-      try {
-        setLoading(true);
-        // Usa o novo endpoint Vindi para buscar status
-        const requestId = createRequestId();
-        console.log(`[autopay] GET status - requestId: ${requestId}, route: /api/autopay/vindi/status`);
-        const j = await getAutopayVindiStatus({ requestId });
-        if (alive && j) {
-          const rawNumbers =
-            j?.numbers ??
-            j?.autopay_numbers ??
-            j?.captive_numbers ??
-            j?.saved_numbers ??
-            null;
-          const gotNumbers = normalizeNumbers(rawNumbers);
-
-          // Logs úteis (sem dados sensíveis)
-          console.log("[autopay] status payload keys:", Object.keys(j || {}));
-          console.log("[autopay] numbers(raw):", rawNumbers);
-          console.log("[autopay] numbers(normalized):", gotNumbers);
-
-          setActive(!!j.active);
-          setSavedActive(!!j.active);
-          // Hidratação estável:
-          // - na primeira carga, pode setar vazio
-          // - depois disso, só sobrescreve se vier não-vazio (evita “zerar” por payload parcial/cache)
-          if (!hasHydratedNumbersRef.current || gotNumbers.length > 0) {
-            setNumbers(gotNumbers);
-            setSavedNumbers(gotNumbers);
-            hasHydratedNumbersRef.current = true;
-          }
-          setCard({
-            brand: j.card?.brand || j.brand || null,
-            last4: j.card?.last4 || j.last4 || null,
-            has_card: !!(j.card?.last4 || j.last4 || j.card?.has_card || j.has_card),
-          });
-          // Só atualiza holder/doc se vierem do backend
-          // Se não vierem, mantém o estado atual (vazio ou já digitado)
-          if (j.holder_name || j.card?.holder_name) {
-            const h = j.holder_name || j.card?.holder_name || "";
-            setHolder(h);
-            setSavedHolder(h);
-          }
-          if (j.doc_number) {
-            setDoc(j.doc_number);
-            setSavedDoc(j.doc_number);
-          }
-        }
-      } catch (e) {
-        // CRÍTICO: Só desloga se code for explicitamente AUTH_EXPIRED, JWT_EXPIRED, SESSION_EXPIRED, etc
-        // Não desloga por qualquer 401 - apenas se for erro de autenticação do app
-        const authExpiredCodes = ['AUTH_EXPIRED', 'JWT_EXPIRED', 'SESSION_EXPIRED', 'TOKEN_EXPIRED', 'INVALID_TOKEN', 'UNAUTHORIZED'];
-        const isAuthExpired = e?.code && authExpiredCodes.includes(String(e.code).toUpperCase());
-        if (isAuthExpired) {
-          if (alive) handleSessionExpired();
-          return;
-        }
-        console.error(`[autopay] GET error - status: ${e?.status || 'N/A'}, code: ${e?.code || 'N/A'}, requestId: ${e?.requestId || 'N/A'}, message:`, e?.message || e);
-        // Se falhar:
-        // - antes da primeira hidratação: assume estado vazio
-        // - depois disso: NÃO pisa no estado atual (evita reset por cache/304/payload parcial)
-        if (alive && !hasHydratedNumbersRef.current) {
-          setActive(false);
-          setSavedActive(false);
-          setNumbers([]);
-          setSavedNumbers([]);
-          setCard({ brand: null, last4: null, has_card: false });
-          hasHydratedNumbersRef.current = true;
-          // Não zera holder/doc para não perder dados já digitados
-        }
-      } finally {
-        if (alive) setLoading(false);
-      }
+      // Carrega status + claimed global na inicialização
+      await Promise.allSettled([loadStatus(), loadClaimed()]);
+      if (!alive) return;
     })();
     return () => {
       alive = false;
     };
-  }, [handleSessionExpired]);
+  }, [loadStatus, loadClaimed]);
 
   function toggle(n) {
     const nn = Number(n);
     if (!Number.isFinite(nn)) return;
     const v = Math.trunc(nn);
     if (v < 0 || v > 99) return;
-    setNumbers((prev) =>
-      prev.includes(v)
-        ? prev.filter((x) => x !== v)
-        : [...prev, v].slice(0, 20)
-    );
+    setNumbers((prev) => {
+      const isMine = prev.includes(v);
+      const occupiedByOther = !!claimedMap?.[v] && !isMine;
+      if (occupiedByOther) return prev;
+      return isMine ? prev.filter((x) => x !== v) : [...prev, v].slice(0, 20);
+    });
   }
 
   // Tokenização via backend (endpoint /api/autopay/vindi/tokenize)
@@ -546,6 +641,33 @@ export default function AutoPaySection() {
         }
         if (handleVindiFriendlyError(setupError)) return;
 
+        // Conflito de números ocupados (409)
+        const errCode = String(
+          setupError?.code ||
+            setupError?.payload?.code ||
+            setupError?.payload?.error_code ||
+            ""
+        ).toUpperCase();
+        if (setupError?.status === 409 || errCode === "NUMBERS_ALREADY_TAKEN") {
+          const rawTaken =
+            setupError?.payload?.taken_numbers ??
+            setupError?.payload?.numbers_taken ??
+            setupError?.payload?.taken ??
+            setupError?.details?.taken_numbers ??
+            setupError?.details?.numbers_taken ??
+            null;
+          const taken = normalizeNumbers(rawTaken);
+          if (taken.length > 0) {
+            alert(`Alguns números já estão ocupados: ${taken.map(pad2).join(", ")}`);
+            const takenSet = new Set(taken);
+            setNumbers((prev) => prev.filter((x) => !takenSet.has(x)));
+          } else {
+            alert("Alguns números já estão ocupados. Atualizando a lista…");
+          }
+          await loadClaimed();
+          return;
+        }
+
         // Se o erro for porque gateway_token é obrigatório
         if (
           setupError?.message === "GATEWAY_TOKEN_REQUIRED" ||
@@ -582,62 +704,8 @@ export default function AutoPaySection() {
         return;
       }
 
-      // Recarrega status para garantir sincronização
-      try {
-        const requestId = createRequestId();
-        console.log(`[autopay] Refresh status - requestId: ${requestId}, route: /api/autopay/vindi/status`);
-        const status = await getAutopayVindiStatus({ requestId });
-        if (status.card) {
-          setCard({
-            brand: status.card.brand || null,
-            last4: status.card.last4 || null,
-            has_card: !!(status.card.last4 || status.card.brand),
-          });
-        }
-        const rawNumbers =
-          status?.numbers ??
-          status?.autopay_numbers ??
-          status?.captive_numbers ??
-          status?.saved_numbers ??
-          null;
-        const gotNumbers = normalizeNumbers(rawNumbers);
-
-        // Logs úteis (sem dados sensíveis)
-        console.log("[autopay] status payload keys:", Object.keys(status || {}));
-        console.log("[autopay] numbers(raw):", rawNumbers);
-        console.log("[autopay] numbers(normalized):", gotNumbers);
-
-        // Hidratação estável no refresh pós-save
-        if (!hasHydratedNumbersRef.current || gotNumbers.length > 0) {
-          setNumbers(gotNumbers);
-          setSavedNumbers(gotNumbers);
-          hasHydratedNumbersRef.current = true;
-        }
-        if (typeof status.active === "boolean") {
-          setActive(status.active);
-          setSavedActive(status.active);
-        }
-        // Atualiza holder/doc se vierem do status
-        if (status.holder_name || status.card?.holder_name) {
-          const h = status.holder_name || status.card?.holder_name || "";
-          setHolder(h);
-          setSavedHolder(h);
-        }
-        if (status.doc_number) {
-          setDoc(status.doc_number);
-          setSavedDoc(status.doc_number);
-        }
-      } catch (e) {
-        // CRÍTICO: Só desloga se code for explicitamente AUTH_EXPIRED, JWT_EXPIRED, SESSION_EXPIRED, etc
-        // Não desloga por qualquer 401 - apenas se for erro de autenticação do app
-        const authExpiredCodes = ['AUTH_EXPIRED', 'JWT_EXPIRED', 'SESSION_EXPIRED', 'TOKEN_EXPIRED', 'INVALID_TOKEN', 'UNAUTHORIZED'];
-        const isAuthExpired = e?.code && authExpiredCodes.includes(String(e.code).toUpperCase());
-        if (isAuthExpired) {
-          handleSessionExpired();
-          return;
-        }
-        console.warn(`[autopay] refresh status error - status: ${e?.status || 'N/A'}, code: ${e?.code || 'N/A'}, requestId: ${e?.requestId || 'N/A'}, message:`, e?.message || e);
-      }
+      // Recarrega status + claimed para refletir imediatamente
+      await Promise.allSettled([loadStatus(), loadClaimed()]);
     } catch (e) {
       // CRÍTICO: Só desloga se status === 401 do backend (SESSION_EXPIRED)
       // Não desloga por erros Vindi (502/500/400/422 do fluxo Vindi)
@@ -849,26 +917,39 @@ export default function AutoPaySection() {
         >
           {Array.from({ length: 100 }, (_, i) => i).map((n) => {
             const on = numbers.includes(n);
+            const isClaimed = claimedNumbers.includes(n) || !!claimedMap?.[n];
+            const occupiedByOther = isClaimed && !on;
             return (
-              <Tooltip key={n} title={on ? "Remover" : "Adicionar"} arrow>
+              <Tooltip
+                key={n}
+                title={occupiedByOther ? "Ocupado" : on ? "Remover" : "Adicionar"}
+                arrow
+              >
                 <Chip
                   label={pad2(n)}
-                  onClick={() => toggle(n)}
-                  clickable
+                  onClick={occupiedByOther ? undefined : () => toggle(n)}
+                  clickable={!occupiedByOther}
                   sx={{
                     fontWeight: 800,
                     borderRadius: 999,
-                    border: on
-                      ? "1px solid #9BD1FF"
-                      : "1px solid rgba(255,255,255,.14)",
-                    bgcolor: on
-                      ? "rgba(155,209,255,.15)"
-                      : "rgba(255,255,255,.04)",
-                    color: on ? "#D6EBFF" : "inherit",
+                    cursor: occupiedByOther ? "not-allowed" : "pointer",
+                    border: occupiedByOther
+                      ? "1px solid rgba(255,80,80,.9)"
+                      : on
+                        ? "1px solid #9BD1FF"
+                        : "1px solid rgba(255,255,255,.14)",
+                    bgcolor: occupiedByOther
+                      ? "rgba(255,80,80,.12)"
+                      : on
+                        ? "rgba(155,209,255,.15)"
+                        : "rgba(255,255,255,.04)",
+                    color: occupiedByOther ? "#FFD6D6" : on ? "#D6EBFF" : "inherit",
                     "&:hover": {
-                      bgcolor: on
-                        ? "rgba(155,209,255,.25)"
-                        : "rgba(255,255,255,.08)",
+                      bgcolor: occupiedByOther
+                        ? "rgba(255,80,80,.12)"
+                        : on
+                          ? "rgba(155,209,255,.25)"
+                          : "rgba(255,255,255,.08)",
                     },
                   }}
                 />
