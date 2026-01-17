@@ -263,8 +263,11 @@ export default function AutoPaySection() {
         console.log("[autopay] numbers(raw):", rawNumbers);
         console.log("[autopay] numbers(normalized):", gotNumbers);
 
-        setActive(!!j.active);
-        setSavedActive(!!j.active);
+        // Não sobrescrever active quando o backend não envia o campo
+        if (typeof j.active === "boolean") {
+          setActive(j.active);
+          setSavedActive(j.active);
+        }
         if (!hasHydratedNumbersRef.current || gotNumbers.length > 0) {
           setNumbers(gotNumbers);
           setSavedNumbers(gotNumbers);
@@ -305,8 +308,6 @@ export default function AutoPaySection() {
         e?.message || e
       );
       if (!hasHydratedNumbersRef.current) {
-        setActive(false);
-        setSavedActive(false);
         setNumbers([]);
         setSavedNumbers([]);
         setCard({ brand: null, last4: null, has_card: false });
@@ -518,6 +519,12 @@ export default function AutoPaySection() {
     const holderName = (holder || "").trim();
     const hasSavedCard = !!card.has_card;
     const needsTokenize = cardFieldsDirty || (active && !hasSavedCard);
+    // Opcional: se já escolheu número e tem cartão (ou vai tokenizar agora), ativa por padrão
+    const effectiveActive =
+      !active && numbers.length > 0 && (needsTokenize || hasSavedCard)
+        ? true
+        : active;
+    if (!active && effectiveActive) setActive(true);
 
     // Só exige holder quando realmente precisar tokenizar/ativar sem cartão salvo
     if (needsTokenize && !holderName) {
@@ -609,7 +616,7 @@ export default function AutoPaySection() {
           holderName: cleanedHolderName,
           docNumber: cleanedDocNumber,
           numbers,
-          active,
+          active: effectiveActive,
           requestId,
         });
 
@@ -631,7 +638,7 @@ export default function AutoPaySection() {
 
         // Atualiza estados salvos
         setSavedNumbers([...numbers]);
-        setSavedActive(active);
+        setSavedActive(effectiveActive);
         setSavedHolder(holderName);
         setSavedDoc(doc);
 
@@ -822,6 +829,12 @@ export default function AutoPaySection() {
             />
           </Stack>
         </Stack>
+
+        <Typography variant="body2" sx={{ opacity: 0.8, mt: -1 }}>
+          {active
+            ? 'Autopay ATIVO: números serão cobrados automaticamente em sorteios futuros.'
+            : 'Autopay INATIVO: nenhum número será cobrado automaticamente.'}
+        </Typography>
 
         {/* Texto explicativo */}
         <Typography variant="body2" sx={{ opacity: 0.8, mt: -1 }}>
