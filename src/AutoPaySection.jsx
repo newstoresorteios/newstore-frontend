@@ -25,6 +25,8 @@ import {
   getAutopayClaimedNumbers,
 } from "./services/autopayVindi";
 
+const IS_DEV = process.env.NODE_ENV !== "production";
+
 const apiJoin = (p) => {
   const base =
     process.env.REACT_APP_API_BASE_URL ||
@@ -134,7 +136,6 @@ export default function AutoPaySection() {
   const redirectingToLoginRef = React.useRef(false);
   const hasHydratedNumbersRef = React.useRef(false);
   const hasHydratedClaimedRef = React.useRef(false);
-  const isDev = process.env.NODE_ENV !== "production";
 
   const handleSessionExpired = React.useCallback(() => {
     if (redirectingToLoginRef.current) return;
@@ -386,18 +387,18 @@ export default function AutoPaySection() {
 
   // Logs de debug (sem dados sensíveis)
   React.useEffect(() => {
-    if (isDev && myUserId != null) console.log("[autopay] myUserId:", myUserId);
+    if (IS_DEV && myUserId != null) console.log("[autopay] myUserId:", myUserId);
   }, [myUserId]);
 
   React.useEffect(() => {
-    if (isDev && claimedLoading) console.log("[autopay] loading claimed numbers…");
-  }, [claimedLoading, isDev]);
+    if (IS_DEV && claimedLoading) console.log("[autopay] loading claimed numbers…");
+  }, [claimedLoading]);
 
   React.useEffect(() => {
-    if (!isDev) return;
+    if (!IS_DEV) return;
     console.log("[autopay] claimedNumbers size:", claimedNumbers.length);
     console.log("[autopay] selectedNumbers size:", numbers.length);
-  }, [claimedNumbers.length, numbers.length, isDev]);
+  }, [claimedNumbers.length, numbers.length]);
 
   React.useEffect(() => {
     let alive = true;
