@@ -49,6 +49,44 @@ const authHeaders = _authHeaders || defaultAuthHeaders;
 const pad2 = (n) => String(n).padStart(2, "0");
 const onlyDigits = (s) => String(s || "").replace(/\D+/g, "");
 
+// Normaliza números vindos do backend:
+// - aceita array de numbers, array de strings, array de objetos ({n:xx}), ou string "35,57,98"
+// - retorna sempre number[] (0..99)
+const normalizeNumbers = (raw) => {
+  if (raw == null) return [];
+
+  const out = [];
+  const push = (v) => {
+    const n = typeof v === "number" ? v : Number.parseInt(String(v).trim(), 10);
+    if (!Number.isFinite(n)) return;
+    const nn = Math.trunc(n);
+    if (nn < 0 || nn > 99) return;
+    out.push(nn);
+  };
+
+  if (Array.isArray(raw)) {
+    for (const item of raw) {
+      if (item == null) continue;
+      if (typeof item === "object") {
+        if ("n" in item) push(item.n);
+        else push(item);
+      } else {
+        push(item);
+      }
+    }
+  } else if (typeof raw === "string") {
+    const matches = raw.match(/\d+/g) || [];
+    for (const m of matches) push(m);
+  } else if (typeof raw === "object") {
+    if ("n" in raw) push(raw.n);
+  } else {
+    push(raw);
+  }
+
+  // de-dupe mantendo a ordem
+  return [...new Set(out)];
+};
+
 // Gera um requestId único para rastreamento de requisições
 const createRequestId = () => {
   return `${Date.now()}-${Math.random().toString(36).substring(2, 11)}`;
@@ -196,9 +234,9 @@ export default function AutoPaySection() {
         console.log(`[autopay] GET status - requestId: ${requestId}, route: /api/autopay/vindi/status`);
         const j = await getAutopayVindiStatus({ requestId });
         if (alive && j) {
-          const gotNumbers = Array.isArray(j.numbers)
-            ? j.numbers.map(Number)
-            : [];
+          const gotNumbers = normalizeNumbers(
+            j.numbers ?? j.autopay_numbers ?? j.captive_numbers
+          );
           setActive(!!j.active);
           setSavedActive(!!j.active);
           setNumbers(gotNumbers);
@@ -526,10 +564,10 @@ export default function AutoPaySection() {
             has_card: !!(status.card.last4 || status.card.brand),
           });
         }
-        if (status.numbers) {
-          const gotNumbers = Array.isArray(status.numbers)
-            ? status.numbers.map(Number)
-            : [];
+        const rawNumbers =
+          status?.numbers ?? status?.autopay_numbers ?? status?.captive_numbers;
+        if (rawNumbers != null) {
+          const gotNumbers = normalizeNumbers(rawNumbers);
           setNumbers(gotNumbers);
           setSavedNumbers(gotNumbers);
         }
