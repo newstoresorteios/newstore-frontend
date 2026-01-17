@@ -145,7 +145,7 @@ export default function AutoPaySection() {
       return `${message} (requestId: ${requestId})`;
     }
     return message;
-  }, [handleSessionExpired]);
+  }, []);
 
   const handleVindiFriendlyError = React.useCallback((err) => {
     const code = String(err?.code || "").toLowerCase();
@@ -284,7 +284,7 @@ export default function AutoPaySection() {
     return () => {
       alive = false;
     };
-  }, []);
+  }, [handleSessionExpired]);
 
   function toggle(n) {
     setNumbers((prev) =>
