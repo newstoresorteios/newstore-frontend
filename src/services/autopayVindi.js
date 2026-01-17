@@ -687,18 +687,18 @@ export async function getAutopayVindiStatus({ requestId } = {}) {
 
 /**
  * Busca números cativos (claimed) globalmente (todos os usuários)
- * Endpoint: GET /api/autopay/vindi/claimed-numbers
+ * Endpoint principal (novo): GET /api/autopay/vindi/claimed
+ * Fallback (compat): GET /api/autopay/vindi/claimed-numbers
  *
  * Retorno normalizado:
  * {
- *   claimed: [{ n, user_id, autopay_id }],
- *   byNumber: { [n]: { user_id, autopay_id } },
- *   claimedNumbers: number[]
+ *   claimed_numbers: number[],
+ *   my_numbers: number[]
  * }
  */
 export async function getAutopayClaimedNumbers({ requestId } = {}) {
   // Evita cache/304: sempre força URL única + headers no-cache + fetch no-store
-  let url = apiJoin(`/api/autopay/vindi/claimed-numbers?ts=${Date.now()}`);
+  let url = apiJoin(`/api/autopay/vindi/claimed?ts=${Date.now()}`);
   if (requestId) {
     console.log(`[autopay] GET claimed - requestId: ${requestId}, route: ${url}`);
   }
@@ -719,7 +719,7 @@ export async function getAutopayClaimedNumbers({ requestId } = {}) {
 
   let response = await makeRequest(url);
   if (response.status === 304) {
-    const retryUrl = apiJoin(`/api/autopay/vindi/claimed-numbers?ts=${Date.now()}&retry=1`);
+    const retryUrl = apiJoin(`/api/autopay/vindi/claimed?ts=${Date.now()}&retry=1`);
     console.warn(`[autopay] GET claimed 304 - retrying with ts. route: ${retryUrl}`);
     url = retryUrl;
     response = await makeRequest(url);
@@ -728,7 +728,37 @@ export async function getAutopayClaimedNumbers({ requestId } = {}) {
   if (!response.ok) {
     // Se 404, pode ser que o backend ainda não tenha o endpoint; retorna vazio sem quebrar a UI
     if (response.status === 404) {
-      return { claimed: [], byNumber: {}, claimedNumbers: [] };
+      // fallback para endpoint antigo
+      const fallbackUrl = apiJoin(`/api/autopay/vindi/claimed-numbers?ts=${Date.now()}&fallback=1`);
+      const fallbackResp = await makeRequest(fallbackUrl);
+      if (fallbackResp.ok) {
+        const fj = await fallbackResp.json().catch(() => ({}));
+        const payload = fj ?? {};
+        const list =
+          Array.isArray(payload)
+            ? payload
+            : Array.isArray(payload.claimed)
+              ? payload.claimed
+              : Array.isArray(payload.numbers)
+                ? payload.numbers
+                : Array.isArray(payload.items)
+                  ? payload.items
+                  : [];
+
+        const claimed = [];
+        for (const row of list || []) {
+          if (!row) continue;
+          const n = Number.parseInt(
+            String(row.n ?? row.number ?? row.num ?? row.value ?? "").trim(),
+            10
+          );
+          if (!Number.isFinite(n) || n < 0 || n > 99) continue;
+          claimed.push(Math.trunc(n));
+        }
+        const claimed_numbers = Array.from(new Set(claimed)).sort((a, b) => a - b);
+        return { claimed_numbers, my_numbers: [] };
+      }
+      return { claimed_numbers: [], my_numbers: [] };
     }
 
     let errorBody = null;
@@ -799,41 +829,9 @@ export async function getAutopayClaimedNumbers({ requestId } = {}) {
     });
   }
 
-  const j = await response.json().catch(() => null);
-  const payload = j ?? {};
-
-  // Backend pode retornar:
-  // - { claimed: [...] }
-  // - { numbers: [...] }
-  // - ou direto um array [...]
-  const list =
-    Array.isArray(payload)
-      ? payload
-      : Array.isArray(payload.claimed)
-        ? payload.claimed
-        : Array.isArray(payload.numbers)
-          ? payload.numbers
-          : Array.isArray(payload.items)
-            ? payload.items
-            : [];
-
-  const byNumber = {};
-  const claimed = [];
-  const claimedNumbers = [];
-
-  for (const row of list || []) {
-    if (!row) continue;
-    const n = Number.parseInt(String(row.n ?? row.number ?? row.num ?? row.value ?? "").trim(), 10);
-    if (!Number.isFinite(n) || n < 0 || n > 99) continue;
-    const nn = Math.trunc(n);
-    const user_id = row.user_id ?? row.userId ?? null;
-    const autopay_id = row.autopay_id ?? row.autopayId ?? null;
-    claimed.push({ n: nn, user_id, autopay_id });
-    byNumber[nn] = { user_id, autopay_id };
-    claimedNumbers.push(nn);
-  }
-
-  const uniq = Array.from(new Set(claimedNumbers)).sort((a, b) => a - b);
-  return { claimed, byNumber, claimedNumbers: uniq };
+  const j = await response.json().catch(() => ({}));
+  const claimed_numbers = Array.isArray(j?.claimed_numbers) ? j.claimed_numbers : [];
+  const my_numbers = Array.isArray(j?.my_numbers) ? j.my_numbers : [];
+  return { claimed_numbers, my_numbers };
 }
 

@@ -134,6 +134,7 @@ export default function AutoPaySection() {
   const redirectingToLoginRef = React.useRef(false);
   const hasHydratedNumbersRef = React.useRef(false);
   const hasHydratedClaimedRef = React.useRef(false);
+  const isDev = process.env.NODE_ENV !== "production";
 
   const handleSessionExpired = React.useCallback(() => {
     if (redirectingToLoginRef.current) return;
@@ -185,8 +186,8 @@ export default function AutoPaySection() {
   const [savedNumbers, setSavedNumbers] = React.useState([]);
 
   // claimed global
-  const [claimedMap, setClaimedMap] = React.useState({});
   const [claimedNumbers, setClaimedNumbers] = React.useState([]);
+  const [myNumbersFromServer, setMyNumbersFromServer] = React.useState([]);
   const [claimedLoading, setClaimedLoading] = React.useState(false);
   const [myUserId, setMyUserId] = React.useState(null);
 
@@ -320,15 +321,13 @@ export default function AutoPaySection() {
     try {
       const requestId = createRequestId();
       const res = await getAutopayClaimedNumbers({ requestId });
-      const byNumber = res?.byNumber && typeof res.byNumber === "object" ? res.byNumber : {};
-      const gotClaimedNumbers = Array.isArray(res?.claimedNumbers)
-        ? normalizeNumbers(res.claimedNumbers)
-        : normalizeNumbers(Object.keys(byNumber || {}));
+      const gotClaimedNumbers = normalizeNumbers(res?.claimed_numbers);
+      const gotMyNumbers = normalizeNumbers(res?.my_numbers);
 
       // Hidratação estável (não pisar em claimed já carregado com vazio por falha momentânea)
       if (!hasHydratedClaimedRef.current || gotClaimedNumbers.length > 0) {
-        setClaimedMap(byNumber || {});
         setClaimedNumbers(gotClaimedNumbers);
+        setMyNumbersFromServer(gotMyNumbers);
         hasHydratedClaimedRef.current = true;
       }
     } catch (e) {
@@ -351,8 +350,8 @@ export default function AutoPaySection() {
         e?.message || e
       );
       if (!hasHydratedClaimedRef.current) {
-        setClaimedMap({});
         setClaimedNumbers([]);
+        setMyNumbersFromServer([]);
         hasHydratedClaimedRef.current = true;
       }
     } finally {
@@ -387,12 +386,18 @@ export default function AutoPaySection() {
 
   // Logs de debug (sem dados sensíveis)
   React.useEffect(() => {
-    if (myUserId != null) console.log("[autopay] myUserId:", myUserId);
+    if (isDev && myUserId != null) console.log("[autopay] myUserId:", myUserId);
   }, [myUserId]);
 
   React.useEffect(() => {
-    if (claimedLoading) console.log("[autopay] loading claimed numbers…");
-  }, [claimedLoading]);
+    if (isDev && claimedLoading) console.log("[autopay] loading claimed numbers…");
+  }, [claimedLoading, isDev]);
+
+  React.useEffect(() => {
+    if (!isDev) return;
+    console.log("[autopay] claimedNumbers size:", claimedNumbers.length);
+    console.log("[autopay] selectedNumbers size:", numbers.length);
+  }, [claimedNumbers.length, numbers.length, isDev]);
 
   React.useEffect(() => {
     let alive = true;
@@ -412,8 +417,8 @@ export default function AutoPaySection() {
     const v = Math.trunc(nn);
     if (v < 0 || v > 99) return;
     setNumbers((prev) => {
-      const isMine = prev.includes(v);
-      const occupiedByOther = !!claimedMap?.[v] && !isMine;
+      const isMine = prev.includes(v) || myNumbersFromServer.includes(v);
+      const occupiedByOther = claimedNumbers.includes(v) && !isMine;
       if (occupiedByOther) return prev;
       return isMine ? prev.filter((x) => x !== v) : [...prev, v].slice(0, 20);
     });
@@ -904,6 +909,42 @@ export default function AutoPaySection() {
           Números cativos (clique para selecionar)
         </Typography>
 
+        {/* Legenda (mínima) */}
+        <Stack direction="row" spacing={1} sx={{ flexWrap: "wrap" }}>
+          <Chip
+            size="small"
+            label="Seu cativo"
+            sx={{
+              borderRadius: 999,
+              border: "1px solid #9BD1FF",
+              bgcolor: "rgba(155,209,255,.15)",
+              color: "#D6EBFF",
+              fontWeight: 800,
+            }}
+          />
+          <Chip
+            size="small"
+            label="Ocupado"
+            sx={{
+              borderRadius: 999,
+              border: "1px solid rgba(255,80,80,.9)",
+              bgcolor: "rgba(255,80,80,.12)",
+              color: "#FFD6D6",
+              fontWeight: 800,
+            }}
+          />
+          <Chip
+            size="small"
+            label="Livre"
+            sx={{
+              borderRadius: 999,
+              border: "1px solid rgba(255,255,255,.14)",
+              bgcolor: "rgba(255,255,255,.04)",
+              fontWeight: 800,
+            }}
+          />
+        </Stack>
+
         <Box
           sx={{
             display: "grid",
@@ -916,8 +957,8 @@ export default function AutoPaySection() {
           }}
         >
           {Array.from({ length: 100 }, (_, i) => i).map((n) => {
-            const on = numbers.includes(n);
-            const isClaimed = claimedNumbers.includes(n) || !!claimedMap?.[n];
+            const on = numbers.includes(n) || myNumbersFromServer.includes(n);
+            const isClaimed = claimedNumbers.includes(n);
             const occupiedByOther = isClaimed && !on;
             return (
               <Tooltip
