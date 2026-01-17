@@ -143,7 +143,7 @@ async function fetchJsonLoose(url, options) {
   } catch {
     try {
       const txt = await r.text();
-      const cleaned = String(txt).trim().replace(/^[^\[{]*/, "");
+      const cleaned = String(txt).trim().replace(/^[^{[]*/, "");
       return JSON.parse(cleaned);
     } catch {
       return null;
@@ -173,7 +173,7 @@ async function postIncrementCoupon({ addCents, lastPaymentSyncAt }) {
 
 export default function AccountPage() {
   const navigate = useNavigate();
-  const { selecionados } = React.useContext(SelectionContext);
+  React.useContext(SelectionContext);
   const { logout, user: ctxUser } = useAuth();
 
   const [menuEl, setMenuEl] = React.useState(null);
@@ -182,8 +182,8 @@ export default function AccountPage() {
   const [rows, setRows] = React.useState([]);
 
   // ► saldo composto
-  const [baseCents, setBaseCents] = React.useState(0);   // pode incluir safeUi p/ nunca regredir visualmente
-  const [paidCents, setPaidCents] = React.useState(0);   // soma payments approved (não usado na UI)
+  const [, setBaseCents] = React.useState(0); // pode incluir safeUi p/ nunca regredir visualmente
+  const [, setPaidCents] = React.useState(0); // soma payments approved (não usado na UI)
 
   // Valor oficial vindo do servidor (coupon_value_cents)
   const [officialCents, setOfficialCents] = React.useState(0);
@@ -191,7 +191,6 @@ export default function AccountPage() {
 
   const [cupom, setCupom] = React.useState("CUPOMAQUI");
   const [validade, setValidade] = React.useState("--/--/--");
-  const [syncing, setSyncing] = React.useState(false);
 
   // estado das configurações (apenas admin)
   const [cfgLoading, setCfgLoading] = React.useState(false);
@@ -221,37 +220,6 @@ export default function AccountPage() {
     } catch {}
   }
   React.useEffect(() => { loadClaims(); }, []);
-
-  // Busca uma reserva ativa do usuário para (drawId, number)
-  async function findExistingReservation(drawId, number) {
-    const endpoints = [
-      "/me/reservations?active=1",
-      "/me/reservations",
-      "/reservations/me?active=1",
-      "/reservations/me",
-    ];
-    for (const base of endpoints) {
-      const url = `${base}${base.includes("?") ? "&" : "?"}_=${Date.now()}`;
-      try {
-        const r = await fetch(apiJoin(url), {
-          headers: { "Content-Type": "application/json", ...authHeaders() },
-          credentials: "include",
-          cache: "no-store",
-        });
-        if (!r.ok) continue;
-        const j = await r.json().catch(() => ({}));
-        const list = Array.isArray(j) ? j : (j.reservations || j.items || []);
-        const hit = (list || []).find(x => {
-          const d = Number(x?.draw_id ?? x?.sorteio_id);
-          const ns = Array.isArray(x?.numbers) ? x.numbers.map(n => Number(n)) : [];
-          const nSingle = Number(x?.n ?? x?.number ?? x?.numero);
-          return d === Number(drawId) && (ns.includes(Number(number)) || nSingle === Number(number));
-        });
-        if (hit) return hit.id ?? hit.reservation_id ?? hit.reservationId ?? null;
-      } catch {}
-    }
-    return null;
-  }
 
   // NOVO: busca a ÚLTIMA reserva ATIVA do sorteio, priorizando os números informados
   async function findLatestActiveReservation(drawId, numbersHint) {
@@ -455,7 +423,6 @@ export default function AccountPage() {
   }
 
   const isLoggedIn = !!(user?.email || user?.id);
-  const logoTo = isLoggedIn ? "/conta" : "/";
 
   const doLogout = () => { setMenuEl(null); logout(); navigate("/"); };
   const storedMe = React.useMemo(() => {
