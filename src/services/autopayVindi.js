@@ -571,20 +571,34 @@ export async function tokenizeVindiCard(params) {
  * @returns {Promise<Object>} Status do autopay (active, card.last4, card.brand, etc.)
  */
 export async function getAutopayVindiStatus({ requestId } = {}) {
-  const url = apiJoin("/api/autopay/vindi/status");
+  // Evita cache/304: sempre força URL única + headers no-cache + fetch no-store
+  let url = apiJoin(`/api/autopay/vindi/status?ts=${Date.now()}`);
   if (requestId) {
     console.log(`[autopay] GET status - requestId: ${requestId}, route: ${url}`);
   }
-  const response = await fetch(url, {
+  const makeRequest = async (targetUrl) =>
+    fetch(targetUrl, {
     method: "GET",
     headers: {
       "Content-Type": "application/json",
+      "Cache-Control": "no-cache",
+      Pragma: "no-cache",
       ...authHeaders(),
       // Adiciona X-Request-Id se fornecido para rastreamento
       ...(requestId ? { "X-Request-Id": requestId } : {}),
     },
     credentials: "include",
+    cache: "no-store",
   });
+
+  let response = await makeRequest(url);
+  // Se por algum motivo vier 304, tenta novamente com novo ts
+  if (response.status === 304) {
+    const retryUrl = apiJoin(`/api/autopay/vindi/status?ts=${Date.now()}&retry=1`);
+    console.warn(`[autopay] GET status 304 - retrying with ts. route: ${retryUrl}`);
+    url = retryUrl;
+    response = await makeRequest(url);
+  }
 
   if (!response.ok) {
     // Se 404, pode ser que o autopay não esteja configurado ainda

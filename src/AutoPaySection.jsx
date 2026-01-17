@@ -49,43 +49,49 @@ const authHeaders = _authHeaders || defaultAuthHeaders;
 const pad2 = (n) => String(n).padStart(2, "0");
 const onlyDigits = (s) => String(s || "").replace(/\D+/g, "");
 
-// Normaliza números vindos do backend:
-// - aceita array de numbers, array de strings, array de objetos ({n:xx}), ou string "35,57,98"
-// - retorna sempre number[] (0..99)
-const normalizeNumbers = (raw) => {
-  if (raw == null) return [];
-
+// Normaliza números vindos do backend (defensivo):
+// - aceita number[], string[], rows do Supabase ({n}), objetos comuns ({number},{value},{num}),
+//   string CSV ("35,57,98" ou "35 57 98") e wrapper { data: [...] }
+// - retorna sempre number[] ordenado, sem duplicados, apenas 0..99
+function normalizeNumbers(raw) {
   const out = [];
-  const push = (v) => {
+
+  const add = (v) => {
     const n = typeof v === "number" ? v : Number.parseInt(String(v).trim(), 10);
-    if (!Number.isFinite(n)) return;
-    const nn = Math.trunc(n);
-    if (nn < 0 || nn > 99) return;
-    out.push(nn);
+    if (Number.isFinite(n) && n >= 0 && n <= 99) out.push(Math.trunc(n));
   };
+
+  if (!raw) return [];
+
+  if (typeof raw === "string") {
+    raw
+      .split(/[,;\s]+/g)
+      .map((x) => x.trim())
+      .filter(Boolean)
+      .forEach(add);
+    return Array.from(new Set(out)).sort((a, b) => a - b);
+  }
 
   if (Array.isArray(raw)) {
     for (const item of raw) {
-      if (item == null) continue;
-      if (typeof item === "object") {
-        if ("n" in item) push(item.n);
-        else push(item);
-      } else {
-        push(item);
+      if (typeof item === "number" || typeof item === "string") {
+        add(item);
+      } else if (item && typeof item === "object") {
+        if ("n" in item) add(item.n);
+        else if ("number" in item) add(item.number);
+        else if ("value" in item) add(item.value);
+        else if ("num" in item) add(item.num);
       }
     }
-  } else if (typeof raw === "string") {
-    const matches = raw.match(/\d+/g) || [];
-    for (const m of matches) push(m);
-  } else if (typeof raw === "object") {
-    if ("n" in raw) push(raw.n);
-  } else {
-    push(raw);
+    return Array.from(new Set(out)).sort((a, b) => a - b);
   }
 
-  // de-dupe mantendo a ordem
-  return [...new Set(out)];
-};
+  if (raw && typeof raw === "object") {
+    if (Array.isArray(raw.data)) return normalizeNumbers(raw.data);
+  }
+
+  return [];
+}
 
 // Gera um requestId único para rastreamento de requisições
 const createRequestId = () => {
@@ -125,6 +131,7 @@ export default function AutoPaySection() {
   const [loading, setLoading] = React.useState(true);
   const [saving, setSaving] = React.useState(false);
   const redirectingToLoginRef = React.useRef(false);
+  const hasHydratedNumbersRef = React.useRef(false);
 
   const handleSessionExpired = React.useCallback(() => {
     if (redirectingToLoginRef.current) return;
@@ -234,13 +241,29 @@ export default function AutoPaySection() {
         console.log(`[autopay] GET status - requestId: ${requestId}, route: /api/autopay/vindi/status`);
         const j = await getAutopayVindiStatus({ requestId });
         if (alive && j) {
-          const gotNumbers = normalizeNumbers(
-            j.numbers ?? j.autopay_numbers ?? j.captive_numbers
-          );
+          const rawNumbers =
+            j?.numbers ??
+            j?.autopay_numbers ??
+            j?.captive_numbers ??
+            j?.saved_numbers ??
+            null;
+          const gotNumbers = normalizeNumbers(rawNumbers);
+
+          // Logs úteis (sem dados sensíveis)
+          console.log("[autopay] status payload keys:", Object.keys(j || {}));
+          console.log("[autopay] numbers(raw):", rawNumbers);
+          console.log("[autopay] numbers(normalized):", gotNumbers);
+
           setActive(!!j.active);
           setSavedActive(!!j.active);
-          setNumbers(gotNumbers);
-          setSavedNumbers(gotNumbers);
+          // Hidratação estável:
+          // - na primeira carga, pode setar vazio
+          // - depois disso, só sobrescreve se vier não-vazio (evita “zerar” por payload parcial/cache)
+          if (!hasHydratedNumbersRef.current || gotNumbers.length > 0) {
+            setNumbers(gotNumbers);
+            setSavedNumbers(gotNumbers);
+            hasHydratedNumbersRef.current = true;
+          }
           setCard({
             brand: j.card?.brand || j.brand || null,
             last4: j.card?.last4 || j.last4 || null,
@@ -268,13 +291,16 @@ export default function AutoPaySection() {
           return;
         }
         console.error(`[autopay] GET error - status: ${e?.status || 'N/A'}, code: ${e?.code || 'N/A'}, requestId: ${e?.requestId || 'N/A'}, message:`, e?.message || e);
-        // Se falhar, assume estado vazio (autopay não configurado)
-        if (alive) {
+        // Se falhar:
+        // - antes da primeira hidratação: assume estado vazio
+        // - depois disso: NÃO pisa no estado atual (evita reset por cache/304/payload parcial)
+        if (alive && !hasHydratedNumbersRef.current) {
           setActive(false);
           setSavedActive(false);
           setNumbers([]);
           setSavedNumbers([]);
           setCard({ brand: null, last4: null, has_card: false });
+          hasHydratedNumbersRef.current = true;
           // Não zera holder/doc para não perder dados já digitados
         }
       } finally {
@@ -287,10 +313,14 @@ export default function AutoPaySection() {
   }, [handleSessionExpired]);
 
   function toggle(n) {
+    const nn = Number(n);
+    if (!Number.isFinite(nn)) return;
+    const v = Math.trunc(nn);
+    if (v < 0 || v > 99) return;
     setNumbers((prev) =>
-      prev.includes(n)
-        ? prev.filter((x) => x !== n)
-        : [...prev, n].slice(0, 20)
+      prev.includes(v)
+        ? prev.filter((x) => x !== v)
+        : [...prev, v].slice(0, 20)
     );
   }
 
@@ -565,11 +595,23 @@ export default function AutoPaySection() {
           });
         }
         const rawNumbers =
-          status?.numbers ?? status?.autopay_numbers ?? status?.captive_numbers;
-        if (rawNumbers != null) {
-          const gotNumbers = normalizeNumbers(rawNumbers);
+          status?.numbers ??
+          status?.autopay_numbers ??
+          status?.captive_numbers ??
+          status?.saved_numbers ??
+          null;
+        const gotNumbers = normalizeNumbers(rawNumbers);
+
+        // Logs úteis (sem dados sensíveis)
+        console.log("[autopay] status payload keys:", Object.keys(status || {}));
+        console.log("[autopay] numbers(raw):", rawNumbers);
+        console.log("[autopay] numbers(normalized):", gotNumbers);
+
+        // Hidratação estável no refresh pós-save
+        if (!hasHydratedNumbersRef.current || gotNumbers.length > 0) {
           setNumbers(gotNumbers);
           setSavedNumbers(gotNumbers);
+          hasHydratedNumbersRef.current = true;
         }
         if (typeof status.active === "boolean") {
           setActive(status.active);
@@ -886,3 +928,4 @@ export default function AutoPaySection() {
     </Paper>
   );
 }
+
