@@ -59,13 +59,6 @@ const palette = [
   "#aed581","#90a4ae","#f06292","#9575cd","#4fc3f7","#81c784","#ff8a65",
 ];
 const buyerColor = (idx) => palette[idx % palette.length];
-const esc = (s) =>
-  String(s ?? "")
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#39;");
 
 /* ----- helpers de imagem (logo opcional) ----- */
 async function blobToDataURL(blob) {
@@ -125,7 +118,7 @@ function wrapText(ctx, text, maxWidth) {
 
 export default function AdminOpenDrawBuyers() {
   const navigate = useNavigate();
-  const { logout } = useAuth();
+  useAuth();
 
   const [tab, setTab] = React.useState(0);
   const [loading, setLoading] = React.useState(true);

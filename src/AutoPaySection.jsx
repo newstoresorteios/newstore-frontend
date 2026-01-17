@@ -133,7 +133,7 @@ export default function AutoPaySection() {
     alert("Sessão expirada. Faça login novamente para continuar.");
     // Opcional: redirecionar para login (comentado para não deslogar automaticamente)
     // window.location.assign("/login");
-  }, []);
+  }, [handleSessionExpired]);
   
   // Função auxiliar para formatar mensagem de erro com requestId
   const formatErrorMessage = React.useCallback((err) => {

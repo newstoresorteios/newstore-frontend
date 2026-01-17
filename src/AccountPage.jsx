@@ -422,8 +422,6 @@ export default function AccountPage() {
     if (key) navigator.clipboard.writeText(key).catch(() => {});
   }
 
-  const isLoggedIn = !!(user?.email || user?.id);
-
   const doLogout = () => { setMenuEl(null); logout(); navigate("/"); };
   const storedMe = React.useMemo(() => {
     try { return JSON.parse(localStorage.getItem("me") || "null"); } catch { return null; }

@@ -70,10 +70,6 @@ const theme = createTheme({
 // Helpers
 const pad2 = (n) => n.toString().padStart(2, "0");
 
-// Link externo
-const RESULTADOS_LOTERIAS =
-  "https://asloterias.com.br/todos-resultados-loteria-federal";
-
 // Mocks
 const MOCK_RESERVADOS = [];
 const MOCK_INDISPONIVEIS = [];

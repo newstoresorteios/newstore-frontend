@@ -138,9 +138,6 @@ export async function tokenizeCardWithVindi({
   let yyyy = String(expYear || "");
   if (yyyy.length === 2) {
     yyyy = `20${yyyy}`;
-  } else if (yyyy.length === 4) {
-    // Já está com 4 dígitos, usar como está
-    yyyy = yyyy;
   } else if (yyyy.length > 4) {
     // Se tiver mais de 4 dígitos, pega os últimos 4
     yyyy = yyyy.slice(-4);
