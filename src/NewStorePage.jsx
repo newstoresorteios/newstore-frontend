@@ -272,57 +272,87 @@ export default function NewStorePage({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [API_BASE]);
 
-  // Polling leve de /api/numbers (sem Content-Type p/ não gerar preflight)
+  // Refetch imediato quando um novo sorteio for criado/aberto (admin)
   React.useEffect(() => {
-    let alive = true;
-
-    async function load() {
+    const onDrawChanged = async () => {
       try {
-        const res = await fetch(`${API_BASE}/api/numbers`, {
+        const res = await fetch(`${API_BASE}/api/config`, {
           credentials: "include",
           cache: "no-store",
         });
         if (!res.ok) return;
-        const j = await res.json();
+        const j = await res.json().catch(() => ({}));
+        const did =
+          j?.current_draw_id ?? j?.draw_id ?? j?.current?.id ?? j?.current_draw?.id;
+        if (did != null) setCurrentDrawId(did);
+      } catch {}
+    };
+    window.addEventListener("ns:draw:changed", onDrawChanged);
+    return () => window.removeEventListener("ns:draw:changed", onDrawChanged);
+  }, [API_BASE]);
 
-        const reserv = [];
-        const indis = [];
-        const initials = {};
+  // Polling leve de /api/numbers (sem Content-Type p/ não gerar preflight)
+  const reloadSrvNumbers = React.useCallback(async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/numbers`, {
+        credentials: "include",
+        cache: "no-store",
+      });
+      if (!res.ok) return;
+      const j = await res.json();
 
-        for (const it of j?.numbers || []) {
-          const st = String(it.status || "").toLowerCase();
-          const num = Number(it.n);
-          if (st === "reserved") reserv.push(num);
-          if (st === "taken" || st === "sold") {
-            indis.push(num);
-            // aceita vários nomes de campo para “iniciais”
-            const rawInit =
-              it.initials ||
-              it.owner_initials ||
-              it.ownerInitials ||
-              it.owner ||
-              it.oi;
-            if (rawInit) {
-              initials[num] = String(rawInit).slice(0, 3).toUpperCase();
-            }
-          }
+      const reserv = [];
+      const indis = [];
+      const initials = {};
+
+      for (const it of j?.numbers || []) {
+        const st = String(it.status || "").toLowerCase();
+        const num = Number(it.n);
+        if (st === "reserved") reserv.push(num);
+        if (st === "taken" || st === "sold") {
+          indis.push(num);
+          const rawInit =
+            it.initials ||
+            it.owner_initials ||
+            it.ownerInitials ||
+            it.owner ||
+            it.oi;
+          if (rawInit) initials[num] = String(rawInit).slice(0, 3).toUpperCase();
         }
-        if (!alive) return;
-        setSrvReservados(Array.from(new Set(reserv)));
-        setSrvIndisponiveis(Array.from(new Set(indis)));
-        setSoldInitials(initials);
-      } catch {
-        /* silencioso */
       }
-    }
 
-    load();
-    const id = setInterval(load, 15000);
+      setSrvReservados(Array.from(new Set(reserv)));
+      setSrvIndisponiveis(Array.from(new Set(indis)));
+      setSoldInitials(initials);
+    } catch {
+      /* silencioso */
+    }
+  }, [API_BASE]);
+
+  React.useEffect(() => {
+    let alive = true;
+    (async () => {
+      await reloadSrvNumbers();
+      if (!alive) return;
+    })();
+
+    const id = setInterval(() => {
+      if (!alive) return;
+      reloadSrvNumbers();
+    }, 15000);
+
+    const onReload = () => {
+      if (!alive) return;
+      reloadSrvNumbers();
+    };
+    window.addEventListener("ns:numbers:reload", onReload);
+
     return () => {
       alive = false;
       clearInterval(id);
+      window.removeEventListener("ns:numbers:reload", onReload);
     };
-  }, []);
+  }, [reloadSrvNumbers]);
 
   const reservadosAll = React.useMemo(
     () => Array.from(new Set([...(reservados || []), ...srvReservados])),

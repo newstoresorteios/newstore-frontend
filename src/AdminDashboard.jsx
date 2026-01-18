@@ -243,6 +243,11 @@ export default function AdminDashboard() {
       setCreating(true);
       await postJSON("/admin/dashboard/new", {});
       await loadSummary();
+      // Notifica o frontend para refetch imediato de config/numbers (reservados) sem esperar polling
+      try {
+        window.dispatchEvent(new CustomEvent("ns:draw:changed"));
+        window.dispatchEvent(new CustomEvent("ns:numbers:reload"));
+      } catch {}
     } catch (e) {
       console.error("[AdminDashboard] POST /new failed:", e);
     } finally {

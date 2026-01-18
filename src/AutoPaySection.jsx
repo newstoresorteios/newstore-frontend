@@ -26,6 +26,7 @@ import {
 } from "./services/autopayVindi";
 
 const IS_DEV = process.env.NODE_ENV !== "production";
+const ADMIN_EMAIL = "admin@newstore.com.br";
 
 const apiJoin = (p) => {
   const base =
@@ -191,6 +192,9 @@ export default function AutoPaySection() {
   const [myNumbersFromServer, setMyNumbersFromServer] = React.useState([]);
   const [claimedLoading, setClaimedLoading] = React.useState(false);
   const [myUserId, setMyUserId] = React.useState(null);
+  const [isAdmin, setIsAdmin] = React.useState(false);
+  const [runLoading, setRunLoading] = React.useState(false);
+  const [runMsg, setRunMsg] = React.useState("");
 
   const [card, setCard] = React.useState({
     brand: null,
@@ -379,6 +383,7 @@ export default function AutoPaySection() {
           const id = u?.id ?? u?.user_id ?? u?.uid ?? null;
           if (id != null) {
             setMyUserId(id);
+            setIsAdmin(!!u?.is_admin || String(u?.email || "").toLowerCase() === ADMIN_EMAIL);
             break;
           }
         }
@@ -400,6 +405,66 @@ export default function AutoPaySection() {
     console.log("[autopay] claimedNumbers size:", claimedNumbers.length);
     console.log("[autopay] selectedNumbers size:", numbers.length);
   }, [claimedNumbers.length, numbers.length]);
+
+  const selectedLabel = React.useMemo(() => {
+    const list = Array.from(new Set((numbers || []).filter((n) => Number.isFinite(Number(n)))))
+      .map((n) => Math.trunc(Number(n)))
+      .filter((n) => n >= 0 && n <= 99)
+      .sort((a, b) => a - b);
+    return list.length ? list.map(pad2).join(", ") : "—";
+  }, [numbers]);
+
+  const runAutopayNow = React.useCallback(async () => {
+    setRunLoading(true);
+    setRunMsg("");
+    const endpoints = [
+      "/api/admin/autopay/run",
+      "/api/admin/autopay/runner",
+      "/api/admin/dashboard/run-autopay",
+      "/api/admin/dashboard/autopay/run",
+      // fallback (se o backend só disparar runner ao criar sorteio)
+      "/api/admin/dashboard/new",
+    ];
+
+    try {
+      const requestId = createRequestId();
+      for (const ep of endpoints) {
+        try {
+          const r = await fetch(apiJoin(ep), {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Request-Id": requestId,
+              ...authHeaders(),
+            },
+            credentials: "include",
+            cache: "no-store",
+            body: JSON.stringify({}),
+          });
+          if (!r.ok) continue;
+          const j = await r.json().catch(() => ({}));
+          const trace =
+            j?.runTraceId ||
+            j?.run_trace_id ||
+            j?.traceId ||
+            j?.requestId ||
+            j?.request_id ||
+            requestId;
+          setRunMsg(`OK (trace: ${trace})`);
+          try {
+            window.dispatchEvent(new CustomEvent("ns:numbers:reload"));
+            window.dispatchEvent(new CustomEvent("ns:draw:changed"));
+          } catch {}
+          return;
+        } catch {
+          // tenta próximo
+        }
+      }
+      setRunMsg("Falha ao rodar agora (endpoint não encontrado ou sem permissão).");
+    } finally {
+      setRunLoading(false);
+    }
+  }, []);
 
   React.useEffect(() => {
     let alive = true;
@@ -836,6 +901,18 @@ export default function AutoPaySection() {
             : 'Autopay INATIVO: nenhum número será cobrado automaticamente.'}
         </Typography>
 
+        <Stack direction={{ xs: "column", sm: "row" }} spacing={1} sx={{ mt: -1 }}>
+          <Chip
+            size="small"
+            label="Provider: Vindi"
+            variant="outlined"
+            sx={{ width: "fit-content", fontWeight: 800, opacity: 0.9 }}
+          />
+          <Typography variant="body2" sx={{ opacity: 0.8 }}>
+            Números escolhidos: <b>{selectedLabel}</b>
+          </Typography>
+        </Stack>
+
         {/* Texto explicativo */}
         <Typography variant="body2" sx={{ opacity: 0.8, mt: -1 }}>
           Cadastre seu cartão e escolha números "cativos". Quando um novo sorteio
@@ -1056,10 +1133,36 @@ export default function AutoPaySection() {
               disabled={!canSave}
               title={saveBlockedReason || undefined}
             >
-              {saving ? "Salvando…" : "Salvar preferências"}
+              {saving ? "Salvando…" : "Atualizar/Salvar Autopay"}
             </Button>
           </Stack>
         </Stack>
+
+        {isAdmin && (
+          <>
+            <Divider />
+            <Stack spacing={1}>
+              <Typography variant="subtitle2" sx={{ opacity: 0.85 }}>
+                Admin (teste)
+              </Typography>
+              <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
+                <Button
+                  variant="outlined"
+                  onClick={runAutopayNow}
+                  disabled={runLoading}
+                  sx={{ borderRadius: 999 }}
+                >
+                  {runLoading ? "Rodando…" : "Rodar Autopay agora"}
+                </Button>
+                {!!runMsg && (
+                  <Typography variant="body2" sx={{ opacity: 0.85 }}>
+                    {runMsg}
+                  </Typography>
+                )}
+              </Stack>
+            </Stack>
+          </>
+        )}
       </Stack>
     </Paper>
   );
