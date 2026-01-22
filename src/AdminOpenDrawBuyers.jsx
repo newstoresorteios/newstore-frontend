@@ -9,6 +9,7 @@ import {
 import ArrowBackIosNewRoundedIcon from "@mui/icons-material/ArrowBackIosNewRounded";
 import AccountCircleRoundedIcon from "@mui/icons-material/AccountCircleRounded";
 import DownloadRoundedIcon from "@mui/icons-material/DownloadRounded";
+import JSZip from "jszip";
 import logoNewStore from "./Logo-branca-sem-fundo-768x132.png";
 import { useAuth } from "./authContext";
 
@@ -128,6 +129,7 @@ export default function AdminOpenDrawBuyers() {
   const [buyers, setBuyers] = React.useState([]);      // [{user_id, name, email, numbers[], count, total_cents}]
   const [numbers, setNumbers] = React.useState([]);    // [{n, user_id, name, email}]
   const [query, setQuery] = React.useState("");
+  const [exportingListPNG, setExportingListPNG] = React.useState(false);
 
   const load = React.useCallback(async () => {
     setLoading(true);
@@ -320,11 +322,13 @@ const exportPNGListMobile = async () => {
     return;
   }
 
-  const W = 1080, H = 1920;
-  const Mx = 36, My = 48;
-  const gapCol = 24;
+  setExportingListPNG(true);
+  try {
+    const W = 1080, H = 1920;
+    const Mx = 36, My = 48;
+    const gapCol = 24;
 
-  const nowStr = new Date().toLocaleString("pt-BR");
+    const nowStr = new Date().toLocaleString("pt-BR");
 
   // Carrega logo uma vez (opcional)
   let logoImg = null;
@@ -459,7 +463,7 @@ const exportPNGListMobile = async () => {
     const tmpCtx = tmpCanvas.getContext("2d");
 
     const contentTop = drawHeader(tmpCtx);
-    const contentBottom = H - 80;
+    const contentBottom = H - 110;
 
     const pages = [];
     let placements = [];
@@ -498,8 +502,6 @@ const exportPNGListMobile = async () => {
 
   const pages = buildPages();
   const totalPages = pages.length;
-
-  console.log(`[exportPNGListMobile] buyers=${data.length} pages=${totalPages}`);
 
   const renderPageCanvas = (pageObj, pageIndex) => {
     const canvas = document.createElement("canvas");
@@ -547,47 +549,58 @@ const exportPNGListMobile = async () => {
     return canvas;
   };
 
+  const canvasToBlob = (canvas) =>
+    new Promise((resolve, reject) => {
+      canvas.toBlob((blob) => {
+        if (!blob) return reject(new Error("Falha ao gerar PNG (toBlob retornou null)."));
+        resolve(blob);
+      }, "image/png");
+    });
+
   const downloadBlob = (blob, filename) => {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
     a.download = filename;
+    document.body.appendChild(a);
     a.click();
+    a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 1500);
   };
 
-  const canvasToBlob = (canvas) =>
-    new Promise((resolve) => canvas.toBlob((b) => resolve(b), "image/png"));
+  // DEBUG: garante que realmente paginou
+  console.log("[exportPNGListMobile] buyers=", data.length, "pages=", totalPages);
 
-  // Se só 1 página, baixa PNG direto
-  if (totalPages === 1) {
-    const canvas = renderPageCanvas(pages[0], 0);
-    const blob = await canvasToBlob(canvas);
+  // Caso caiba em 1 página, baixa PNG único (sem zip)
+  if (totalPages <= 1) {
+    const singleCanvas = renderPageCanvas(pages[0], 0);
+    const blob = await canvasToBlob(singleCanvas);
     downloadBlob(blob, `sorteio_${drawId}_lista_1080x1920.png`);
     return;
   }
 
-  // Se múltiplas páginas, baixa ZIP (1 download, sem bloqueio do browser)
-  let JSZipCtor = null;
-  try {
-    JSZipCtor = (await import("jszip")).default;
-  } catch (e) {
-    console.error(e);
-    alert("Para exportar múltiplas páginas, instale a dependência: npm i jszip");
-    return;
-  }
-
-  const zip = new JSZipCtor();
-
+  // Caso tenha múltiplas páginas: gera ZIP (1 download só)
+  const zip = new JSZip();
   for (let p = 0; p < totalPages; p++) {
-    const canvas = renderPageCanvas(pages[p], p);
-    const blob = await canvasToBlob(canvas);
-    const nameInZip = `sorteio_${drawId}_lista_p${p + 1}_1080x1920.png`;
-    zip.file(nameInZip, blob);
+    const pageCanvas = renderPageCanvas(pages[p], p);
+    const blob = await canvasToBlob(pageCanvas);
+    const filename = `sorteio_${drawId}_lista_p${p + 1}_1080x1920.png`;
+    zip.file(filename, blob);
   }
 
-  const zipBlob = await zip.generateAsync({ type: "blob" });
-  downloadBlob(zipBlob, `sorteio_${drawId}_lista_1080x1920.zip`);
+  const zipBlob = await zip.generateAsync({
+    type: "blob",
+    compression: "DEFLATE",
+    compressionOptions: { level: 6 },
+  });
+
+  downloadBlob(zipBlob, `sorteio_${drawId}_lista_pngs_${totalPages}p.zip`);
+  } catch (err) {
+    console.error("[exportPNGListMobile] erro:", err);
+    alert(`Falha ao exportar PNG(s): ${err?.message || err}`);
+  } finally {
+    setExportingListPNG(false);
+  }
 };
 
   return (
@@ -648,8 +661,14 @@ const exportPNGListMobile = async () => {
               <Button startIcon={<DownloadRoundedIcon />} onClick={exportPNGMobile} variant="contained">
                 Exportar PNG (Grade 1080×1920)
               </Button>
-              <Button startIcon={<DownloadRoundedIcon />} onClick={exportPNGListMobile} variant="contained" color="primary">
-                Exportar PNG (Lista 1080×1920)
+              <Button
+                startIcon={<DownloadRoundedIcon />}
+                onClick={exportPNGListMobile}
+                variant="contained"
+                color="primary"
+                disabled={exportingListPNG || loading}
+              >
+                {exportingListPNG ? "Gerando PNGs..." : "Exportar PNG (Lista 1080×1920)"}
               </Button>
             </Stack>
 
