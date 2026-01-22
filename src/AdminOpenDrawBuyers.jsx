@@ -314,29 +314,31 @@ const exportPNGListMobile = async () => {
     return;
   }
 
+  // Se não houver compradores, evita exportar vazio
+  if (!Array.isArray(buyers) || buyers.length === 0) {
+    alert("Não há compradores para exportar.");
+    return;
+  }
+
   const W = 1080, H = 1920;
   const Mx = 36, My = 48;
   const gapCol = 24;
 
   const nowStr = new Date().toLocaleString("pt-BR");
 
-  // Preload logo 1x
+  // Carrega logo uma vez (opcional)
   let logoImg = null;
   try {
     const dataURL = await preloadAsDataURL(logoNewStore);
     const img = new Image();
-    await new Promise((res, rej) => {
-      img.onload = res;
-      img.onerror = rej;
-      img.src = dataURL;
-    });
+    await new Promise((res, rej) => { img.onload = res; img.onerror = rej; img.src = dataURL; });
     logoImg = img;
   } catch {
     logoImg = null;
   }
 
-  // Ordenação por nome/email
-  const dataSorted = [...buyers].sort((a, b) =>
+  // Ordena por nome/email
+  const data = [...buyers].sort((a, b) =>
     String(a.name || a.email || "").localeCompare(
       String(b.name || b.email || ""),
       "pt-BR",
@@ -344,7 +346,12 @@ const exportPNGListMobile = async () => {
     )
   );
 
-  // Calcula os metadados
+  // Canvas de medição para calcular wraps/altura
+  const measureCanvas = document.createElement("canvas");
+  measureCanvas.width = W;
+  measureCanvas.height = H;
+  const mctx = measureCanvas.getContext("2d");
+
   const metaLabels = ["Nº Sorteio", "Vendidos", "Restantes"];
   const metaValues = [
     String(drawId ?? "-"),
@@ -352,88 +359,13 @@ const exportPNGListMobile = async () => {
     String(Math.max(0, remaining ?? (100 - (sold || 0)))),
   ];
 
-  // Conteúdo (topo da área dos cards) — replica seu header atual
-  let headerY = My;
-  headerY += 72 + 12;      // logo
-  headerY += 44 + 14;      // título
-  headerY += 36 + 28 + 18; // metadados
-  const contentTop = headerY;
-
-  // Rodapé fixo
-  const contentBottom = H - 80;
-
-  const colWidth = Math.floor((W - Mx * 2 - gapCol) / 2);
-  const colX = [Mx, Mx + colWidth + gapCol];
-
-  // Canvas de medição (wrap + altura)
-  const measureCanvas = document.createElement("canvas");
-  measureCanvas.width = W;
-  measureCanvas.height = H;
-  const mctx = measureCanvas.getContext("2d");
-
-  const computeCardInfo = (ctx, b) => {
-    const name = String(b.name || b.email || "(sem nome)");
-    const qtd = Number(b.count || (b.numbers?.length ?? 0)) || 0;
-    const numbersList = (b.numbers || []).map(pad2).join(", ");
-
-    // Mesmas fontes do layout atual
-    ctx.font = "800 30px Inter, system-ui, Segoe UI, Roboto, Arial";
-    const nameH = 34;
-
-    ctx.font = "700 24px Inter, system-ui, Segoe UI, Roboto, Arial";
-    const qtdText = `Qtd: ${qtd}`;
-    const qtdH = 26;
-
-    ctx.font = "400 26px Inter, system-ui, Segoe UI, Roboto, Arial";
-    const lines = wrapText(ctx, numbersList || "—", colWidth - 24 - 8);
-    const lineH = 30;
-
-    const cardPad = 12;
-    const cardH = cardPad + nameH + 6 + qtdH + 8 + (lines.length * lineH) + cardPad;
-
-    return { name, qtdText, lines, lineH, nameH, qtdH, cardPad, cardH };
-  };
-
-  // Paginação REAL (2 colunas) -> array de páginas com placements
-  const pages = [];
-  let placements = [];
-  let colY = [contentTop, contentTop];
-
-  for (let i = 0; i < dataSorted.length;) {
-    const b = dataSorted[i];
-    const idx = idToIdx.get(b.user_id) ?? 0;
-    const chip = buyerColor(idx);
-
-    const info = computeCardInfo(mctx, b);
-
-    const k = colY[0] <= colY[1] ? 0 : 1;
-    const x = colX[k];
-    const y = colY[k];
-    const nextY = y + info.cardH + 14;
-
-    // Se não cabe e já tem itens na página => fecha e cria nova
-    if (nextY > contentBottom && placements.length > 0) {
-      pages.push({ placements });
-      placements = [];
-      colY = [contentTop, contentTop];
-      continue; // reprocessa o MESMO buyer na próxima página
-    }
-
-    // Proteção anti-loop: se o card é maior que a área útil e a página está vazia,
-    // ainda assim renderiza (vai estourar um pouco), mas NÃO perde comprador
-    placements.push({ b, idx, chip, info, x, y });
-    colY[k] = nextY;
-    i++;
-  }
-
-  if (placements.length > 0) pages.push({ placements });
-
-  const totalPages = pages.length;
-
-  // Header renderer (mesmo estilo do atual)
+  // Render do header + retorno do contentTop (início da área dos cards)
   const drawHeader = (ctx) => {
     ctx.fillStyle = "#0E0E0E";
     ctx.fillRect(0, 0, W, H);
+
+    ctx.textAlign = "left";
+    ctx.textBaseline = "top";
 
     let y = My;
 
@@ -449,28 +381,31 @@ const exportPNGListMobile = async () => {
     // Título
     ctx.fillStyle = "#FFFFFF";
     ctx.font = "900 44px Inter, system-ui, Segoe UI, Roboto, Arial";
-    ctx.textBaseline = "top";
     ctx.fillText("Sorteio Ativo — Lista de Compradores", Mx, y);
     y += 44 + 14;
 
     // Metadados
     const metaGap = 24;
     const colW = 280;
-
     for (let i = 0; i < 3; i++) {
-      const xx = Mx + i * (colW + metaGap);
+      const x = Mx + i * (colW + metaGap);
 
       ctx.globalAlpha = 0.75;
       ctx.font = "700 24px Inter, system-ui, Segoe UI, Roboto, Arial";
-      ctx.fillText(metaLabels[i], xx, y);
+      ctx.fillText(metaLabels[i], x, y);
 
       ctx.globalAlpha = 1;
       ctx.font = "900 36px Inter, system-ui, Segoe UI, Roboto, Arial";
-      ctx.fillText(metaValues[i], xx, y + 28);
+      ctx.fillText(metaValues[i], x, y + 28);
     }
+
+    y += 36 + 28 + 18;
+    ctx.globalAlpha = 1;
+
+    return y; // contentTop
   };
 
-  const drawFooter = (ctx, pageIndex) => {
+  const drawFooter = (ctx, pageIndex, totalPages) => {
     const footY = H - 48;
 
     ctx.globalAlpha = 0.85;
@@ -490,18 +425,96 @@ const exportPNGListMobile = async () => {
     ctx.globalAlpha = 1;
   };
 
-  const renderPage = (pageObj, pageIndex) => {
+  const colWidth = Math.floor((W - Mx * 2 - gapCol) / 2);
+  const colX = [Mx, Mx + colWidth + gapCol];
+
+  // Card sizing (mesma tipografia do atual)
+  const computeCardInfo = (ctx, b) => {
+    const name = String(b.name || b.email || "(sem nome)");
+    const qtd = Number(b.count || (b.numbers?.length ?? 0)) || 0;
+    const numbersList = (b.numbers || []).map(pad2).join(", ");
+
+    ctx.font = "800 30px Inter, system-ui, Segoe UI, Roboto, Arial";
+    const nameH = 34;
+
+    ctx.font = "700 24px Inter, system-ui, Segoe UI, Roboto, Arial";
+    const qtdText = `Qtd: ${qtd}`;
+    const qtdH = 26;
+
+    ctx.font = "400 26px Inter, system-ui, Segoe UI, Roboto, Arial";
+    const lines = wrapText(ctx, numbersList || "—", colWidth - 24 - 8);
+    const lineH = 30;
+
+    const cardPad = 12;
+    const cardH = cardPad + nameH + 6 + qtdH + 8 + (lines.length * lineH) + cardPad;
+
+    return { name, qtdText, lines, lineH, nameH, qtdH, cardPad, cardH };
+  };
+
+  // Paginação real em 2 colunas (NUNCA descarta comprador)
+  const buildPages = () => {
+    const tmpCanvas = document.createElement("canvas");
+    tmpCanvas.width = W;
+    tmpCanvas.height = H;
+    const tmpCtx = tmpCanvas.getContext("2d");
+
+    const contentTop = drawHeader(tmpCtx);
+    const contentBottom = H - 80;
+
+    const pages = [];
+    let placements = [];
+    let colY = [contentTop, contentTop];
+
+    for (let i = 0; i < data.length;) {
+      const b = data[i];
+      const idx = idToIdx.get(b.user_id) ?? 0;
+      const chip = buyerColor(idx);
+
+      const info = computeCardInfo(mctx, b);
+
+      const k = colY[0] <= colY[1] ? 0 : 1;
+      const x = colX[k];
+      const y = colY[k];
+      const nextY = y + info.cardH + 14;
+
+      // Se não cabe e já tem itens => fecha página e tenta de novo na próxima
+      if (nextY > contentBottom && placements.length > 0) {
+        pages.push({ placements, contentTop });
+        placements = [];
+        colY = [contentTop, contentTop];
+        continue; // reprocessa o mesmo comprador na página seguinte
+      }
+
+      // Se o card é gigantesco e não cabe nem numa página vazia, ainda assim renderiza (não perde o comprador)
+      placements.push({ idx, chip, info, x, y });
+      colY[k] = nextY;
+      i++;
+    }
+
+    if (placements.length > 0) pages.push({ placements, contentTop });
+
+    return pages;
+  };
+
+  const pages = buildPages();
+  const totalPages = pages.length;
+
+  console.log(`[exportPNGListMobile] buyers=${data.length} pages=${totalPages}`);
+
+  const renderPageCanvas = (pageObj, pageIndex) => {
     const canvas = document.createElement("canvas");
     canvas.width = W;
     canvas.height = H;
     const ctx = canvas.getContext("2d");
 
+    // Header
     drawHeader(ctx);
 
+    // Cards
+    ctx.textAlign = "left";
     ctx.textBaseline = "top";
 
     pageObj.placements.forEach(({ idx, chip, info, x, y }) => {
-      // Card
       fillRounded(ctx, x, y, colWidth, info.cardH, 16, "#141414");
       strokeRounded(ctx, x, y, colWidth, info.cardH, 16, "rgba(255,255,255,0.10)", 2);
 
@@ -512,11 +525,7 @@ const exportPNGListMobile = async () => {
       // Nome
       ctx.fillStyle = "#FFFFFF";
       ctx.font = "800 30px Inter, system-ui, Segoe UI, Roboto, Arial";
-      ctx.fillText(
-        info.name,
-        x + info.cardPad + chipSize + 8,
-        y + info.cardPad
-      );
+      ctx.fillText(info.name, x + info.cardPad + chipSize + 8, y + info.cardPad);
 
       // Qtd
       ctx.fillStyle = "rgba(255,255,255,0.85)";
@@ -532,34 +541,53 @@ const exportPNGListMobile = async () => {
       });
     });
 
-    drawFooter(ctx, pageIndex);
+    // Footer
+    drawFooter(ctx, pageIndex, totalPages);
 
     return canvas;
   };
 
-  const downloadCanvas = (canvas, filename) => {
-    const dataUrl = canvas.toDataURL("image/png");
+  const downloadBlob = (blob, filename) => {
+    const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
-    a.href = dataUrl;
+    a.href = url;
     a.download = filename;
     a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1500);
   };
 
-  // Importante: alguns browsers bloqueiam múltiplos downloads.
-  // Para reduzir chance de bloqueio, dispara com pequeno delay.
-  for (let p = 0; p < totalPages; p++) {
-    const canvas = renderPage(pages[p], p);
+  const canvasToBlob = (canvas) =>
+    new Promise((resolve) => canvas.toBlob((b) => resolve(b), "image/png"));
 
-    const filename =
-      totalPages === 1
-        ? `sorteio_${drawId}_lista_1080x1920.png`
-        : `sorteio_${drawId}_lista_p${p + 1}_1080x1920.png`;
-
-    // delay incremental para não “perder” cliques internos
-    // (mantém a ação sob o gesto do usuário)
-    // eslint-disable-next-line no-loop-func
-    setTimeout(() => downloadCanvas(canvas, filename), p * 250);
+  // Se só 1 página, baixa PNG direto
+  if (totalPages === 1) {
+    const canvas = renderPageCanvas(pages[0], 0);
+    const blob = await canvasToBlob(canvas);
+    downloadBlob(blob, `sorteio_${drawId}_lista_1080x1920.png`);
+    return;
   }
+
+  // Se múltiplas páginas, baixa ZIP (1 download, sem bloqueio do browser)
+  let JSZipCtor = null;
+  try {
+    JSZipCtor = (await import("jszip")).default;
+  } catch (e) {
+    console.error(e);
+    alert("Para exportar múltiplas páginas, instale a dependência: npm i jszip");
+    return;
+  }
+
+  const zip = new JSZipCtor();
+
+  for (let p = 0; p < totalPages; p++) {
+    const canvas = renderPageCanvas(pages[p], p);
+    const blob = await canvasToBlob(canvas);
+    const nameInZip = `sorteio_${drawId}_lista_p${p + 1}_1080x1920.png`;
+    zip.file(nameInZip, blob);
+  }
+
+  const zipBlob = await zip.generateAsync({ type: "blob" });
+  downloadBlob(zipBlob, `sorteio_${drawId}_lista_1080x1920.zip`);
 };
 
   return (
