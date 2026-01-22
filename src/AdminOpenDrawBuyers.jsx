@@ -318,57 +318,37 @@ export default function AdminOpenDrawBuyers() {
     const W = 1080, H = 1920;
     const Mx = 36, My = 48;
 
-    const formatDateTimeBR = (d) => {
-      const dd = pad2(d.getDate());
-      const mm = pad2(d.getMonth() + 1);
-      const yyyy = String(d.getFullYear());
-      const hh = pad2(d.getHours());
-      const mi = pad2(d.getMinutes());
-      const ss = pad2(d.getSeconds());
-      return `${dd}/${mm}/${yyyy} ${hh}:${mi}:${ss}`;
-    };
-
-    const ellipsizeText = (ctx0, text, maxW) => {
-      if (ctx0.measureText(text).width <= maxW) return text;
-      const ell = "…";
-      if (ctx0.measureText(ell).width > maxW) return "";
-      let lo = 0, hi = text.length;
-      while (lo < hi) {
-        const mid = Math.ceil((lo + hi) / 2);
-        const t = text.slice(0, mid) + ell;
-        if (ctx0.measureText(t).width <= maxW) lo = mid;
-        else hi = mid - 1;
-      }
-      return text.slice(0, lo) + ell;
-    };
-
     // Ordena por nome (mantém a mesma ordenação atual)
     const dataSorted = [...buyers].sort((a, b) =>
       String(a.name || a.email || "").localeCompare(String(b.name || b.email || ""), "pt-BR", { sensitivity: "base" })
     );
 
-    // Layout (mesmos valores do código atual)
+    // Layout (monta header igual ao atual e obtém y final do header)
     const gapCol = 24;
-    const contentTop = My + (72 + 12) + (44 + 14) + (36 + 28 + 18);
+    let yFinalHeader = My;
+    yFinalHeader += 72 + 12;   // logo + gap
+    yFinalHeader += 44 + 14;   // título + gap
+    yFinalHeader += 36 + 28 + 18; // metadados (valores) + gap
+    const contentTop = yFinalHeader;
     const contentBottom = H - 80; // reserva para footer
     const colWidth = Math.floor((W - Mx * 2 - gapCol) / 2);
     const colX = [Mx, Mx + colWidth + gapCol];
 
-    // (1) computeCardLayout(ctx, b, colWidth)
-    const computeCardLayout = (ctx0, b, colW0) => {
-      const name = String(b?.name || b?.email || "(sem nome)");
-      const qtd = Number(b?.count || b?.numbers?.length || 0) || 0;
-      const numbersList = (b?.numbers || []).map(pad2).join(", ");
+    // (A) helper: computeCard(ctx, b, colWidth)
+    const computeCard = (ctx, b, colW0) => {
+      const name = String(b.name || b.email || "(sem nome)");
+      const qtd = Number(b.count || (b.numbers?.length ?? 0)) || 0;
+      const numbersList = (b.numbers || []).map(pad2).join(", ");
 
-      // mesmas fontes/medidas do cálculo atual
-      ctx0.font = "800 30px Inter, system-ui, Segoe UI, Roboto, Arial";
+      // configurar ctx.font IGUAL ao atual para medir wrap
+      ctx.font = "800 30px Inter, system-ui, Segoe UI, Roboto, Arial";
       const nameH = 34;
 
-      ctx0.font = "700 24px Inter, system-ui, Segoe UI, Roboto, Arial";
+      ctx.font = "700 24px Inter, system-ui, Segoe UI, Roboto, Arial";
       const qtdH = 26;
 
-      ctx0.font = "400 26px Inter, system-ui, Segoe UI, Roboto, Arial";
-      const lines = wrapText(ctx0, numbersList || "—", colW0 - 24 - 8); // padding 12+12
+      ctx.font = "400 26px Inter, system-ui, Segoe UI, Roboto, Arial";
+      const lines = wrapText(ctx, numbersList || "—", colW0 - 24 - 8);
       const lineH = 30;
 
       const cardPad = 12;
@@ -377,36 +357,33 @@ export default function AdminOpenDrawBuyers() {
       return { name, qtd, numbersList, lines, cardH };
     };
 
-    // (2) paginateBuyers(ctx, dataSorted, layoutConsts) => pages
-    const paginateBuyers = (ctx0, data0, layoutConsts) => {
+    // (B) helper: paginate(ctx, dataSorted, layoutConsts)
+    const paginate = (ctx, data0, layoutConsts) => {
       const pages = [];
-      let page = { placements: [], colY: [layoutConsts.contentTop, layoutConsts.contentTop] };
-      let colY0 = page.colY;
+      let current = { items: [], colY: [layoutConsts.contentTop, layoutConsts.contentTop] };
 
       for (let i = 0; i < data0.length;) {
         const b = data0[i];
-        const layout = computeCardLayout(ctx0, b, layoutConsts.colWidth);
+        const info = computeCard(ctx, b, layoutConsts.colWidth);
 
-        const k = colY0[0] <= colY0[1] ? 0 : 1;
+        const k = current.colY[0] <= current.colY[1] ? 0 : 1;
         const x = layoutConsts.colX[k];
-        const y = colY0[k];
-        const nextY = y + layout.cardH + 14;
+        const y = current.colY[k];
+        const nextY = y + info.cardH + 14;
 
         if (nextY > layoutConsts.contentBottom) {
-          // fecha página atual e abre nova
-          if (page.placements.length > 0) pages.push(page);
-          page = { placements: [], colY: [layoutConsts.contentTop, layoutConsts.contentTop] };
-          colY0 = page.colY;
-          continue; // IMPORTANTÍSSIMO: não incrementa i, reprocessa o mesmo buyer na página nova
+          // fecha página atual e inicia nova (sem perder o buyer)
+          if (current.items.length > 0) pages.push(current);
+          current = { items: [], colY: [layoutConsts.contentTop, layoutConsts.contentTop] };
+          continue; // IMPORTANTE: não incrementa i, reprocessa o mesmo buyer na nova página
         }
 
-        // grava placement com x,y,k e layout
-        page.placements.push({ b, layout, x, y, k });
-        colY0[k] = nextY;
+        current.items.push({ b, info, x, y, k });
+        current.colY[k] = nextY;
         i++;
       }
 
-      if (page.placements.length > 0) pages.push(page);
+      if (current.items.length > 0) pages.push(current);
       return pages;
     };
 
@@ -427,10 +404,10 @@ export default function AdminOpenDrawBuyers() {
     measureCtx.textBaseline = "top";
 
     const layoutConsts = { contentTop, contentBottom, colWidth, colX };
-    const pages = paginateBuyers(measureCtx, dataSorted, layoutConsts);
+    const pages = paginate(measureCtx, dataSorted, layoutConsts);
 
-    // (3) renderListPage(canvasCtx, page, pageIdx, totalPages)
-    const renderListPage = (ctx, page, pageIdx, totalPages) => {
+    // (C) helper: renderPage(ctx, pageObj, pageIndex, totalPages, headerData)
+    const renderPage = (ctx, pageObj, pageIndex, totalPages, headerData) => {
       // Fundo
       ctx.fillStyle = "#0E0E0E";
       ctx.fillRect(0, 0, W, H);
@@ -438,11 +415,11 @@ export default function AdminOpenDrawBuyers() {
       let y = My;
 
       // Logo
-      if (logoImg) {
+      if (headerData.logoImg) {
         const h = 72;
-        const scale = h / logoImg.height;
-        const w = logoImg.width * scale;
-        ctx.drawImage(logoImg, Mx, y, w, h);
+        const scale = h / headerData.logoImg.height;
+        const w = headerData.logoImg.width * scale;
+        ctx.drawImage(headerData.logoImg, Mx, y, w, h);
       }
       y += 72 + 12;
 
@@ -457,9 +434,9 @@ export default function AdminOpenDrawBuyers() {
       const metaGap = 24;
       const metaLabels = ["Nº Sorteio", "Vendidos", "Restantes"];
       const metaValues = [
-        String(drawId ?? "-"),
-        String(sold ?? 0),
-        String(Math.max(0, remaining ?? (100 - (sold || 0)))),
+        String(headerData.drawId ?? "-"),
+        String(headerData.sold ?? 0),
+        String(Math.max(0, headerData.remaining ?? (100 - (headerData.sold || 0)))),
       ];
       const metaColW = 280;
       for (let i = 0; i < 3; i++) {
@@ -480,34 +457,34 @@ export default function AdminOpenDrawBuyers() {
       const lineH = 30;
 
       ctx.textBaseline = "top";
-      page.placements.forEach((pl) => {
-        const idx = idToIdx.get(pl.b?.user_id) ?? 0;
+      pageObj.items.forEach((it) => {
+        const idx = idToIdx.get(it.b.user_id) ?? 0;
         const chip = buyerColor(idx);
 
         // Card
-        fillRounded(ctx, pl.x, pl.y, colWidth, pl.layout.cardH, 16, "#141414");
-        strokeRounded(ctx, pl.x, pl.y, colWidth, pl.layout.cardH, 16, "rgba(255,255,255,0.10)", 2);
+        fillRounded(ctx, it.x, it.y, colWidth, it.info.cardH, 16, "#141414");
+        strokeRounded(ctx, it.x, it.y, colWidth, it.info.cardH, 16, "rgba(255,255,255,0.10)", 2);
 
         // Chip
         const chipSize = 18;
-        fillRounded(ctx, pl.x + cardPad, pl.y + cardPad + 6, chipSize, chipSize, 8, chip);
+        fillRounded(ctx, it.x + cardPad, it.y + cardPad + 6, chipSize, chipSize, 8, chip);
 
         // Nome
         ctx.fillStyle = "#FFFFFF";
         ctx.font = "800 30px Inter, system-ui, Segoe UI, Roboto, Arial";
-        ctx.fillText(pl.layout.name, pl.x + cardPad + chipSize + 8, pl.y + cardPad);
+        ctx.fillText(it.info.name, it.x + cardPad + chipSize + 8, it.y + cardPad);
 
         // Qtd
         ctx.fillStyle = "rgba(255,255,255,0.85)";
         ctx.font = "700 24px Inter, system-ui, Segoe UI, Roboto, Arial";
-        ctx.fillText(`Qtd: ${pl.layout.qtd}`, pl.x + cardPad, pl.y + cardPad + nameH + 6);
+        ctx.fillText(`Qtd: ${it.info.qtd}`, it.x + cardPad, it.y + cardPad + nameH + 6);
 
         // Números (wrap já calculado)
         ctx.fillStyle = "rgba(255,255,255,0.9)";
         ctx.font = "400 26px Inter, system-ui, Segoe UI, Roboto, Arial";
-        const numbersYStart = pl.y + cardPad + nameH + 6 + qtdH + 8;
-        pl.layout.lines.forEach((ln, i) => {
-          ctx.fillText(ln, pl.x + cardPad, numbersYStart + i * lineH);
+        const numbersYStart = it.y + cardPad + nameH + 6 + qtdH + 8;
+        it.info.lines.forEach((ln, i) => {
+          ctx.fillText(ln, it.x + cardPad, numbersYStart + i * lineH);
         });
       });
 
@@ -518,12 +495,8 @@ export default function AdminOpenDrawBuyers() {
       ctx.textBaseline = "alphabetic";
       const footY = H - 48;
 
-      const leftTextRaw = `Gerado • ${formatDateTimeBR(new Date())}`;
-      const leftMaxW = Math.floor(W * 0.5 - Mx - 20);
-      const leftText = ellipsizeText(ctx, leftTextRaw, leftMaxW);
-
       ctx.textAlign = "left";
-      ctx.fillText(leftText, Mx, footY);
+      ctx.fillText(`Gerado pela administração • ${new Date().toLocaleString("pt-BR")}`, Mx, footY);
 
       ctx.textAlign = "center";
       ctx.fillText(`Página ${pageIdx + 1}/${totalPages}`, Math.floor(W / 2), footY);
@@ -531,8 +504,6 @@ export default function AdminOpenDrawBuyers() {
       ctx.textAlign = "right";
       ctx.fillText("newstore", W - Mx, footY);
       ctx.globalAlpha = 1;
-
-      void y; // mantém alinhamento mental do layout (y define contentTop), sem alterar o render
     };
 
     // (C) Export final: múltiplos downloads sequenciais
@@ -542,7 +513,7 @@ export default function AdminOpenDrawBuyers() {
       canvas.width = W;
       canvas.height = H;
       const ctx = canvas.getContext("2d");
-      renderListPage(ctx, pages[i], i, totalPages);
+      renderPage(ctx, pages[i], i, totalPages, { logoImg, drawId, sold, remaining });
       const dataUrl = canvas.toDataURL("image/png");
       const a = document.createElement("a");
       a.href = dataUrl;
