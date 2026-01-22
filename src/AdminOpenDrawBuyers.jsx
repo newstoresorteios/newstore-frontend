@@ -308,7 +308,6 @@ export default function AdminOpenDrawBuyers() {
     a.click();
   };
 
-/** ---------- EXPORT 2: PNG 1080x1920 (Lista de nomes e números) MULTIPÁGINA ---------- */
 const exportPNGListMobile = async () => {
   if (loading) {
     alert("Aguarde carregar os dados do sorteio antes de exportar.");
@@ -317,19 +316,24 @@ const exportPNGListMobile = async () => {
 
   const W = 1080, H = 1920;
   const Mx = 36, My = 48;
+  const gapCol = 24;
 
-  // Preload logo 1x (evita re-fetch em cada página)
+  const nowStr = new Date().toLocaleString("pt-BR");
+
+  // Preload logo 1x
   let logoImg = null;
   try {
     const dataURL = await preloadAsDataURL(logoNewStore);
     const img = new Image();
-    await new Promise((res, rej) => { img.onload = res; img.onerror = rej; img.src = dataURL; });
+    await new Promise((res, rej) => {
+      img.onload = res;
+      img.onerror = rej;
+      img.src = dataURL;
+    });
     logoImg = img;
   } catch {
     logoImg = null;
   }
-
-  const nowStr = new Date().toLocaleString("pt-BR");
 
   // Ordenação por nome/email
   const dataSorted = [...buyers].sort((a, b) =>
@@ -340,32 +344,39 @@ const exportPNGListMobile = async () => {
     )
   );
 
-  // Layout base (2 colunas)
-  const gapCol = 24;
+  // Calcula os metadados
+  const metaLabels = ["Nº Sorteio", "Vendidos", "Restantes"];
+  const metaValues = [
+    String(drawId ?? "-"),
+    String(sold ?? 0),
+    String(Math.max(0, remaining ?? (100 - (sold || 0)))),
+  ];
 
-  // contentTop calculado igual ao seu desenho atual (acúmulo de y)
-  let yTop = My;
-  yTop += 72 + 12;        // logo
-  yTop += 44 + 14;        // título
-  yTop += 36 + 28 + 18;   // metadados
-  const contentTop = yTop;
+  // Conteúdo (topo da área dos cards) — replica seu header atual
+  let headerY = My;
+  headerY += 72 + 12;      // logo
+  headerY += 44 + 14;      // título
+  headerY += 36 + 28 + 18; // metadados
+  const contentTop = headerY;
 
-  const contentBottom = H - 80; // reserva do footer
+  // Rodapé fixo
+  const contentBottom = H - 80;
+
   const colWidth = Math.floor((W - Mx * 2 - gapCol) / 2);
   const colX = [Mx, Mx + colWidth + gapCol];
 
-  // Canvas de medição (para wrap e altura do card)
+  // Canvas de medição (wrap + altura)
   const measureCanvas = document.createElement("canvas");
   measureCanvas.width = W;
   measureCanvas.height = H;
   const mctx = measureCanvas.getContext("2d");
 
-  const computeCard = (ctx, b) => {
+  const computeCardInfo = (ctx, b) => {
     const name = String(b.name || b.email || "(sem nome)");
     const qtd = Number(b.count || (b.numbers?.length ?? 0)) || 0;
     const numbersList = (b.numbers || []).map(pad2).join(", ");
 
-    // Mesmas fontes/medidas do layout atual
+    // Mesmas fontes do layout atual
     ctx.font = "800 30px Inter, system-ui, Segoe UI, Roboto, Arial";
     const nameH = 34;
 
@@ -376,40 +387,41 @@ const exportPNGListMobile = async () => {
     ctx.font = "400 26px Inter, system-ui, Segoe UI, Roboto, Arial";
     const lines = wrapText(ctx, numbersList || "—", colWidth - 24 - 8);
     const lineH = 30;
-    const numsH = lines.length * lineH;
 
     const cardPad = 12;
-    const cardH = cardPad + nameH + 6 + qtdH + 8 + numsH + cardPad;
+    const cardH = cardPad + nameH + 6 + qtdH + 8 + (lines.length * lineH) + cardPad;
 
     return { name, qtdText, lines, lineH, nameH, qtdH, cardPad, cardH };
   };
 
-  // Paginação real (NUNCA descarta)
+  // Paginação REAL (2 colunas) -> array de páginas com placements
   const pages = [];
-  let colY = [contentTop, contentTop];
   let placements = [];
+  let colY = [contentTop, contentTop];
 
   for (let i = 0; i < dataSorted.length;) {
     const b = dataSorted[i];
     const idx = idToIdx.get(b.user_id) ?? 0;
+    const chip = buyerColor(idx);
 
-    const info = computeCard(mctx, b);
+    const info = computeCardInfo(mctx, b);
 
-    // menor coluna primeiro (masonry simples)
     const k = colY[0] <= colY[1] ? 0 : 1;
     const x = colX[k];
     const y = colY[k];
     const nextY = y + info.cardH + 14;
 
-    // Se não cabe e já tem conteúdo, fecha página e abre outra
+    // Se não cabe e já tem itens na página => fecha e cria nova
     if (nextY > contentBottom && placements.length > 0) {
       pages.push({ placements });
       placements = [];
       colY = [contentTop, contentTop];
-      continue; // reprocessa o MESMO buyer na página nova
+      continue; // reprocessa o MESMO buyer na próxima página
     }
 
-    placements.push({ b, idx, info, x, y });
+    // Proteção anti-loop: se o card é maior que a área útil e a página está vazia,
+    // ainda assim renderiza (vai estourar um pouco), mas NÃO perde comprador
+    placements.push({ b, idx, chip, info, x, y });
     colY[k] = nextY;
     i++;
   }
@@ -418,13 +430,8 @@ const exportPNGListMobile = async () => {
 
   const totalPages = pages.length;
 
-  // Aviso (Chrome pode bloquear múltiplos downloads)
-  if (totalPages > 1) {
-    alert(`Exportação em ${totalPages} páginas. Se o navegador perguntar, permita múltiplos downloads.`);
-  }
-
+  // Header renderer (mesmo estilo do atual)
   const drawHeader = (ctx) => {
-    // Fundo
     ctx.fillStyle = "#0E0E0E";
     ctx.fillRect(0, 0, W, H);
 
@@ -448,19 +455,15 @@ const exportPNGListMobile = async () => {
 
     // Metadados
     const metaGap = 24;
-    const metaLabels = ["Nº Sorteio", "Vendidos", "Restantes"];
-    const metaValues = [
-      String(drawId ?? "-"),
-      String(sold ?? 0),
-      String(Math.max(0, remaining ?? (100 - (sold || 0)))),
-    ];
     const colW = 280;
 
     for (let i = 0; i < 3; i++) {
       const xx = Mx + i * (colW + metaGap);
+
       ctx.globalAlpha = 0.75;
       ctx.font = "700 24px Inter, system-ui, Segoe UI, Roboto, Arial";
       ctx.fillText(metaLabels[i], xx, y);
+
       ctx.globalAlpha = 1;
       ctx.font = "900 36px Inter, system-ui, Segoe UI, Roboto, Arial";
       ctx.fillText(metaValues[i], xx, y + 28);
@@ -470,7 +473,7 @@ const exportPNGListMobile = async () => {
   const drawFooter = (ctx, pageIndex) => {
     const footY = H - 48;
 
-    ctx.globalAlpha = 0.8;
+    ctx.globalAlpha = 0.85;
     ctx.fillStyle = "#FFFFFF";
     ctx.font = "22px Inter, system-ui, Segoe UI, Roboto, Arial";
     ctx.textBaseline = "alphabetic";
@@ -487,16 +490,7 @@ const exportPNGListMobile = async () => {
     ctx.globalAlpha = 1;
   };
 
-  const downloadCanvas = (canvas, filename) => {
-    const dataUrl = canvas.toDataURL("image/png");
-    const a = document.createElement("a");
-    a.href = dataUrl;
-    a.download = filename;
-    a.click();
-  };
-
-  // Render + download de cada página
-  for (let p = 0; p < totalPages; p++) {
+  const renderPage = (pageObj, pageIndex) => {
     const canvas = document.createElement("canvas");
     canvas.width = W;
     canvas.height = H;
@@ -504,13 +498,9 @@ const exportPNGListMobile = async () => {
 
     drawHeader(ctx);
 
-    // Cards
     ctx.textBaseline = "top";
 
-    const page = pages[p];
-    page.placements.forEach(({ b, idx, info, x, y }) => {
-      const chip = buyerColor(idx);
-
+    pageObj.placements.forEach(({ idx, chip, info, x, y }) => {
       // Card
       fillRounded(ctx, x, y, colWidth, info.cardH, 16, "#141414");
       strokeRounded(ctx, x, y, colWidth, info.cardH, 16, "rgba(255,255,255,0.10)", 2);
@@ -542,14 +532,33 @@ const exportPNGListMobile = async () => {
       });
     });
 
-    drawFooter(ctx, p);
+    drawFooter(ctx, pageIndex);
+
+    return canvas;
+  };
+
+  const downloadCanvas = (canvas, filename) => {
+    const dataUrl = canvas.toDataURL("image/png");
+    const a = document.createElement("a");
+    a.href = dataUrl;
+    a.download = filename;
+    a.click();
+  };
+
+  // Importante: alguns browsers bloqueiam múltiplos downloads.
+  // Para reduzir chance de bloqueio, dispara com pequeno delay.
+  for (let p = 0; p < totalPages; p++) {
+    const canvas = renderPage(pages[p], p);
 
     const filename =
       totalPages === 1
         ? `sorteio_${drawId}_lista_1080x1920.png`
         : `sorteio_${drawId}_lista_p${p + 1}_1080x1920.png`;
 
-    downloadCanvas(canvas, filename);
+    // delay incremental para não “perder” cliques internos
+    // (mantém a ação sob o gesto do usuário)
+    // eslint-disable-next-line no-loop-func
+    setTimeout(() => downloadCanvas(canvas, filename), p * 250);
   }
 };
 
