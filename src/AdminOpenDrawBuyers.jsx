@@ -129,7 +129,6 @@ export default function AdminOpenDrawBuyers() {
   const [buyers, setBuyers] = React.useState([]);      // [{user_id, name, email, numbers[], count, total_cents}]
   const [numbers, setNumbers] = React.useState([]);    // [{n, user_id, name, email}]
   const [query, setQuery] = React.useState("");
-  const [exportingListPNG, setExportingListPNG] = React.useState(false);
 
   const load = React.useCallback(async () => {
     setLoading(true);
@@ -310,298 +309,299 @@ export default function AdminOpenDrawBuyers() {
     a.click();
   };
 
-const exportPNGListMobile = async () => {
-  if (loading) {
-    alert("Aguarde carregar os dados do sorteio antes de exportar.");
-    return;
-  }
+  /** ---------- EXPORT 2: PNG 1080x1920 (Lista de nomes e números) [PAGINADO] ---------- */
+  const exportPNGListMobile = async () => {
+    if (loading) {
+      alert("Aguarde carregar os dados do sorteio antes de exportar.");
+      return;
+    }
 
-  // Se não houver compradores, evita exportar vazio
-  if (!Array.isArray(buyers) || buyers.length === 0) {
-    alert("Não há compradores para exportar.");
-    return;
-  }
-
-  setExportingListPNG(true);
-  try {
     const W = 1080, H = 1920;
     const Mx = 36, My = 48;
-    const gapCol = 24;
 
-    const nowStr = new Date().toLocaleString("pt-BR");
+    const downloadBlob = (blob, filename) => {
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1500);
+    };
 
-  // Carrega logo uma vez (opcional)
-  let logoImg = null;
-  try {
-    const dataURL = await preloadAsDataURL(logoNewStore);
-    const img = new Image();
-    await new Promise((res, rej) => { img.onload = res; img.onerror = rej; img.src = dataURL; });
-    logoImg = img;
-  } catch {
-    logoImg = null;
-  }
+    const canvasToBlob = (canvas) =>
+      new Promise((resolve, reject) => {
+        canvas.toBlob((b) => (b ? resolve(b) : reject(new Error("Falha ao gerar blob do PNG"))), "image/png");
+      });
 
-  // Ordena por nome/email
-  const data = [...buyers].sort((a, b) =>
-    String(a.name || a.email || "").localeCompare(
-      String(b.name || b.email || ""),
-      "pt-BR",
-      { sensitivity: "base" }
-    )
-  );
+    const ellipsisText = (ctx, text, maxWidth) => {
+      const t = String(text ?? "");
+      if (ctx.measureText(t).width <= maxWidth) return t;
+      let s = t;
+      while (s.length > 0 && ctx.measureText(s + "…").width > maxWidth) s = s.slice(0, -1);
+      return (s || t.slice(0, 1)) + "…";
+    };
 
-  // Canvas de medição para calcular wraps/altura
-  const measureCanvas = document.createElement("canvas");
-  measureCanvas.width = W;
-  measureCanvas.height = H;
-  const mctx = measureCanvas.getContext("2d");
+    const drawBase = (ctx) => {
+      // Fundo
+      ctx.fillStyle = "#0E0E0E";
+      ctx.fillRect(0, 0, W, H);
+    };
 
-  const metaLabels = ["Nº Sorteio", "Vendidos", "Restantes"];
-  const metaValues = [
-    String(drawId ?? "-"),
-    String(sold ?? 0),
-    String(Math.max(0, remaining ?? (100 - (sold || 0)))),
-  ];
+    const drawHeader = async (ctx) => {
+      drawBase(ctx);
 
-  // Render do header + retorno do contentTop (início da área dos cards)
-  const drawHeader = (ctx) => {
-    ctx.fillStyle = "#0E0E0E";
-    ctx.fillRect(0, 0, W, H);
+      let y = My;
 
-    ctx.textAlign = "left";
-    ctx.textBaseline = "top";
+      // Logo
+      try {
+        const dataURL = await preloadAsDataURL(logoNewStore);
+        const img = new Image();
+        await new Promise((res, rej) => {
+          img.onload = res;
+          img.onerror = rej;
+          img.src = dataURL;
+        });
+        const h = 72;
+        const scale = h / img.height;
+        const w = img.width * scale;
+        ctx.drawImage(img, Mx, y, w, h);
+      } catch {}
 
-    let y = My;
+      y += 72 + 12;
 
-    // Logo
-    if (logoImg) {
-      const h = 72;
-      const scale = h / logoImg.height;
-      const w = logoImg.width * scale;
-      ctx.drawImage(logoImg, Mx, y, w, h);
-    }
-    y += 72 + 12;
+      // Título
+      ctx.fillStyle = "#FFFFFF";
+      ctx.font = "900 44px Inter, system-ui, Segoe UI, Roboto, Arial";
+      ctx.textBaseline = "top";
+      ctx.textAlign = "left";
+      ctx.fillText("Sorteio Ativo — Lista de Compradores", Mx, y);
+      y += 44 + 14;
 
-    // Título
-    ctx.fillStyle = "#FFFFFF";
-    ctx.font = "900 44px Inter, system-ui, Segoe UI, Roboto, Arial";
-    ctx.fillText("Sorteio Ativo — Lista de Compradores", Mx, y);
-    y += 44 + 14;
+      // Metadados
+      const metaGap = 24;
+      const metaLabels = ["Nº Sorteio", "Vendidos", "Restantes"];
+      const metaValues = [
+        String(drawId ?? "-"),
+        String(sold ?? 0),
+        String(Math.max(0, remaining ?? (100 - (sold || 0)))),
+      ];
+      const colW = 280;
 
-    // Metadados
-    const metaGap = 24;
-    const colW = 280;
-    for (let i = 0; i < 3; i++) {
-      const x = Mx + i * (colW + metaGap);
-
-      ctx.globalAlpha = 0.75;
-      ctx.font = "700 24px Inter, system-ui, Segoe UI, Roboto, Arial";
-      ctx.fillText(metaLabels[i], x, y);
-
-      ctx.globalAlpha = 1;
-      ctx.font = "900 36px Inter, system-ui, Segoe UI, Roboto, Arial";
-      ctx.fillText(metaValues[i], x, y + 28);
-    }
-
-    y += 36 + 28 + 18;
-    ctx.globalAlpha = 1;
-
-    return y; // contentTop
-  };
-
-  const drawFooter = (ctx, pageIndex, totalPages) => {
-    const footY = H - 48;
-
-    ctx.globalAlpha = 0.85;
-    ctx.fillStyle = "#FFFFFF";
-    ctx.font = "22px Inter, system-ui, Segoe UI, Roboto, Arial";
-    ctx.textBaseline = "alphabetic";
-
-    ctx.textAlign = "left";
-    ctx.fillText(`Gerado pela administração • ${nowStr}`, Mx, footY);
-
-    ctx.textAlign = "center";
-    ctx.fillText(`Página ${pageIndex + 1}/${totalPages}`, W / 2, footY);
-
-    ctx.textAlign = "right";
-    ctx.fillText("newstore", W - Mx, footY);
-
-    ctx.globalAlpha = 1;
-  };
-
-  const colWidth = Math.floor((W - Mx * 2 - gapCol) / 2);
-  const colX = [Mx, Mx + colWidth + gapCol];
-
-  // Card sizing (mesma tipografia do atual)
-  const computeCardInfo = (ctx, b) => {
-    const name = String(b.name || b.email || "(sem nome)");
-    const qtd = Number(b.count || (b.numbers?.length ?? 0)) || 0;
-    const numbersList = (b.numbers || []).map(pad2).join(", ");
-
-    ctx.font = "800 30px Inter, system-ui, Segoe UI, Roboto, Arial";
-    const nameH = 34;
-
-    ctx.font = "700 24px Inter, system-ui, Segoe UI, Roboto, Arial";
-    const qtdText = `Qtd: ${qtd}`;
-    const qtdH = 26;
-
-    ctx.font = "400 26px Inter, system-ui, Segoe UI, Roboto, Arial";
-    const lines = wrapText(ctx, numbersList || "—", colWidth - 24 - 8);
-    const lineH = 30;
-
-    const cardPad = 12;
-    const cardH = cardPad + nameH + 6 + qtdH + 8 + (lines.length * lineH) + cardPad;
-
-    return { name, qtdText, lines, lineH, nameH, qtdH, cardPad, cardH };
-  };
-
-  // Paginação real em 2 colunas (NUNCA descarta comprador)
-  const buildPages = () => {
-    const tmpCanvas = document.createElement("canvas");
-    tmpCanvas.width = W;
-    tmpCanvas.height = H;
-    const tmpCtx = tmpCanvas.getContext("2d");
-
-    const contentTop = drawHeader(tmpCtx);
-    const contentBottom = H - 110;
-
-    const pages = [];
-    let placements = [];
-    let colY = [contentTop, contentTop];
-
-    for (let i = 0; i < data.length;) {
-      const b = data[i];
-      const idx = idToIdx.get(b.user_id) ?? 0;
-      const chip = buyerColor(idx);
-
-      const info = computeCardInfo(mctx, b);
-
-      const k = colY[0] <= colY[1] ? 0 : 1;
-      const x = colX[k];
-      const y = colY[k];
-      const nextY = y + info.cardH + 14;
-
-      // Se não cabe e já tem itens => fecha página e tenta de novo na próxima
-      if (nextY > contentBottom && placements.length > 0) {
-        pages.push({ placements, contentTop });
-        placements = [];
-        colY = [contentTop, contentTop];
-        continue; // reprocessa o mesmo comprador na página seguinte
+      for (let i = 0; i < 3; i++) {
+        const x = Mx + i * (colW + metaGap);
+        ctx.globalAlpha = 0.75;
+        ctx.font = "700 24px Inter, system-ui, Segoe UI, Roboto, Arial";
+        ctx.fillStyle = "#FFFFFF";
+        ctx.fillText(metaLabels[i], x, y);
+        ctx.globalAlpha = 1;
+        ctx.font = "900 36px Inter, system-ui, Segoe UI, Roboto, Arial";
+        ctx.fillText(metaValues[i], x, y + 28);
       }
 
-      // Se o card é gigantesco e não cabe nem numa página vazia, ainda assim renderiza (não perde o comprador)
-      placements.push({ idx, chip, info, x, y });
-      colY[k] = nextY;
-      i++;
-    }
+      y += 36 + 28 + 18;
 
-    if (placements.length > 0) pages.push({ placements, contentTop });
+      // Layout da área de cards
+      const gapCol = 24;
+      const footerReserve = 90; // espaço garantido pro rodapé
+      const contentTop = y;
+      const contentBottom = H - footerReserve;
+      const colWidth = Math.floor((W - Mx * 2 - gapCol) / 2);
+      const colX = [Mx, Mx + colWidth + gapCol];
 
-    return pages;
-  };
+      return { contentTop, contentBottom, colWidth, colX };
+    };
 
-  const pages = buildPages();
-  const totalPages = pages.length;
-
-  const renderPageCanvas = (pageObj, pageIndex) => {
-    const canvas = document.createElement("canvas");
-    canvas.width = W;
-    canvas.height = H;
-    const ctx = canvas.getContext("2d");
-
-    // Header
-    drawHeader(ctx);
-
-    // Cards
-    ctx.textAlign = "left";
-    ctx.textBaseline = "top";
-
-    pageObj.placements.forEach(({ idx, chip, info, x, y }) => {
-      fillRounded(ctx, x, y, colWidth, info.cardH, 16, "#141414");
-      strokeRounded(ctx, x, y, colWidth, info.cardH, 16, "rgba(255,255,255,0.10)", 2);
-
-      // Chip
+    const estimateCard = (ctx, b, colWidth) => {
+      const cardPad = 12;
       const chipSize = 18;
-      fillRounded(ctx, x + info.cardPad, y + info.cardPad + 6, chipSize, chipSize, 8, chip);
+      const name = String(b.name || b.email || "(sem nome)");
+      const qtd = Number(b.count || (b.numbers?.length ?? 0)) || 0;
+      const numbersList = (b.numbers || []).map(pad2).join(", ") || "—";
 
       // Nome
+      ctx.font = "800 30px Inter, system-ui, Segoe UI, Roboto, Arial";
+      const nameH = 34;
+
+      // Qtd
+      ctx.font = "700 24px Inter, system-ui, Segoe UI, Roboto, Arial";
+      const qtdH = 26;
+
+      // Números (wrap)
+      ctx.font = "400 26px Inter, system-ui, Segoe UI, Roboto, Arial";
+      const maxTextWidth = colWidth - (cardPad * 2);
+      const lines = wrapText(ctx, numbersList, maxTextWidth);
+      const lineH = 30;
+
+      // Limitador opcional pra evitar cards gigantes (se quiser desativar, remova)
+      const maxLines = 5;
+      const safeLines = lines.length > maxLines ? [...lines.slice(0, maxLines - 1), "…"] : lines;
+
+      const numsH = safeLines.length * lineH;
+      const cardH = cardPad + nameH + 6 + qtdH + 8 + numsH + cardPad;
+
+      return { cardH, name, qtd, numbersList, lines: safeLines, cardPad, chipSize, lineH, nameH, qtdH };
+    };
+
+    const drawCard = (ctx, x, y, colWidth, b, idx) => {
+      const chip = buyerColor(idx);
+      const info = estimateCard(ctx, b, colWidth);
+
+      const {
+        cardH, name, qtd, lines,
+        cardPad, chipSize, lineH, nameH, qtdH
+      } = info;
+
+      // Card
+      fillRounded(ctx, x, y, colWidth, cardH, 16, "#141414");
+      strokeRounded(ctx, x, y, colWidth, cardH, 16, "rgba(255,255,255,0.10)", 2);
+
+      // Chip
+      fillRounded(ctx, x + cardPad, y + cardPad + 6, chipSize, chipSize, 8, chip);
+
+      // Nome (com ellipsis para não estourar)
       ctx.fillStyle = "#FFFFFF";
       ctx.font = "800 30px Inter, system-ui, Segoe UI, Roboto, Arial";
-      ctx.fillText(info.name, x + info.cardPad + chipSize + 8, y + info.cardPad);
+      const nameX = x + cardPad + chipSize + 8;
+      const nameMaxW = colWidth - (nameX - x) - cardPad;
+      ctx.fillText(ellipsisText(ctx, name, nameMaxW), nameX, y + cardPad);
 
       // Qtd
       ctx.fillStyle = "rgba(255,255,255,0.85)";
       ctx.font = "700 24px Inter, system-ui, Segoe UI, Roboto, Arial";
-      ctx.fillText(info.qtdText, x + info.cardPad, y + info.cardPad + info.nameH + 6);
+      ctx.fillText(`Qtd: ${qtd}`, x + cardPad, y + cardPad + nameH + 6);
 
       // Números (wrap)
       ctx.fillStyle = "rgba(255,255,255,0.9)";
       ctx.font = "400 26px Inter, system-ui, Segoe UI, Roboto, Arial";
-      const numbersYStart = y + info.cardPad + info.nameH + 6 + info.qtdH + 8;
-      info.lines.forEach((ln, i) => {
-        ctx.fillText(ln, x + info.cardPad, numbersYStart + i * info.lineH);
+      const numbersYStart = y + cardPad + nameH + 6 + qtdH + 8;
+      lines.forEach((ln, i) => {
+        ctx.fillText(ln, x + cardPad, numbersYStart + i * lineH);
       });
-    });
 
-    // Footer
-    drawFooter(ctx, pageIndex, totalPages);
+      return cardH;
+    };
 
-    return canvas;
+    const drawFooter = (ctx, pageIndex, totalPages) => {
+      ctx.fillStyle = "#FFFFFF";
+      ctx.globalAlpha = 0.9;
+      ctx.font = "22px Inter, system-ui, Segoe UI, Roboto, Arial";
+
+      const left = `Gerado pela administração • ${new Date().toLocaleString("pt-BR")} • Página ${pageIndex + 1}/${totalPages}`;
+      ctx.textAlign = "left";
+      ctx.fillText(left, Mx, H - 48);
+
+      ctx.textAlign = "right";
+      ctx.fillText("newstore", W - Mx, H - 48);
+      ctx.globalAlpha = 1;
+    };
+
+    // Ordena por nome (boa prática para divulgação)
+    const data = [...buyers].sort((a, b) =>
+      String(a.name || a.email || "").localeCompare(
+        String(b.name || b.email || ""),
+        "pt-BR",
+        { sensitivity: "base" }
+      )
+    );
+
+    try {
+      // Primeiro: descobrir layout (contentTop/contentBottom/colWidth/colX)
+      const tmpCanvas = document.createElement("canvas");
+      tmpCanvas.width = W;
+      tmpCanvas.height = H;
+      const tmpCtx = tmpCanvas.getContext("2d");
+
+      const layout = await drawHeader(tmpCtx);
+      const { contentTop, contentBottom, colWidth, colX } = layout;
+
+      // Paginação (masonry em 2 colunas)
+      const vGap = 14;
+      const pages = [];
+      let placements = [];
+      let colY = [contentTop, contentTop];
+
+      const pushPage = () => {
+        pages.push({ placements });
+        placements = [];
+        colY = [contentTop, contentTop];
+      };
+
+      for (let i = 0; i < data.length; i++) {
+        const b = data[i];
+        const idx = idToIdx.get(b.user_id) ?? 0;
+
+        const { cardH } = estimateCard(tmpCtx, b, colWidth);
+
+        // escolhe coluna com menor Y
+        const k = colY[0] <= colY[1] ? 0 : 1;
+        const x = colX[k];
+        const y = colY[k];
+        const nextY = y + cardH + vGap;
+
+        // Se não cabe e já tem itens na página => fecha página e reprocessa o mesmo item
+        if (nextY > contentBottom && placements.length > 0) {
+          pushPage();
+          i--; // reprocessa o mesmo comprador na próxima página
+          continue;
+        }
+
+        // Coloca mesmo se estiver "grande" (edge case)
+        placements.push({ b, idx, x, y });
+        colY[k] = nextY;
+      }
+
+      if (placements.length > 0) pushPage();
+
+      // Sanity check: garantir que não perdeu comprador
+      const placedCount = pages.reduce((s, p) => s + p.placements.length, 0);
+      if (placedCount !== data.length) {
+        console.warn("[exportPNGListMobile] WARNING: placedCount != data.length", { placedCount, total: data.length });
+      }
+
+      const totalPages = pages.length;
+
+      // Render das páginas
+      const blobs = [];
+      for (let p = 0; p < totalPages; p++) {
+        const canvas = document.createElement("canvas");
+        canvas.width = W;
+        canvas.height = H;
+        const ctx = canvas.getContext("2d");
+
+        const lay = await drawHeader(ctx);
+
+        // desenha cards
+        for (const it of pages[p].placements) {
+          drawCard(ctx, it.x, it.y, lay.colWidth, it.b, it.idx);
+        }
+
+        drawFooter(ctx, p, totalPages);
+
+        const blob = await canvasToBlob(canvas);
+        blobs.push(blob);
+      }
+
+      // Se só 1 página: baixa PNG normal
+      if (totalPages === 1) {
+        downloadBlob(blobs[0], `sorteio_${drawId}_lista_1080x1920.png`);
+        return;
+      }
+
+      // Se múltiplas páginas: ZIP com várias imagens
+      const zip = new JSZip();
+      for (let p = 0; p < totalPages; p++) {
+        const n = String(p + 1).padStart(2, "0");
+        const t = String(totalPages).padStart(2, "0");
+        zip.file(`sorteio_${drawId}_lista_${n}_de_${t}_1080x1920.png`, blobs[p]);
+      }
+
+      const zipBlob = await zip.generateAsync({ type: "blob" });
+      downloadBlob(zipBlob, `sorteio_${drawId}_lista_1080x1920.zip`);
+    } catch (err) {
+      console.error("Falha ao exportar lista paginada:", err);
+      alert("Falha ao exportar a lista de compradores (paginada). Veja o console para detalhes.");
+    }
   };
-
-  const canvasToBlob = (canvas) =>
-    new Promise((resolve, reject) => {
-      canvas.toBlob((blob) => {
-        if (!blob) return reject(new Error("Falha ao gerar PNG (toBlob retornou null)."));
-        resolve(blob);
-      }, "image/png");
-    });
-
-  const downloadBlob = (blob, filename) => {
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 1500);
-  };
-
-  // DEBUG: garante que realmente paginou
-  console.log("[exportPNGListMobile] buyers=", data.length, "pages=", totalPages);
-
-  // Caso caiba em 1 página, baixa PNG único (sem zip)
-  if (totalPages <= 1) {
-    const singleCanvas = renderPageCanvas(pages[0], 0);
-    const blob = await canvasToBlob(singleCanvas);
-    downloadBlob(blob, `sorteio_${drawId}_lista_1080x1920.png`);
-    return;
-  }
-
-  // Caso tenha múltiplas páginas: gera ZIP (1 download só)
-  const zip = new JSZip();
-  for (let p = 0; p < totalPages; p++) {
-    const pageCanvas = renderPageCanvas(pages[p], p);
-    const blob = await canvasToBlob(pageCanvas);
-    const filename = `sorteio_${drawId}_lista_p${p + 1}_1080x1920.png`;
-    zip.file(filename, blob);
-  }
-
-  const zipBlob = await zip.generateAsync({
-    type: "blob",
-    compression: "DEFLATE",
-    compressionOptions: { level: 6 },
-  });
-
-  downloadBlob(zipBlob, `sorteio_${drawId}_lista_pngs_${totalPages}p.zip`);
-  } catch (err) {
-    console.error("[exportPNGListMobile] erro:", err);
-    alert(`Falha ao exportar PNG(s): ${err?.message || err}`);
-  } finally {
-    setExportingListPNG(false);
-  }
-};
 
   return (
     <ThemeProvider theme={theme}>
@@ -661,14 +661,8 @@ const exportPNGListMobile = async () => {
               <Button startIcon={<DownloadRoundedIcon />} onClick={exportPNGMobile} variant="contained">
                 Exportar PNG (Grade 1080×1920)
               </Button>
-              <Button
-                startIcon={<DownloadRoundedIcon />}
-                onClick={exportPNGListMobile}
-                variant="contained"
-                color="primary"
-                disabled={exportingListPNG || loading}
-              >
-                {exportingListPNG ? "Gerando PNGs..." : "Exportar PNG (Lista 1080×1920)"}
+              <Button startIcon={<DownloadRoundedIcon />} onClick={exportPNGListMobile} variant="contained" color="primary">
+                Exportar PNG (Lista 1080×1920)
               </Button>
             </Stack>
 
