@@ -343,7 +343,7 @@ export default function AdminOpenDrawBuyers() {
     };
 
     // Ordena por nome (mantém a mesma ordenação atual)
-    const buyersSorted = [...buyers].sort((a, b) =>
+    const dataSorted = [...buyers].sort((a, b) =>
       String(a.name || a.email || "").localeCompare(String(b.name || b.email || ""), "pt-BR", { sensitivity: "base" })
     );
 
@@ -354,62 +354,59 @@ export default function AdminOpenDrawBuyers() {
     const colWidth = Math.floor((W - Mx * 2 - gapCol) / 2);
     const colX = [Mx, Mx + colWidth + gapCol];
 
-    // (A) estimateCardHeight(ctx, buyer, colWidth)
-    const estimateCardHeight = (ctx0, buyer, colW0) => {
-      const qtd = Number(buyer.count || (buyer.numbers?.length ?? 0)) || 0;
-      const numbersList = (buyer.numbers || []).map(pad2).join(", ");
+    // (1) computeCardLayout(ctx, b, colWidth)
+    const computeCardLayout = (ctx0, b, colW0) => {
+      const name = String(b?.name || b?.email || "(sem nome)");
+      const qtd = Number(b?.count || b?.numbers?.length || 0) || 0;
+      const numbersList = (b?.numbers || []).map(pad2).join(", ");
 
+      // mesmas fontes/medidas do cálculo atual
       ctx0.font = "800 30px Inter, system-ui, Segoe UI, Roboto, Arial";
       const nameH = 34;
 
       ctx0.font = "700 24px Inter, system-ui, Segoe UI, Roboto, Arial";
       const qtdH = 26;
-      void qtd; // mantém a mesma dependência lógica do cálculo original
 
       ctx0.font = "400 26px Inter, system-ui, Segoe UI, Roboto, Arial";
       const lines = wrapText(ctx0, numbersList || "—", colW0 - 24 - 8); // padding 12+12
       const lineH = 30;
-      const numsH = lines.length * lineH;
 
       const cardPad = 12;
-      const cardH = cardPad + nameH + 6 + qtdH + 8 + numsH + cardPad;
-      return cardH;
+      const cardH = cardPad + nameH + 6 + qtdH + 8 + (lines.length * lineH) + cardPad;
+
+      return { name, qtd, numbersList, lines, cardH };
     };
 
-    // (B) splitIntoPages(ctx, buyersSorted, layoutConfig)
-    const splitIntoPages = (ctx0, data0, layoutConfig) => {
+    // (2) paginateBuyers(ctx, dataSorted, layoutConsts) => pages
+    const paginateBuyers = (ctx0, data0, layoutConsts) => {
       const pages = [];
-      let currentPage = [];
-      let colY0 = [layoutConfig.contentTop, layoutConfig.contentTop];
+      let page = { placements: [], colY: [layoutConsts.contentTop, layoutConsts.contentTop] };
+      let colY0 = page.colY;
 
-      let i = 0;
-      while (i < data0.length) {
+      for (let i = 0; i < data0.length;) {
         const b = data0[i];
-        const cardH = estimateCardHeight(ctx0, b, layoutConfig.colWidth);
+        const layout = computeCardLayout(ctx0, b, layoutConsts.colWidth);
 
         const k = colY0[0] <= colY0[1] ? 0 : 1;
-        const nextY = colY0[k] + cardH + 14;
+        const x = layoutConsts.colX[k];
+        const y = colY0[k];
+        const nextY = y + layout.cardH + 14;
 
-        if (nextY > layoutConfig.contentBottom) {
-          if (currentPage.length === 0) {
-            // Evita loop infinito se, por algum motivo, um card não couber nem numa página vazia
-            currentPage.push(b);
-            colY0[k] = nextY;
-            i++;
-            continue;
-          }
-          pages.push(currentPage);
-          currentPage = [];
-          colY0 = [layoutConfig.contentTop, layoutConfig.contentTop];
-          continue; // reprocessa o mesmo buyer na nova página
+        if (nextY > layoutConsts.contentBottom) {
+          // fecha página atual e abre nova
+          if (page.placements.length > 0) pages.push(page);
+          page = { placements: [], colY: [layoutConsts.contentTop, layoutConsts.contentTop] };
+          colY0 = page.colY;
+          continue; // IMPORTANTÍSSIMO: não incrementa i, reprocessa o mesmo buyer na página nova
         }
 
-        currentPage.push(b);
+        // grava placement com x,y,k e layout
+        page.placements.push({ b, layout, x, y, k });
         colY0[k] = nextY;
         i++;
       }
 
-      if (currentPage.length > 0) pages.push(currentPage);
+      if (page.placements.length > 0) pages.push(page);
       return pages;
     };
 
@@ -429,16 +426,11 @@ export default function AdminOpenDrawBuyers() {
     const measureCtx = measureCanvas.getContext("2d");
     measureCtx.textBaseline = "top";
 
-    const layoutConfig = { contentTop, contentBottom, colWidth };
-    const pages = splitIntoPages(measureCtx, buyersSorted, layoutConfig);
+    const layoutConsts = { contentTop, contentBottom, colWidth, colX };
+    const pages = paginateBuyers(measureCtx, dataSorted, layoutConsts);
 
-    // (C) renderPage(pageBuyers, pageIndex, totalPages)
-    const renderPage = (pageBuyers, pageIndex, totalPages) => {
-      const canvas = document.createElement("canvas");
-      canvas.width = W;
-      canvas.height = H;
-      const ctx = canvas.getContext("2d");
-
+    // (3) renderListPage(canvasCtx, page, pageIdx, totalPages)
+    const renderListPage = (ctx, page, pageIdx, totalPages) => {
       // Fundo
       ctx.fillStyle = "#0E0E0E";
       ctx.fillRect(0, 0, W, H);
@@ -481,70 +473,45 @@ export default function AdminOpenDrawBuyers() {
       }
       y += 36 + 28 + 18;
 
-      // Área para os cards em duas colunas (mesmo layout)
-      const contentTop0 = y;
-      const colX0 = colX;
-      let colY0 = [contentTop0, contentTop0];
+      // Cards
+      const cardPad = 12;
+      const nameH = 34;
+      const qtdH = 26;
+      const lineH = 30;
 
-      // Cards (somente desta página)
       ctx.textBaseline = "top";
-      pageBuyers.forEach((b) => {
-        const idx = idToIdx.get(b.user_id) ?? 0;
+      page.placements.forEach((pl) => {
+        const idx = idToIdx.get(pl.b?.user_id) ?? 0;
         const chip = buyerColor(idx);
-        const name = String(b.name || b.email || "(sem nome)");
-        const qtd = Number(b.count || (b.numbers?.length ?? 0)) || 0;
-        const numbersList = (b.numbers || []).map(pad2).join(", ");
-
-        // Estimativa de altura do card com wrap (mesmo cálculo)
-        ctx.font = "800 30px Inter, system-ui, Segoe UI, Roboto, Arial";
-        const nameH = 34;
-
-        ctx.font = "700 24px Inter, system-ui, Segoe UI, Roboto, Arial";
-        const qtdText = `Qtd: ${qtd}`;
-        const qtdH = 26;
-
-        ctx.font = "400 26px Inter, system-ui, Segoe UI, Roboto, Arial";
-        const lines = wrapText(ctx, numbersList || "—", colWidth - 24 - 8); // padding 12+12
-        const lineH = 30;
-        const numsH = lines.length * lineH;
-
-        const cardPad = 12;
-        const cardH = cardPad + nameH + 6 + qtdH + 8 + numsH + cardPad;
-
-        const k = colY0[0] <= colY0[1] ? 0 : 1;
-        const x = colX0[k];
-        const nextY = colY0[k] + cardH + 14;
 
         // Card
-        fillRounded(ctx, x, colY0[k], colWidth, cardH, 16, "#141414");
-        strokeRounded(ctx, x, colY0[k], colWidth, cardH, 16, "rgba(255,255,255,0.10)", 2);
+        fillRounded(ctx, pl.x, pl.y, colWidth, pl.layout.cardH, 16, "#141414");
+        strokeRounded(ctx, pl.x, pl.y, colWidth, pl.layout.cardH, 16, "rgba(255,255,255,0.10)", 2);
 
         // Chip
         const chipSize = 18;
-        fillRounded(ctx, x + cardPad, colY0[k] + cardPad + 6, chipSize, chipSize, 8, chip);
+        fillRounded(ctx, pl.x + cardPad, pl.y + cardPad + 6, chipSize, chipSize, 8, chip);
 
         // Nome
         ctx.fillStyle = "#FFFFFF";
         ctx.font = "800 30px Inter, system-ui, Segoe UI, Roboto, Arial";
-        ctx.fillText(name, x + cardPad + chipSize + 8, colY0[k] + cardPad);
+        ctx.fillText(pl.layout.name, pl.x + cardPad + chipSize + 8, pl.y + cardPad);
 
         // Qtd
         ctx.fillStyle = "rgba(255,255,255,0.85)";
         ctx.font = "700 24px Inter, system-ui, Segoe UI, Roboto, Arial";
-        ctx.fillText(qtdText, x + cardPad, colY0[k] + cardPad + nameH + 6);
+        ctx.fillText(`Qtd: ${pl.layout.qtd}`, pl.x + cardPad, pl.y + cardPad + nameH + 6);
 
-        // Números (wrap)
+        // Números (wrap já calculado)
         ctx.fillStyle = "rgba(255,255,255,0.9)";
         ctx.font = "400 26px Inter, system-ui, Segoe UI, Roboto, Arial";
-        const numbersYStart = colY0[k] + cardPad + nameH + 6 + qtdH + 8;
-        lines.forEach((ln, i) => {
-          ctx.fillText(ln, x + cardPad, numbersYStart + i * lineH);
+        const numbersYStart = pl.y + cardPad + nameH + 6 + qtdH + 8;
+        pl.layout.lines.forEach((ln, i) => {
+          ctx.fillText(ln, pl.x + cardPad, numbersYStart + i * lineH);
         });
-
-        colY0[k] = nextY;
       });
 
-      // (D) Footer em 3 colunas com "Página X/Y" (sem sumir por texto longo)
+      // Footer (3 colunas)
       ctx.globalAlpha = 0.8;
       ctx.fillStyle = "#FFFFFF";
       ctx.font = "22px Inter, system-ui, Segoe UI, Roboto, Arial";
@@ -559,25 +526,30 @@ export default function AdminOpenDrawBuyers() {
       ctx.fillText(leftText, Mx, footY);
 
       ctx.textAlign = "center";
-      ctx.fillText(`Página ${pageIndex + 1}/${totalPages}`, Math.floor(W / 2), footY);
+      ctx.fillText(`Página ${pageIdx + 1}/${totalPages}`, Math.floor(W / 2), footY);
 
       ctx.textAlign = "right";
       ctx.fillText("newstore", W - Mx, footY);
       ctx.globalAlpha = 1;
 
-      return canvas;
+      void y; // mantém alinhamento mental do layout (y define contentTop), sem alterar o render
     };
 
     // (C) Export final: múltiplos downloads sequenciais
-    for (let p = 0; p < pages.length; p++) {
-      const pageCanvas = renderPage(pages[p], p, pages.length);
-      const dataUrl = pageCanvas.toDataURL("image/png");
+    const totalPages = pages.length || 1;
+    for (let i = 0; i < pages.length; i++) {
+      const canvas = document.createElement("canvas");
+      canvas.width = W;
+      canvas.height = H;
+      const ctx = canvas.getContext("2d");
+      renderListPage(ctx, pages[i], i, totalPages);
+      const dataUrl = canvas.toDataURL("image/png");
       const a = document.createElement("a");
       a.href = dataUrl;
       a.download =
-        pages.length === 1
+        totalPages === 1
           ? `sorteio_${drawId}_lista_1080x1920.png`
-          : `sorteio_${drawId}_lista_p${p + 1}_1080x1920.png`;
+          : `sorteio_${drawId}_lista_p${i + 1}_1080x1920.png`;
       a.click();
       // pequeno espaçamento ajuda browsers a não "engolirem" cliques em sequência
       // eslint-disable-next-line no-await-in-loop
