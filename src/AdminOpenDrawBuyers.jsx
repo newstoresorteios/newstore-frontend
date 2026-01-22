@@ -308,225 +308,250 @@ export default function AdminOpenDrawBuyers() {
     a.click();
   };
 
-  /** ---------- EXPORT 2: PNG 1080x1920 (Lista de nomes e números) ---------- */
-  const exportPNGListMobile = async () => {
-    if (loading) {
-      alert("Aguarde carregar os dados do sorteio antes de exportar.");
-      return;
+/** ---------- EXPORT 2: PNG 1080x1920 (Lista de nomes e números) MULTIPÁGINA ---------- */
+const exportPNGListMobile = async () => {
+  if (loading) {
+    alert("Aguarde carregar os dados do sorteio antes de exportar.");
+    return;
+  }
+
+  const W = 1080, H = 1920;
+  const Mx = 36, My = 48;
+
+  // Preload logo 1x (evita re-fetch em cada página)
+  let logoImg = null;
+  try {
+    const dataURL = await preloadAsDataURL(logoNewStore);
+    const img = new Image();
+    await new Promise((res, rej) => { img.onload = res; img.onerror = rej; img.src = dataURL; });
+    logoImg = img;
+  } catch {
+    logoImg = null;
+  }
+
+  const nowStr = new Date().toLocaleString("pt-BR");
+
+  // Ordenação por nome/email
+  const dataSorted = [...buyers].sort((a, b) =>
+    String(a.name || a.email || "").localeCompare(
+      String(b.name || b.email || ""),
+      "pt-BR",
+      { sensitivity: "base" }
+    )
+  );
+
+  // Layout base (2 colunas)
+  const gapCol = 24;
+
+  // contentTop calculado igual ao seu desenho atual (acúmulo de y)
+  let yTop = My;
+  yTop += 72 + 12;        // logo
+  yTop += 44 + 14;        // título
+  yTop += 36 + 28 + 18;   // metadados
+  const contentTop = yTop;
+
+  const contentBottom = H - 80; // reserva do footer
+  const colWidth = Math.floor((W - Mx * 2 - gapCol) / 2);
+  const colX = [Mx, Mx + colWidth + gapCol];
+
+  // Canvas de medição (para wrap e altura do card)
+  const measureCanvas = document.createElement("canvas");
+  measureCanvas.width = W;
+  measureCanvas.height = H;
+  const mctx = measureCanvas.getContext("2d");
+
+  const computeCard = (ctx, b) => {
+    const name = String(b.name || b.email || "(sem nome)");
+    const qtd = Number(b.count || (b.numbers?.length ?? 0)) || 0;
+    const numbersList = (b.numbers || []).map(pad2).join(", ");
+
+    // Mesmas fontes/medidas do layout atual
+    ctx.font = "800 30px Inter, system-ui, Segoe UI, Roboto, Arial";
+    const nameH = 34;
+
+    ctx.font = "700 24px Inter, system-ui, Segoe UI, Roboto, Arial";
+    const qtdText = `Qtd: ${qtd}`;
+    const qtdH = 26;
+
+    ctx.font = "400 26px Inter, system-ui, Segoe UI, Roboto, Arial";
+    const lines = wrapText(ctx, numbersList || "—", colWidth - 24 - 8);
+    const lineH = 30;
+    const numsH = lines.length * lineH;
+
+    const cardPad = 12;
+    const cardH = cardPad + nameH + 6 + qtdH + 8 + numsH + cardPad;
+
+    return { name, qtdText, lines, lineH, nameH, qtdH, cardPad, cardH };
+  };
+
+  // Paginação real (NUNCA descarta)
+  const pages = [];
+  let colY = [contentTop, contentTop];
+  let placements = [];
+
+  for (let i = 0; i < dataSorted.length;) {
+    const b = dataSorted[i];
+    const idx = idToIdx.get(b.user_id) ?? 0;
+
+    const info = computeCard(mctx, b);
+
+    // menor coluna primeiro (masonry simples)
+    const k = colY[0] <= colY[1] ? 0 : 1;
+    const x = colX[k];
+    const y = colY[k];
+    const nextY = y + info.cardH + 14;
+
+    // Se não cabe e já tem conteúdo, fecha página e abre outra
+    if (nextY > contentBottom && placements.length > 0) {
+      pages.push({ placements });
+      placements = [];
+      colY = [contentTop, contentTop];
+      continue; // reprocessa o MESMO buyer na página nova
     }
 
-    const W = 1080, H = 1920;
-    const Mx = 36, My = 48;
+    placements.push({ b, idx, info, x, y });
+    colY[k] = nextY;
+    i++;
+  }
 
-    // Ordena por nome (mantém a mesma ordenação atual)
-    const dataSorted = [...buyers].sort((a, b) =>
-      String(a.name || a.email || "").localeCompare(String(b.name || b.email || ""), "pt-BR", { sensitivity: "base" })
-    );
+  if (placements.length > 0) pages.push({ placements });
 
-    // Layout (monta header igual ao atual e obtém y final do header)
-    const gapCol = 24;
-    let yFinalHeader = My;
-    yFinalHeader += 72 + 12;   // logo + gap
-    yFinalHeader += 44 + 14;   // título + gap
-    yFinalHeader += 36 + 28 + 18; // metadados (valores) + gap
-    const contentTop = yFinalHeader;
-    const contentBottom = H - 80; // reserva para footer
-    const colWidth = Math.floor((W - Mx * 2 - gapCol) / 2);
-    const colX = [Mx, Mx + colWidth + gapCol];
+  const totalPages = pages.length;
 
-    // (A) helper: computeCard(ctx, b, colWidth)
-    const computeCard = (ctx, b, colW0) => {
-      const name = String(b.name || b.email || "(sem nome)");
-      const qtd = Number(b.count || (b.numbers?.length ?? 0)) || 0;
-      const numbersList = (b.numbers || []).map(pad2).join(", ");
+  // Aviso (Chrome pode bloquear múltiplos downloads)
+  if (totalPages > 1) {
+    alert(`Exportação em ${totalPages} páginas. Se o navegador perguntar, permita múltiplos downloads.`);
+  }
 
-      // configurar ctx.font IGUAL ao atual para medir wrap
-      ctx.font = "800 30px Inter, system-ui, Segoe UI, Roboto, Arial";
-      const nameH = 34;
+  const drawHeader = (ctx) => {
+    // Fundo
+    ctx.fillStyle = "#0E0E0E";
+    ctx.fillRect(0, 0, W, H);
 
+    let y = My;
+
+    // Logo
+    if (logoImg) {
+      const h = 72;
+      const scale = h / logoImg.height;
+      const w = logoImg.width * scale;
+      ctx.drawImage(logoImg, Mx, y, w, h);
+    }
+    y += 72 + 12;
+
+    // Título
+    ctx.fillStyle = "#FFFFFF";
+    ctx.font = "900 44px Inter, system-ui, Segoe UI, Roboto, Arial";
+    ctx.textBaseline = "top";
+    ctx.fillText("Sorteio Ativo — Lista de Compradores", Mx, y);
+    y += 44 + 14;
+
+    // Metadados
+    const metaGap = 24;
+    const metaLabels = ["Nº Sorteio", "Vendidos", "Restantes"];
+    const metaValues = [
+      String(drawId ?? "-"),
+      String(sold ?? 0),
+      String(Math.max(0, remaining ?? (100 - (sold || 0)))),
+    ];
+    const colW = 280;
+
+    for (let i = 0; i < 3; i++) {
+      const xx = Mx + i * (colW + metaGap);
+      ctx.globalAlpha = 0.75;
       ctx.font = "700 24px Inter, system-ui, Segoe UI, Roboto, Arial";
-      const qtdH = 26;
-
-      ctx.font = "400 26px Inter, system-ui, Segoe UI, Roboto, Arial";
-      const lines = wrapText(ctx, numbersList || "—", colW0 - 24 - 8);
-      const lineH = 30;
-
-      const cardPad = 12;
-      const cardH = cardPad + nameH + 6 + qtdH + 8 + (lines.length * lineH) + cardPad;
-
-      return { name, qtd, numbersList, lines, cardH };
-    };
-
-    // (B) helper: paginate(ctx, dataSorted, layoutConsts)
-    const paginate = (ctx, data0, layoutConsts) => {
-      const pages = [];
-      let current = { items: [], colY: [layoutConsts.contentTop, layoutConsts.contentTop] };
-
-      for (let i = 0; i < data0.length;) {
-        const b = data0[i];
-        const info = computeCard(ctx, b, layoutConsts.colWidth);
-
-        const k = current.colY[0] <= current.colY[1] ? 0 : 1;
-        const x = layoutConsts.colX[k];
-        const y = current.colY[k];
-        const nextY = y + info.cardH + 14;
-
-        if (nextY > layoutConsts.contentBottom) {
-          // fecha página atual e inicia nova (sem perder o buyer)
-          if (current.items.length > 0) pages.push(current);
-          current = { items: [], colY: [layoutConsts.contentTop, layoutConsts.contentTop] };
-          continue; // IMPORTANTE: não incrementa i, reprocessa o mesmo buyer na nova página
-        }
-
-        current.items.push({ b, info, x, y, k });
-        current.colY[k] = nextY;
-        i++;
-      }
-
-      if (current.items.length > 0) pages.push(current);
-      return pages;
-    };
-
-    // Pré-carrega logo (uma vez) para todas as páginas
-    let logoImg = null;
-    try {
-      const dataURL = await preloadAsDataURL(logoNewStore);
-      const img = new Image();
-      await new Promise((res, rej) => { img.onload = res; img.onerror = rej; img.src = dataURL; });
-      logoImg = img;
-    } catch {}
-
-    // Canvas temporário só para medir (ctx) e gerar pages
-    const measureCanvas = document.createElement("canvas");
-    measureCanvas.width = W;
-    measureCanvas.height = H;
-    const measureCtx = measureCanvas.getContext("2d");
-    measureCtx.textBaseline = "top";
-
-    const layoutConsts = { contentTop, contentBottom, colWidth, colX };
-    const pages = paginate(measureCtx, dataSorted, layoutConsts);
-
-    // (C) helper: renderPage(ctx, pageObj, pageIndex, totalPages, headerData)
-    const renderPage = (ctx, pageObj, pageIndex, totalPages, headerData) => {
-      // Fundo
-      ctx.fillStyle = "#0E0E0E";
-      ctx.fillRect(0, 0, W, H);
-
-      let y = My;
-
-      // Logo
-      if (headerData.logoImg) {
-        const h = 72;
-        const scale = h / headerData.logoImg.height;
-        const w = headerData.logoImg.width * scale;
-        ctx.drawImage(headerData.logoImg, Mx, y, w, h);
-      }
-      y += 72 + 12;
-
-      // Título
-      ctx.fillStyle = "#FFFFFF";
-      ctx.font = "900 44px Inter, system-ui, Segoe UI, Roboto, Arial";
-      ctx.textBaseline = "top";
-      ctx.fillText("Sorteio Ativo — Lista de Compradores", Mx, y);
-      y += 44 + 14;
-
-      // Metadados
-      const metaGap = 24;
-      const metaLabels = ["Nº Sorteio", "Vendidos", "Restantes"];
-      const metaValues = [
-        String(headerData.drawId ?? "-"),
-        String(headerData.sold ?? 0),
-        String(Math.max(0, headerData.remaining ?? (100 - (headerData.sold || 0)))),
-      ];
-      const metaColW = 280;
-      for (let i = 0; i < 3; i++) {
-        const x = Mx + i * (metaColW + metaGap);
-        ctx.globalAlpha = 0.75;
-        ctx.font = "700 24px Inter, system-ui, Segoe UI, Roboto, Arial";
-        ctx.fillText(metaLabels[i], x, y);
-        ctx.globalAlpha = 1;
-        ctx.font = "900 36px Inter, system-ui, Segoe UI, Roboto, Arial";
-        ctx.fillText(metaValues[i], x, y + 28);
-      }
-      y += 36 + 28 + 18;
-
-      // Cards
-      const cardPad = 12;
-      const nameH = 34;
-      const qtdH = 26;
-      const lineH = 30;
-
-      ctx.textBaseline = "top";
-      pageObj.items.forEach((it) => {
-        const idx = idToIdx.get(it.b.user_id) ?? 0;
-        const chip = buyerColor(idx);
-
-        // Card
-        fillRounded(ctx, it.x, it.y, colWidth, it.info.cardH, 16, "#141414");
-        strokeRounded(ctx, it.x, it.y, colWidth, it.info.cardH, 16, "rgba(255,255,255,0.10)", 2);
-
-        // Chip
-        const chipSize = 18;
-        fillRounded(ctx, it.x + cardPad, it.y + cardPad + 6, chipSize, chipSize, 8, chip);
-
-        // Nome
-        ctx.fillStyle = "#FFFFFF";
-        ctx.font = "800 30px Inter, system-ui, Segoe UI, Roboto, Arial";
-        ctx.fillText(it.info.name, it.x + cardPad + chipSize + 8, it.y + cardPad);
-
-        // Qtd
-        ctx.fillStyle = "rgba(255,255,255,0.85)";
-        ctx.font = "700 24px Inter, system-ui, Segoe UI, Roboto, Arial";
-        ctx.fillText(`Qtd: ${it.info.qtd}`, it.x + cardPad, it.y + cardPad + nameH + 6);
-
-        // Números (wrap já calculado)
-        ctx.fillStyle = "rgba(255,255,255,0.9)";
-        ctx.font = "400 26px Inter, system-ui, Segoe UI, Roboto, Arial";
-        const numbersYStart = it.y + cardPad + nameH + 6 + qtdH + 8;
-        it.info.lines.forEach((ln, i) => {
-          ctx.fillText(ln, it.x + cardPad, numbersYStart + i * lineH);
-        });
-      });
-
-      // Footer (3 colunas)
-      ctx.globalAlpha = 0.8;
-      ctx.fillStyle = "#FFFFFF";
-      ctx.font = "22px Inter, system-ui, Segoe UI, Roboto, Arial";
-      ctx.textBaseline = "alphabetic";
-      const footY = H - 48;
-
-      ctx.textAlign = "left";
-      ctx.fillText(`Gerado pela administração • ${new Date().toLocaleString("pt-BR")}`, Mx, footY);
-
-      ctx.textAlign = "center";
-      ctx.fillText(`Página ${pageIdx + 1}/${totalPages}`, Math.floor(W / 2), footY);
-
-      ctx.textAlign = "right";
-      ctx.fillText("newstore", W - Mx, footY);
+      ctx.fillText(metaLabels[i], xx, y);
       ctx.globalAlpha = 1;
-    };
-
-    // (C) Export final: múltiplos downloads sequenciais
-    const totalPages = pages.length || 1;
-    for (let i = 0; i < pages.length; i++) {
-      const canvas = document.createElement("canvas");
-      canvas.width = W;
-      canvas.height = H;
-      const ctx = canvas.getContext("2d");
-      renderPage(ctx, pages[i], i, totalPages, { logoImg, drawId, sold, remaining });
-      const dataUrl = canvas.toDataURL("image/png");
-      const a = document.createElement("a");
-      a.href = dataUrl;
-      a.download =
-        totalPages === 1
-          ? `sorteio_${drawId}_lista_1080x1920.png`
-          : `sorteio_${drawId}_lista_p${i + 1}_1080x1920.png`;
-      a.click();
-      // pequeno espaçamento ajuda browsers a não "engolirem" cliques em sequência
-      // eslint-disable-next-line no-await-in-loop
-      await new Promise((r) => setTimeout(r, 60));
+      ctx.font = "900 36px Inter, system-ui, Segoe UI, Roboto, Arial";
+      ctx.fillText(metaValues[i], xx, y + 28);
     }
   };
+
+  const drawFooter = (ctx, pageIndex) => {
+    const footY = H - 48;
+
+    ctx.globalAlpha = 0.8;
+    ctx.fillStyle = "#FFFFFF";
+    ctx.font = "22px Inter, system-ui, Segoe UI, Roboto, Arial";
+    ctx.textBaseline = "alphabetic";
+
+    ctx.textAlign = "left";
+    ctx.fillText(`Gerado pela administração • ${nowStr}`, Mx, footY);
+
+    ctx.textAlign = "center";
+    ctx.fillText(`Página ${pageIndex + 1}/${totalPages}`, W / 2, footY);
+
+    ctx.textAlign = "right";
+    ctx.fillText("newstore", W - Mx, footY);
+
+    ctx.globalAlpha = 1;
+  };
+
+  const downloadCanvas = (canvas, filename) => {
+    const dataUrl = canvas.toDataURL("image/png");
+    const a = document.createElement("a");
+    a.href = dataUrl;
+    a.download = filename;
+    a.click();
+  };
+
+  // Render + download de cada página
+  for (let p = 0; p < totalPages; p++) {
+    const canvas = document.createElement("canvas");
+    canvas.width = W;
+    canvas.height = H;
+    const ctx = canvas.getContext("2d");
+
+    drawHeader(ctx);
+
+    // Cards
+    ctx.textBaseline = "top";
+
+    const page = pages[p];
+    page.placements.forEach(({ b, idx, info, x, y }) => {
+      const chip = buyerColor(idx);
+
+      // Card
+      fillRounded(ctx, x, y, colWidth, info.cardH, 16, "#141414");
+      strokeRounded(ctx, x, y, colWidth, info.cardH, 16, "rgba(255,255,255,0.10)", 2);
+
+      // Chip
+      const chipSize = 18;
+      fillRounded(ctx, x + info.cardPad, y + info.cardPad + 6, chipSize, chipSize, 8, chip);
+
+      // Nome
+      ctx.fillStyle = "#FFFFFF";
+      ctx.font = "800 30px Inter, system-ui, Segoe UI, Roboto, Arial";
+      ctx.fillText(
+        info.name,
+        x + info.cardPad + chipSize + 8,
+        y + info.cardPad
+      );
+
+      // Qtd
+      ctx.fillStyle = "rgba(255,255,255,0.85)";
+      ctx.font = "700 24px Inter, system-ui, Segoe UI, Roboto, Arial";
+      ctx.fillText(info.qtdText, x + info.cardPad, y + info.cardPad + info.nameH + 6);
+
+      // Números (wrap)
+      ctx.fillStyle = "rgba(255,255,255,0.9)";
+      ctx.font = "400 26px Inter, system-ui, Segoe UI, Roboto, Arial";
+      const numbersYStart = y + info.cardPad + info.nameH + 6 + info.qtdH + 8;
+      info.lines.forEach((ln, i) => {
+        ctx.fillText(ln, x + info.cardPad, numbersYStart + i * info.lineH);
+      });
+    });
+
+    drawFooter(ctx, p);
+
+    const filename =
+      totalPages === 1
+        ? `sorteio_${drawId}_lista_1080x1920.png`
+        : `sorteio_${drawId}_lista_p${p + 1}_1080x1920.png`;
+
+    downloadCanvas(canvas, filename);
+  }
+};
 
   return (
     <ThemeProvider theme={theme}>
