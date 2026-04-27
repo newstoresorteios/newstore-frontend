@@ -101,7 +101,7 @@ function strokeRounded(ctx, x, y, w, h, r, stroke, lw = 2) {
 
 /* ----- word wrap simples ----- */
 function wrapText(ctx, text, maxWidth) {
-  const words = text.split(/\s+/g);
+  const words = String(text || "").split(/\s+/g);
   const lines = [];
   let line = "";
   for (let i = 0; i < words.length; i++) {
@@ -344,10 +344,15 @@ export default function AdminOpenDrawBuyers() {
     a.click();
   };
 
-  /** ---------- EXPORT 2: PNG 1080x1920 (Lista de nomes e números) [PAGINADO] ---------- */
+  /** ---------- EXPORT 2: ZIP com PNGs 1080x1920 (Lista completa de nomes e números) ---------- */
   const exportPNGListMobile = async () => {
     try {
       setExportError("");
+
+      if (loading) {
+        setExportError("Aguarde carregar os dados do sorteio antes de exportar.");
+        return;
+      }
 
       if (!drawId) {
         setExportError("Não foi possível exportar: sorteio inválido.");
@@ -355,12 +360,12 @@ export default function AdminOpenDrawBuyers() {
       }
 
       const list = Array.isArray(buyers) ? buyers : [];
+
       if (list.length === 0) {
         setExportError("Não há compradores para exportar.");
         return;
       }
 
-      // garante fontes carregadas antes de medir/desenhar
       try {
         if (document.fonts && document.fonts.ready) {
           await document.fonts.ready;
@@ -370,58 +375,190 @@ export default function AdminOpenDrawBuyers() {
       const W = 1080;
       const H = 1920;
 
-      // Layout
-      const P = 64;           // padding lateral
-      const TOP_Y = 120;      // início header
-      const HEADER_END_Y = 420; // onde começam os cards
-      const COL_GAP = 44;
-      const V_GAP = 26;
-      const FOOTER_H = 90;    // espaço reservado rodapé
-      const contentBottom = H - FOOTER_H;
+      const P = 56;
+      const TOP_Y = 70;
+      const HEADER_END_Y = 350;
+      const FOOTER_H = 86;
+      const CONTENT_BOTTOM = H - FOOTER_H;
+
+      const COL_GAP = 36;
+      const V_GAP = 20;
+      const CARD_RADIUS = 24;
 
       const cardW = (W - 2 * P - COL_GAP) / 2;
+      const innerPadX = 38;
+      const innerW = cardW - innerPadX * 2;
 
-      // Offscreen ctx para medir texto
+      const NAME_FONT = "900 34px Inter, system-ui, Segoe UI, Roboto, Arial";
+      const EMAIL_FONT = "600 22px Inter, system-ui, Segoe UI, Roboto, Arial";
+      const META_FONT = "800 25px Inter, system-ui, Segoe UI, Roboto, Arial";
+      const NUM_FONT = "700 28px Inter, system-ui, Segoe UI, Roboto, Arial";
+
+      const NAME_LH = 38;
+      const EMAIL_LH = 27;
+      const META_LH = 30;
+      const NUM_LH = 32;
+
+      // Máximo de linhas de números por card.
+      // Se passar disso, o mesmo comprador vira "Parte 1/2", "Parte 2/2" etc.
+      // Assim não corta números e não estoura o canvas.
+      const MAX_NUM_LINES_PER_CARD = 9;
+
+      const now = new Date();
+      const stamp = now.toLocaleString("pt-BR", { hour12: false });
+
       const mCanvas = document.createElement("canvas");
       mCanvas.width = 10;
       mCanvas.height = 10;
       const mctx = mCanvas.getContext("2d");
 
-      const now = new Date();
-      const stamp = now.toLocaleString("pt-BR", { hour12: false });
+      const normalizeBuyer = (b, idx) => {
+        const rawNums = Array.isArray(b?.numbers) ? b.numbers : [];
 
-      // Ordena por nome (boa prática para divulgação)
-      const data = [...list].sort((a, b) =>
-        String(a.name || a.email || "").localeCompare(
-          String(b.name || b.email || ""),
-          "pt-BR",
-          { sensitivity: "base" }
-        )
-      );
+        const cleanNums = Array.from(
+          new Set(
+            rawNums
+              .map((n) => Number(n))
+              .filter((n) => Number.isFinite(n))
+          )
+        ).sort((a, z) => a - z);
 
-      // Helpers de texto (usa o mesmo wrap do arquivo, se já existir; senão cria fallback)
-      const wrap = (ctx, text, maxWidth, lineHeight) => {
-        void lineHeight;
-        // Se existir wrapText no arquivo, usa ela
-        if (typeof wrapText === "function") {
-          return wrapText(ctx, text, maxWidth);
+        const name = String(b?.name || b?.email || "(sem nome)").trim();
+        const email = String(b?.email || "").trim();
+
+        const qty = Number(
+          b?.count || cleanNums.length || 0
+        );
+
+        const colorIndex = idToIdx.get(b?.user_id) ?? idx;
+
+        return {
+          user_id: b?.user_id,
+          name,
+          email,
+          numbers: cleanNums,
+          qty,
+          total_cents: Number(b?.total_cents || 0),
+          accent: buyerColor(colorIndex),
+        };
+      };
+
+      const wrapSafe = (ctx, text, maxWidth) => {
+        const value = String(text || "").trim();
+        if (!value) return [];
+        return wrapText(ctx, value, maxWidth);
+      };
+
+      const fitSingleLine = (ctx, text, maxWidth) => {
+        const value = String(text || "");
+        if (ctx.measureText(value).width <= maxWidth) return value;
+
+        let out = value;
+        while (out.length > 3 && ctx.measureText(`${out}…`).width > maxWidth) {
+          out = out.slice(0, -1);
         }
-        // fallback simples
-        const words = String(text || "").split(" ");
+        return `${out}…`;
+      };
+
+      const numbersToLines = (ctx, nums, maxWidth) => {
+        if (!Array.isArray(nums) || nums.length === 0) {
+          return ["Sem números informados"];
+        }
+
+        const parts = nums.map(pad2);
         const lines = [];
         let line = "";
-        for (let n = 0; n < words.length; n++) {
-          const testLine = line ? `${line} ${words[n]}` : words[n];
-          const w = ctx.measureText(testLine).width;
-          if (w > maxWidth && line) {
-            lines.push(line);
-            line = words[n];
+
+        for (const part of parts) {
+          const candidate = line ? `${line}, ${part}` : part;
+
+          if (ctx.measureText(candidate).width <= maxWidth) {
+            line = candidate;
           } else {
-            line = testLine;
+            if (line) lines.push(line);
+            line = part;
           }
         }
+
         if (line) lines.push(line);
+
         return lines;
+      };
+
+      const chunkArray = (arr, size) => {
+        const chunks = [];
+        for (let i = 0; i < arr.length; i += size) {
+          chunks.push(arr.slice(i, i + size));
+        }
+        return chunks;
+      };
+
+      const data = list
+        .map(normalizeBuyer)
+        .sort((a, b) =>
+          String(a.name || a.email || "").localeCompare(
+            String(b.name || b.email || ""),
+            "pt-BR",
+            { sensitivity: "base" }
+          )
+        );
+
+      const buildCardItems = () => {
+        const items = [];
+
+        data.forEach((buyer, idx) => {
+          mctx.font = NAME_FONT;
+          let titleLines = wrapSafe(mctx, buyer.name, innerW);
+
+          // Limita somente nome muito grande para preservar layout.
+          // Os números não são cortados; quando necessário, são divididos em mais cards.
+          if (titleLines.length > 2) {
+            titleLines = titleLines.slice(0, 2);
+            titleLines[1] = fitSingleLine(mctx, titleLines[1], innerW);
+          }
+
+          mctx.font = EMAIL_FONT;
+          const emailLine = buyer.email ? fitSingleLine(mctx, buyer.email, innerW) : "";
+
+          mctx.font = NUM_FONT;
+          const allNumLines = numbersToLines(mctx, buyer.numbers, innerW);
+          const numberLineChunks = chunkArray(allNumLines, MAX_NUM_LINES_PER_CARD);
+          const totalParts = numberLineChunks.length;
+
+          numberLineChunks.forEach((numLines, partIndex) => {
+            const isSplit = totalParts > 1;
+
+            const partLabel = isSplit
+              ? `Parte ${partIndex + 1}/${totalParts}`
+              : "";
+
+            const h =
+              30 +
+              titleLines.length * NAME_LH +
+              (emailLine ? EMAIL_LH + 4 : 0) +
+              META_LH +
+              (partLabel ? 24 : 0) +
+              16 +
+              numLines.length * NUM_LH +
+              34;
+
+            items.push({
+              buyerIndex: idx,
+              user_id: buyer.user_id,
+              name: buyer.name,
+              emailLine,
+              qty: buyer.qty,
+              total_cents: buyer.total_cents,
+              titleLines,
+              numLines,
+              partLabel,
+              accent: buyer.accent,
+              h,
+            });
+          });
+        });
+
+        return items;
       };
 
       const bg = (ctx) => {
@@ -432,254 +569,265 @@ export default function AdminOpenDrawBuyers() {
         ctx.fillRect(0, 0, W, H);
       };
 
+      let logoImg = null;
+
+      try {
+        const dataURL = await preloadAsDataURL(logoNewStore);
+        logoImg = new Image();
+        await new Promise((resolve, reject) => {
+          logoImg.onload = resolve;
+          logoImg.onerror = reject;
+          logoImg.src = dataURL;
+        });
+      } catch {
+        logoImg = null;
+      }
+
       const drawHeader = (ctx) => {
-        // LOGO (simplificado igual ao seu)
-        // quadrado do logo
-        ctx.fillStyle = "#ffffff";
-        ctx.globalAlpha = 0.92;
-        ctx.fillRect(P, TOP_Y, 54, 54);
-        ctx.globalAlpha = 1;
-
-        // “N”
-        ctx.fillStyle = "#0b0b0b";
-        ctx.font = "900 36px Inter, system-ui, Arial";
-        ctx.textBaseline = "middle";
-        ctx.fillText("N", P + 16, TOP_Y + 28);
-
-        // NEW STORE
-        ctx.fillStyle = "#ffffff";
-        ctx.font = "800 42px Inter, system-ui, Arial";
+        ctx.textAlign = "left";
         ctx.textBaseline = "alphabetic";
-        ctx.fillText("NEW STORE", P + 78, TOP_Y + 42);
 
-        // Título
-        ctx.font = "900 64px Inter, system-ui, Arial";
-        ctx.fillText("Sorteio Ativo — Lista de Compradores", P, TOP_Y + 130);
+        if (logoImg) {
+          const logoH = 52;
+          const scale = logoH / logoImg.height;
+          const logoW = logoImg.width * scale;
+          ctx.drawImage(logoImg, P, TOP_Y, logoW, logoH);
+        } else {
+          ctx.fillStyle = "#ffffff";
+          ctx.globalAlpha = 0.92;
+          ctx.fillRect(P, TOP_Y, 52, 52);
+          ctx.globalAlpha = 1;
 
-        // Métricas
-        const metaY = TOP_Y + 210;
-        ctx.font = "700 30px Inter, system-ui, Arial";
-        ctx.globalAlpha = 0.75;
-        ctx.fillText("Nº Sorteio", P, metaY);
-        ctx.fillText("Vendidos", P + 360, metaY);
-        ctx.fillText("Restantes", P + 700, metaY);
+          ctx.fillStyle = "#0b0b0b";
+          ctx.font = "900 34px Inter, system-ui, Arial";
+          ctx.textBaseline = "middle";
+          ctx.fillText("N", P + 16, TOP_Y + 27);
+          ctx.textBaseline = "alphabetic";
 
-        ctx.globalAlpha = 1;
-        ctx.font = "900 58px Inter, system-ui, Arial";
-        ctx.fillText(String(drawId), P, metaY + 62);
-        ctx.fillText(String(sold), P + 360, metaY + 62);
-        ctx.fillText(String(remaining), P + 700, metaY + 62);
+          ctx.fillStyle = "#ffffff";
+          ctx.font = "800 40px Inter, system-ui, Arial";
+          ctx.fillText("NEW STORE", P + 74, TOP_Y + 40);
+        }
+
+        ctx.fillStyle = "#ffffff";
+        ctx.font = "900 54px Inter, system-ui, Arial";
+        ctx.fillText("Lista de Compradores", P, TOP_Y + 125);
+
+        ctx.font = "700 28px Inter, system-ui, Arial";
+        ctx.fillStyle = "rgba(255,255,255,.72)";
+        ctx.fillText("Sorteio Ativo — participantes confirmados", P, TOP_Y + 166);
+
+        const metaY = TOP_Y + 220;
+
+        const meta = [
+          ["Nº Sorteio", String(drawId ?? "-")],
+          ["Vendidos", String(sold ?? 0)],
+          ["Restantes", String(remaining ?? 0)],
+          ["Compradores", String(list.length)],
+        ];
+
+        const metaW = 240;
+
+        meta.forEach(([label, value], i) => {
+          const x = P + i * metaW;
+
+          ctx.font = "700 24px Inter, system-ui, Arial";
+          ctx.fillStyle = "rgba(255,255,255,.62)";
+          ctx.fillText(label, x, metaY);
+
+          ctx.font = "900 42px Inter, system-ui, Arial";
+          ctx.fillStyle = "#ffffff";
+          ctx.fillText(value, x, metaY + 48);
+        });
       };
 
       const drawFooter = (ctx, pageIndex, totalPages) => {
-        const footerY = H - 36;
-        ctx.font = "600 24px Inter, system-ui, Arial";
-        ctx.fillStyle = "rgba(255,255,255,.75)";
-        const text = `Gerado pela administração • ${stamp} • página ${pageIndex}/${totalPages}`;
-        ctx.fillText(text, P, footerY);
+        const footerY = H - 34;
 
-        ctx.font = "700 24px Inter, system-ui, Arial";
-        ctx.fillStyle = "rgba(255,255,255,.85)";
-        ctx.fillText("newstore", W - P - ctx.measureText("newstore").width, footerY);
+        ctx.textAlign = "left";
+        ctx.textBaseline = "alphabetic";
+        ctx.font = "600 23px Inter, system-ui, Arial";
+        ctx.fillStyle = "rgba(255,255,255,.72)";
+        ctx.fillText(
+          `Gerado pela administração • ${stamp} • página ${pageIndex}/${totalPages}`,
+          P,
+          footerY
+        );
+
+        ctx.textAlign = "right";
+        ctx.font = "800 23px Inter, system-ui, Arial";
+        ctx.fillStyle = "rgba(255,255,255,.88)";
+        ctx.fillText("newstore", W - P, footerY);
+
+        ctx.textAlign = "left";
       };
 
       const drawCard = (ctx, item) => {
-        const { x, y, h, accent, titleLines, qty, numLines } = item;
+        const { x, y, h } = item;
 
-        // card
-        const fill = "#111111";
-        const stroke = "#2c2c2c";
+        fillRounded(ctx, x, y, cardW, h, CARD_RADIUS, "#111111");
+        strokeRounded(ctx, x, y, cardW, h, CARD_RADIUS, "#2c2c2c", 2);
 
-        // usa fillRounded existente se existir, senão fallback
-        if (typeof fillRounded === "function" && typeof strokeRounded === "function") {
-          fillRounded(ctx, x, y, cardW, h, 26, fill);
-          strokeRounded(ctx, x, y, cardW, h, 26, stroke, 2);
-        } else {
-          // fallback: retângulo normal
-          ctx.fillStyle = fill;
-          ctx.fillRect(x, y, cardW, h);
-          ctx.strokeStyle = stroke;
-          ctx.lineWidth = 2;
-          ctx.strokeRect(x, y, cardW, h);
-        }
-
-        // bolinha accent
-        ctx.fillStyle = accent;
+        ctx.fillStyle = item.accent;
         ctx.beginPath();
         ctx.arc(x + 24, y + 30, 10, 0, Math.PI * 2);
         ctx.fill();
 
-        const innerX = x + 44;
-        let cy = y + 44;
+        const innerX = x + innerPadX;
+        let cy = y + 42;
 
-        // Nome
+        ctx.textAlign = "left";
+        ctx.textBaseline = "alphabetic";
+
         ctx.fillStyle = "#ffffff";
-        ctx.font = "900 40px Inter, system-ui, Arial";
-        for (const line of titleLines) {
+        ctx.font = NAME_FONT;
+
+        for (const line of item.titleLines) {
           ctx.fillText(line, innerX, cy);
-          cy += 44;
+          cy += NAME_LH;
         }
 
-        // Qtd
-        ctx.font = "700 30px Inter, system-ui, Arial";
-        ctx.globalAlpha = 0.8;
-        ctx.fillText(`Qtd: ${qty}`, innerX, cy + 6);
-        ctx.globalAlpha = 1;
+        if (item.emailLine) {
+          ctx.font = EMAIL_FONT;
+          ctx.fillStyle = "rgba(255,255,255,.62)";
+          ctx.fillText(item.emailLine, innerX, cy);
+          cy += EMAIL_LH + 4;
+        }
 
-        cy += 44;
+        ctx.font = META_FONT;
+        ctx.fillStyle = "rgba(255,255,255,.86)";
+        ctx.fillText(`Qtd total: ${item.qty}`, innerX, cy);
+        cy += META_LH;
 
-        // Números
-        ctx.font = "600 30px Inter, system-ui, Arial";
-        ctx.fillStyle = "rgba(255,255,255,.9)";
-        for (const line of numLines) {
+        if (item.partLabel) {
+          ctx.font = "800 22px Inter, system-ui, Arial";
+          ctx.fillStyle = item.accent;
+          ctx.fillText(item.partLabel, innerX, cy);
+          cy += 24;
+        }
+
+        cy += 8;
+
+        ctx.font = NUM_FONT;
+        ctx.fillStyle = "rgba(255,255,255,.94)";
+
+        for (const line of item.numLines) {
           ctx.fillText(line, innerX, cy);
-          cy += 34;
+          cy += NUM_LH;
         }
       };
 
-      // Calcula altura de card e quebra linhas uma vez (para paginação)
-      const buildCardInfo = (b, idx) => {
-        const name = (b?.name || "(sem nome)").trim();
-        const qty = Number(b?.count || (b?.numbers?.length ?? 0) || 0);
+      const cardItems = buildCardItems();
 
-        const nums = Array.isArray(b?.numbers) ? b.numbers.slice() : [];
-        const numbersStr = nums.map(pad2).join(", ");
-
-        const innerW = cardW - 64; // padding interno aproximado
-
-        // Nome (pode quebrar)
-        mctx.font = "900 40px Inter, system-ui, Arial";
-        const titleLines = wrap(mctx, name, innerW, 44);
-
-        // Números (pode quebrar)
-        mctx.font = "600 30px Inter, system-ui, Arial";
-        let numLines = wrap(mctx, numbersStr, innerW, 34);
-
-        // proteção: se vier MUITA linha (pode estourar card)
-        // mantém legível sem quebrar layout infinito
-        const MAX_NUM_LINES = 6;
-        if (numLines.length > MAX_NUM_LINES) {
-          numLines = numLines.slice(0, MAX_NUM_LINES);
-          // adiciona reticências no final da última
-          const last = numLines[numLines.length - 1];
-          numLines[numLines.length - 1] = last.endsWith("…") ? last : `${last} …`;
-        }
-
-        // altura do card calculada
-        // base: topo + (linhas nome) + linha qtd + linhas numeros + padding
-        const h =
-          28 +                 // top padding interno
-          titleLines.length * 44 +
-          18 +                 // espaço
-          34 +                 // linha qtd
-          14 +                 // espaço
-          numLines.length * 34 +
-          34;                  // bottom padding
-
-        // corzinha por idx (usa buyerColor existente se existir)
-        let accent = "#3ddc97";
-        try {
-          if (typeof buyerColor === "function") {
-            accent = buyerColor(idx);
-          } else if (Array.isArray(palette) && palette.length) {
-            accent = palette[idx % palette.length];
-          }
-        } catch {}
-
-        return { titleLines, qty, numLines, h, accent };
-      };
-
-      // ====== 1) PAGINAÇÃO (layout pages) ======
       const pages = [];
       let current = {
         items: [],
         colY: [HEADER_END_Y, HEADER_END_Y],
       };
 
-      for (let i = 0; i < data.length; i++) {
-        const b = data[i];
-        const info = buildCardInfo(b, i);
-
-        // decide coluna mais “vazia”
+      for (const item of cardItems) {
         const col = current.colY[0] <= current.colY[1] ? 0 : 1;
-        const x = col === 0 ? P : P + cardW + COL_GAP;
         const y = current.colY[col];
+        const nextY = y + item.h + V_GAP;
 
-        const nextY = y + info.h + V_GAP;
-
-        // Se não cabe, fecha página atual e cria nova
-        if (nextY > contentBottom && current.items.length > 0) {
+        if (nextY > CONTENT_BOTTOM && current.items.length > 0) {
           pages.push(current);
-          current = { items: [], colY: [HEADER_END_Y, HEADER_END_Y] };
-          // reprocessa o mesmo comprador na página nova
-          i--;
-          continue;
+          current = {
+            items: [],
+            colY: [HEADER_END_Y, HEADER_END_Y],
+          };
         }
 
+        const newCol = current.colY[0] <= current.colY[1] ? 0 : 1;
+        const newX = newCol === 0 ? P : P + cardW + COL_GAP;
+        const newY = current.colY[newCol];
+
         current.items.push({
-          x,
-          y,
-          h: info.h,
-          accent: info.accent,
-          titleLines: info.titleLines,
-          qty: info.qty,
-          numLines: info.numLines,
+          ...item,
+          x: newX,
+          y: newY,
         });
 
-        current.colY[col] = nextY;
+        current.colY[newCol] = newY + item.h + V_GAP;
       }
 
-      if (current.items.length > 0) pages.push(current);
+      if (current.items.length > 0) {
+        pages.push(current);
+      }
 
-      // ====== 2) RENDERIZAÇÃO DAS PÁGINAS ======
-      const blobs = [];
+      if (pages.length === 0) {
+        setExportError("Nenhuma página foi gerada para exportação.");
+        return;
+      }
+
+      const base = safeFilename(`sorteio_${drawId}_lista_1080x1920`);
+      const zip = new JSZip();
 
       for (let p = 0; p < pages.length; p++) {
         const canvas = document.createElement("canvas");
         canvas.width = W;
         canvas.height = H;
+
         const ctx = canvas.getContext("2d");
 
-        // background + header
         bg(ctx);
         drawHeader(ctx);
 
-        // cards
         for (const item of pages[p].items) {
           drawCard(ctx, item);
         }
 
-        // footer (com página)
         drawFooter(ctx, p + 1, pages.length);
 
         const blob = await canvasToBlob(canvas, "image/png");
-        blobs.push(blob);
+        zip.file(`${base}_p${String(p + 1).padStart(2, "0")}.png`, blob);
       }
 
-      // ====== 3) DOWNLOAD (PNG único OU ZIP) ======
-      const base = safeFilename(`sorteio_${drawId}_lista_1080x1920`);
+      const csvRows = [];
+      csvRows.push(["draw_id", "user_id", "name", "email", "count", "numbers", "total_cents"]);
 
-      if (blobs.length === 1) {
-        downloadBlob(blobs[0], `${base}.png`);
-        return;
-      }
+      data.forEach((b) => {
+        csvRows.push([
+          drawId,
+          b.user_id,
+          b.name,
+          b.email,
+          b.qty,
+          b.numbers.map(pad2).join(" "),
+          b.total_cents || 0,
+        ]);
+      });
 
-      const zip = new JSZip();
-      for (let i = 0; i < blobs.length; i++) {
-        zip.file(`${base}_p${String(i + 1).padStart(2, "0")}.png`, blobs[i]);
-      }
+      const csv = csvRows
+        .map((row) =>
+          row
+            .map((v) => `"${String(v ?? "").replaceAll('"', '""')}"`)
+            .join(",")
+        )
+        .join("\n");
 
-      // opcional: arquivo texto resumo dentro do zip
+      zip.file(`${base}_compradores.csv`, csv);
+
       zip.file(
         `${base}_README.txt`,
-        `Sorteio ${drawId}\nTotal compradores: ${list.length}\nPaginas: ${blobs.length}\nGerado em: ${stamp}\n`
+        [
+          `Sorteio: ${drawId}`,
+          `Total compradores: ${list.length}`,
+          `Vendidos: ${sold}`,
+          `Restantes: ${remaining}`,
+          `Total paginas PNG: ${pages.length}`,
+          `Gerado em: ${stamp}`,
+          "",
+          "Cada PNG possui formato 1080x1920.",
+          "Compradores com muitos números podem aparecer em mais de um card como Parte 1/2, Parte 2/2 etc.",
+        ].join("\n")
       );
 
       const zipBlob = await zip.generateAsync({ type: "blob" });
       downloadBlob(zipBlob, `${base}.zip`);
     } catch (e) {
       console.error(e);
-      setExportError(e?.message || "Falha ao exportar PNG (lista).");
+      setExportError(e?.message || "Falha ao exportar ZIP com PNGs da lista.");
     }
   };
 
@@ -742,9 +890,15 @@ export default function AdminOpenDrawBuyers() {
                 Exportar PNG (Grade 1080×1920)
               </Button>
               <Button startIcon={<DownloadRoundedIcon />} onClick={exportPNGListMobile} variant="contained" color="primary">
-                Exportar PNG (Lista 1080×1920)
+                Exportar ZIP (Lista PNGs 1080×1920)
               </Button>
             </Stack>
+
+            {exportError && (
+              <Typography sx={{ mt: 2, color: "#ff8a80", fontWeight: 700 }}>
+                {exportError}
+              </Typography>
+            )}
 
             <Divider sx={{ my: 2.5 }} />
 
