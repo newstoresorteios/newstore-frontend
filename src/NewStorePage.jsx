@@ -289,7 +289,7 @@ export default function NewStorePage({
     };
     window.addEventListener("ns:draw:changed", onDrawChanged);
     return () => window.removeEventListener("ns:draw:changed", onDrawChanged);
-  }, [API_BASE]);
+  }, []);
 
   // Polling leve de /api/numbers (sem Content-Type p/ não gerar preflight)
   const reloadSrvNumbers = React.useCallback(async () => {
@@ -327,7 +327,7 @@ export default function NewStorePage({
     } catch {
       /* silencioso */
     }
-  }, [API_BASE]);
+  }, []);
 
   React.useEffect(() => {
     let alive = true;
