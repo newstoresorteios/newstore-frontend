@@ -269,8 +269,7 @@ export default function NewStorePage({
     return () => {
       alive = false;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [API_BASE]);
+  }, [currentDrawId]);
 
   // Refetch imediato quando um novo sorteio for criado/aberto (admin)
   React.useEffect(() => {

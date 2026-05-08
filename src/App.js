@@ -89,10 +89,38 @@ export default function App() {
                 </AdminRoute>
               }
             />
-            <Route path="/admin/AdminClientesUser" element={<AdminUsersPage />} />
-            <Route path="/me/draw/:id" element={<DrawBoardPage />} />
-            <Route path="/admin/sorteiosAtivos" element={<AdminOpenDrawBuyers />} />
-            <Route path="/admin/analytics" element={<AdminAnalytics />} />
+            <Route
+              path="/admin/AdminClientesUser"
+              element={
+                <AdminRoute>
+                  <AdminUsersPage />
+                </AdminRoute>
+              }
+            />
+            <Route
+              path="/me/draw/:id"
+              element={
+                <ProtectedRoute>
+                  <DrawBoardPage />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/admin/sorteiosAtivos"
+              element={
+                <AdminRoute>
+                  <AdminOpenDrawBuyers />
+                </AdminRoute>
+              }
+            />
+            <Route
+              path="/admin/analytics"
+              element={
+                <AdminRoute>
+                  <AdminAnalytics />
+                </AdminRoute>
+              }
+            />
           </Routes>
         </BrowserRouter>
       </SelectionContext.Provider>

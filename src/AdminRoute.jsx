@@ -2,7 +2,6 @@ import * as React from "react";
 import { Navigate, useLocation } from "react-router-dom";
 import { useAuth } from "./authContext";
 
-const ADMIN_EMAIL = "admin@newstore.com.br";
 const DBG = String(localStorage.getItem("NS_DEBUG") || "") === "1";
 const log = (...a) => { if (DBG) console.log("[guard AdminRoute]", ...a); };
 
@@ -18,9 +17,7 @@ export default function AdminRoute({ children }) {
     return <Navigate to="/login" state={{ from: location }} replace />;
   }
 
-  const isAdmin =
-    user.role === "admin" || user.is_admin === true ||
-    (user.email || "").toLowerCase() === ADMIN_EMAIL;
+  const isAdmin = user.role === "admin" || user.is_admin === true;
 
   if (!isAdmin) {
     log("not admin -> /");

@@ -231,6 +231,7 @@ export default function AdminUsersPage() {
   };
   const [form, setForm] = React.useState(blank);
   const [saldoStr, setSaldoStr] = React.useState("0,00");
+  const [balanceAdjustmentReason, setBalanceAdjustmentReason] = React.useState("");
 
   const [saving, setSaving] = React.useState(false);
   const [toast, setToast] = React.useState({ open: false, msg: "", sev: "success" });
@@ -239,6 +240,8 @@ export default function AdminUsersPage() {
   const [drawId, setDrawId] = React.useState("");
   const [numbersCsv, setNumbersCsv] = React.useState("");
   const [assigning, setAssigning] = React.useState(false);
+  const [creditCouponOnAssign, setCreditCouponOnAssign] = React.useState(true);
+  const [noCouponCreditReason, setNoCouponCreditReason] = React.useState("");
 
   // board (referência)
   const [board, setBoard] = React.useState([]);
@@ -307,10 +310,12 @@ export default function AdminUsersPage() {
       coupon_value_cents: Number(u.coupon_value_cents || 0),
     });
     setSaldoStr(centsToBRLString(u.coupon_value_cents || 0));
+    setBalanceAdjustmentReason("");
   }
   function handleNew() {
     setForm(blank);
     setSaldoStr("0,00");
+    setBalanceAdjustmentReason("");
   }
 
   async function handleSave() {
@@ -325,6 +330,7 @@ export default function AdminUsersPage() {
         is_admin: !!form.is_admin,
         coupon_code: String(form.coupon_code || "").trim(),
         coupon_value_cents: brlStringToCents(saldoStr),
+        balance_adjustment_reason: balanceAdjustmentReason || null,
         ...(creating ? { set_default_password: true } : {}),
       };
       const url = form.id ? `/admin/users/${form.id}` : "/admin/users";
@@ -401,6 +407,10 @@ export default function AdminUsersPage() {
       setToast({ open: true, sev: "warning", msg: "Informe um sorteio e pelo menos um número." });
       return;
     }
+    if (!creditCouponOnAssign && !String(noCouponCreditReason || "").trim()) {
+      setToast({ open: true, sev: "warning", msg: "Informe o motivo da cortesia/sem crédito." });
+      return;
+    }
 
     try {
       setAssigning(true);
@@ -408,11 +418,19 @@ export default function AdminUsersPage() {
         method: "POST",
         headers: { "Content-Type": "application/json", ...authHeaders() },
         credentials: "include",
-        body: JSON.stringify({ user_id: form.id, draw_id: d, numbers: nums }),
+        body: JSON.stringify({
+          user_id: form.id,
+          draw_id: d,
+          numbers: nums,
+          credit_coupon: creditCouponOnAssign,
+          no_coupon_credit_reason: creditCouponOnAssign ? null : String(noCouponCreditReason || "").trim(),
+        }),
       });
       if (!r.ok) throw new Error("assign_failed");
       setToast({ open: true, sev: "success", msg: "Números atribuídos com sucesso." });
       setNumbersCsv("");
+      setNoCouponCreditReason("");
+      setCreditCouponOnAssign(true);
 
       // atualiza a referência do board
       setBoardLoading(true);
@@ -519,6 +537,18 @@ export default function AdminUsersPage() {
                 sx={{ maxWidth: 220 }}
               />
             </Stack>
+            <Typography variant="body2" sx={{ mt: 1, opacity: 0.75 }}>
+              Alterações manuais no saldo serão registradas no histórico financeiro do cliente.
+            </Typography>
+            <Stack direction={{ xs: "column", md: "row" }} spacing={2} sx={{ mt: 1.5 }}>
+              <TextField
+                label="Motivo do ajuste"
+                value={balanceAdjustmentReason}
+                onChange={(e) => setBalanceAdjustmentReason(e.target.value)}
+                placeholder="Opcional"
+                fullWidth
+              />
+            </Stack>
 
             <Stack direction="row" spacing={1.5} sx={{ mt: 2 }}>
               <Button startIcon={<AddRoundedIcon />} onClick={handleNew}>Novo</Button>
@@ -580,6 +610,28 @@ export default function AdminUsersPage() {
                   Atribuir
                 </Button>
               </Stack>
+            </Stack>
+            <Stack sx={{ mt: 1.5 }} spacing={1}>
+              <Stack direction="row" alignItems="center">
+                <Checkbox
+                  checked={creditCouponOnAssign}
+                  onChange={(e) => setCreditCouponOnAssign(e.target.checked)}
+                />
+                <Typography sx={{ opacity: 0.95 }}>Gerar saldo/cupom para os números atribuídos</Typography>
+              </Stack>
+              {creditCouponOnAssign ? (
+                <Typography variant="body2" sx={{ opacity: 0.75 }}>
+                  Os números serão atribuídos e o saldo/cupom será creditado conforme o valor atual do sorteio.
+                </Typography>
+              ) : (
+                <TextField
+                  label="Motivo da cortesia/sem crédito"
+                  value={noCouponCreditReason}
+                  onChange={(e) => setNoCouponCreditReason(e.target.value)}
+                  required
+                  fullWidth
+                />
+              )}
             </Stack>
 
             {/* Referência do board (desktop e mobile) */}
