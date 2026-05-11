@@ -643,7 +643,7 @@ export default function NewStorePage({
               </Typography>
               <Typography variant="h6" sx={{ opacity: 0.9 }}>
                 A New Store apresenta o único sorteio em que você nunca sai perdendo.
-Ao participar, você garante uma vaga na disputa por <strong>R$ 5.000 em créditos</strong>, e ainda transforma o valor da sua participação em um Cartão Presente Digital, válido para compras em todo o site.
+Ao participar, você garante uma vaga na disputa por <strong>Prêmios</strong>, e ainda transforma o valor da sua participação em um Cartão Presente Digital, válido para compras em todo o site.
 ⏳ Sorteio válido até o preenchimento total da tabela.
 Baseado no resultado oficial da Lotomania (Caixa Econômica Federal).
               </Typography>
