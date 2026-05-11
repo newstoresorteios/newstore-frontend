@@ -47,10 +47,10 @@ import AccountCircleRoundedIcon from "@mui/icons-material/AccountCircleRounded";
 
 // Imagens locais
 import imgCardExemplo from "./cartaoilustrativoTexto-do-seu-paragrafo-6-1024x1024.png";
-{/*import imgTabelaUtilizacao from "./Tabela-para-utilizacao-do-3-1024x1024.png";*/}
+
 import imgAcumulo1 from "./1-2-1-1024x512.png";  
 import imgAcumulo2 from "./2-1-1-1024x512.png";
-//teste
+
 // Tema
 const theme = createTheme({
   palette: {
