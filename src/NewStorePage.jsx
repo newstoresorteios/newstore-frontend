@@ -1022,12 +1022,14 @@ Baseado no resultado oficial da Lotomania (Caixa Econômica Federal).
                 </Typography>
                 
               </Stack>
+               {/* IMAGEM RETIRADA PARA DAR LUGAR AO SIMULADOR 
               <Box
                 component="img"
                 src={imgTabelaUtilizacao}
                 alt="Tabela para utilização do cartão presente"
                 sx={{ width: "100%", maxWidth: 900, mx: "auto", display: "block", borderRadius: 2, mt: 1 }}
               />
+               FIM COMENTÁRIO */}
               <Typography align="center" sx={{ mt: 1.5, fontWeight: 700, letterSpacing: 1 }}>
                 Sempre considerar o valor integral do produto na forma de pagamento escolhida (Pix ou crédito).
               </Typography>
