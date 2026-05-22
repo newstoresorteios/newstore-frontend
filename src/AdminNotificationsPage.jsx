@@ -225,11 +225,15 @@ export default function AdminNotificationsPage() {
         },
       });
       setTestResult(res);
-      await loadDispatches();
     } catch (e) {
       setTestError(e?.message || "Falha ao enviar teste.");
     } finally {
       setTestSending(false);
+      try {
+        await loadDispatches();
+      } catch (reloadErr) {
+        console.warn("[adminNotifications] reload dispatches after test failed", reloadErr?.message);
+      }
     }
   };
 
@@ -370,6 +374,13 @@ export default function AdminNotificationsPage() {
             {!health.testRecipientConfigured && (
               <Alert severity="error" sx={{ mb: 2 }}>
                 NOTIFICATION_TEST_WHATSAPP_TO não configurado. O envio de teste será bloqueado.
+              </Alert>
+            )}
+            {health.genericTestTemplateEnvConfigured === false && (
+              <Alert severity="warning" sx={{ mb: 2 }}>
+                Template de teste não configurado. Preencha o campo Template ID no formulário, configure
+                BREVO_WHATSAPP_GENERIC_TEST_TEMPLATE_ID no Render ou atualize provider_template_id do template
+                GENERIC_TEST no banco.
               </Alert>
             )}
           </>
@@ -516,7 +527,13 @@ export default function AdminNotificationsPage() {
                   <Typography variant="body2">
                     result.recipient_forced: {String(result?.recipient_forced ?? result?.recipientForced ?? false)}
                   </Typography>
-                  {(result?.reason || result?.error) && (
+                  {result?.reason === "missing_template_id" && (
+                    <Alert severity="error" sx={{ mt: 1 }}>
+                      {result.message ||
+                        "Template ID ausente. Configure BREVO_WHATSAPP_GENERIC_TEST_TEMPLATE_ID, preencha provider_template_id no banco ou informe template_id no formulário."}
+                    </Alert>
+                  )}
+                  {(result?.reason || result?.error) && result?.reason !== "missing_template_id" && (
                     <Typography variant="body2" color="warning.main">
                       {result.reason || result.error}
                     </Typography>
@@ -569,6 +586,9 @@ export default function AdminNotificationsPage() {
                 Atualizar
               </Button>
             </Stack>
+            <Typography variant="body2" sx={{ mb: 1, opacity: 0.75 }}>
+              Total carregado: {dispatches.length}
+            </Typography>
             <TableContainer>
               <Table size="small">
                 <TableHead>
@@ -647,8 +667,9 @@ export default function AdminNotificationsPage() {
                   })}
                   {!dispatches.length && (
                     <TableRow>
-                      <TableCell colSpan={14} align="center" sx={{ opacity: 0.6 }}>
-                        Nenhum disparo encontrado.
+                      <TableCell colSpan={14} align="center" sx={{ opacity: 0.6, py: 3, whiteSpace: "normal" }}>
+                        Nenhum disparo encontrado. Se você acabou de enviar um teste, clique em Atualizar. Caso
+                        continue vazio, verifique no Network se a API retornou rows/dispatches.
                       </TableCell>
                     </TableRow>
                   )}
@@ -672,6 +693,9 @@ export default function AdminNotificationsPage() {
             >
               Atualizar
             </Button>
+            <Typography variant="body2" sx={{ mb: 1, opacity: 0.75 }}>
+              Mensagens carregadas: {inbound.length}
+            </Typography>
             <TableContainer>
               <Table size="small">
                 <TableHead>
@@ -727,8 +751,9 @@ export default function AdminNotificationsPage() {
                   })}
                   {!inbound.length && (
                     <TableRow>
-                      <TableCell colSpan={9} align="center" sx={{ opacity: 0.6 }}>
-                        Nenhuma mensagem recebida.
+                      <TableCell colSpan={9} align="center" sx={{ opacity: 0.6, py: 3, whiteSpace: "normal" }}>
+                        Nenhuma mensagem recebida ainda. Esta aba só será preenchida após configurar o webhook inbound
+                        da Brevo e receber uma mensagem.
                       </TableCell>
                     </TableRow>
                   )}
@@ -743,6 +768,9 @@ export default function AdminNotificationsPage() {
             <Alert severity="info" sx={{ mb: 2 }}>
               Os IDs dos templates da Brevo são configurados no banco ou nas variáveis de ambiente do backend.
             </Alert>
+            <Typography variant="body2" sx={{ mb: 1, opacity: 0.75 }}>
+              Templates carregados: {templates.length}
+            </Typography>
             <TableContainer>
               <Table size="small">
                 <TableHead>
@@ -774,8 +802,9 @@ export default function AdminNotificationsPage() {
                   ))}
                   {!templates.length && (
                     <TableRow>
-                      <TableCell colSpan={8} align="center" sx={{ opacity: 0.6 }}>
-                        Nenhum template cadastrado.
+                      <TableCell colSpan={8} align="center" sx={{ opacity: 0.6, py: 3, whiteSpace: "normal" }}>
+                        Nenhum template carregado. Verifique se a tabela notification_templates possui registros ou se a
+                        API retornou rows/templates.
                       </TableCell>
                     </TableRow>
                   )}
