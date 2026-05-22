@@ -410,6 +410,10 @@ export default function AdminDashboard() {
               DASHBOARD - ANALISE
             </BigCard>
             <br />
+            <BigCard color="secondary.main" onClick={() => navigate("/admin/notificacoes")}>
+              NOTIFICAÇÕES
+            </BigCard>
+            <br />
             <BigCard outlined onClick={() => navigate("/admin/sorteios")}>
               LISTA DE SORTEIOS
               <br /> REALIZADOS

@@ -21,6 +21,7 @@ import AdminUsersPage from "./AdminUsersPage";
 import DrawBoardPage from "./DrawBoardPage";
 import AdminOpenDrawBuyers from "./AdminOpenDrawBuyers";
 import AdminAnalytics from './AdminAnalytics';
+import AdminNotificationsPage from "./AdminNotificationsPage";
 
 export default function App() {
   const [selecionados, setSelecionados] = React.useState([]);
@@ -118,6 +119,14 @@ export default function App() {
               element={
                 <AdminRoute>
                   <AdminAnalytics />
+                </AdminRoute>
+              }
+            />
+            <Route
+              path="/admin/notificacoes"
+              element={
+                <AdminRoute>
+                  <AdminNotificationsPage />
                 </AdminRoute>
               }
             />
