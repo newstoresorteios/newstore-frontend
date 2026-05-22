@@ -121,6 +121,18 @@ function dispatchStatusLabel(row) {
   return row?.status ?? "—";
 }
 
+function deliveryStatusLabel(value) {
+  const s = String(value || "").toLowerCase();
+  if (!s) return "—";
+  if (s === "accepted" || s === "sent") return "Aceito pela Brevo";
+  if (s === "delivered") return "Entregue";
+  if (s === "read") return "Lido";
+  if (s === "failed") return "Falhou";
+  if (s === "rejected") return "Rejeitado";
+  if (s === "pending") return "Pendente";
+  return value;
+}
+
 function templateActiveLabel(row) {
   const active = row?.is_active ?? row?.active;
   if (active === true) return "Ativo/Aprovado";
@@ -580,8 +592,16 @@ export default function AdminNotificationsPage() {
 
   const result = testResult?.result || testResult;
   const dispatch = testResult?.dispatch || testResult?.data?.dispatch;
+  const deliveryCheck =
+    testResult?.delivery_check ??
+    testResult?.deliveryCheck ??
+    result?.delivery_check ??
+    result?.deliveryCheck ??
+    null;
   const manualCampaign = manualResult?.campaign;
   const manualDispatch = manualResult?.dispatch;
+
+  const DISPATCH_TABLE_COLS = 20;
 
   return (
     <ThemeProvider theme={theme}>
@@ -854,10 +874,34 @@ export default function AdminNotificationsPage() {
                     </Typography>
                   )}
                 </Stack>
+                {deliveryCheck && (
+                  <Paper variant="outlined" sx={{ mt: 2, p: 1.5, borderRadius: 2 }}>
+                    <Typography variant="subtitle2" sx={{ fontWeight: 800, mb: 1 }}>
+                      Diagnóstico de entrega (delivery_check)
+                    </Typography>
+                    <Stack spacing={0.5}>
+                      <Typography variant="body2">
+                        checked: {String(deliveryCheck.checked ?? "—")}
+                      </Typography>
+                      <Typography variant="body2">
+                        matched: {String(deliveryCheck.matched ?? "—")}
+                      </Typography>
+                      <Typography variant="body2">
+                        events_checked: {deliveryCheck.events_checked ?? deliveryCheck.eventsChecked ?? "—"}
+                      </Typography>
+                      <Typography variant="body2">
+                        matched_event: {deliveryCheck.matched_event ?? deliveryCheck.matchedEvent ?? "—"}
+                      </Typography>
+                      <Typography variant="body2">
+                        matched_reason: {deliveryCheck.matched_reason ?? deliveryCheck.matchedReason ?? "—"}
+                      </Typography>
+                      <Typography variant="body2">message: {deliveryCheck.message ?? "—"}</Typography>
+                    </Stack>
+                  </Paper>
+                )}
                 {Number(result?.statusCode) === 201 && (
                   <Alert severity="success" sx={{ mt: 1 }}>
-                    Envio aceito pela Brevo. Ainda não há confirmação de entrega. Consulte os eventos Brevo para
-                    verificar se foi entregue, lido, rejeitado ou falhou.
+                    Envio aceito pela Brevo. A entrega real será confirmada pelos eventos da Brevo.
                   </Alert>
                 )}
                 {(result?.recipient_forced || result?.recipientForced) && (
@@ -955,6 +999,10 @@ export default function AdminNotificationsPage() {
                     <TableCell>Dest. original</TableCell>
                     <TableCell>Forçado?</TableCell>
                     <TableCell>Status</TableCell>
+                    <TableCell>Provider Status</TableCell>
+                    <TableCell>Delivery Status</TableCell>
+                    <TableCell>Delivery Checked At</TableCell>
+                    <TableCell>Delivery Confirmed At</TableCell>
                     <TableCell>Tentativas</TableCell>
                     <TableCell>Provider Msg ID</TableCell>
                     <TableCell>Erro</TableCell>
@@ -964,7 +1012,7 @@ export default function AdminNotificationsPage() {
                 </TableHead>
                 <TableBody>
                   {visibleDispatches.map((row, idx) => {
-                    const id = row.id ?? `d-${idx}`;
+                    const id = row.id != null ? String(row.id) : `d-${idx}`;
                     const syncState = deliverySyncById[id] || {};
                     return (
                       <React.Fragment key={id}>
@@ -993,6 +1041,16 @@ export default function AdminNotificationsPage() {
                               label={dispatchStatusLabel(row)}
                               color={statusChipColor(row.status)}
                             />
+                          </TableCell>
+                          <TableCell>{row.provider_status ?? row.providerStatus ?? "—"}</TableCell>
+                          <TableCell>
+                            {deliveryStatusLabel(row.delivery_status ?? row.deliveryStatus)}
+                          </TableCell>
+                          <TableCell>
+                            {fmtDate(row.delivery_checked_at ?? row.deliveryCheckedAt)}
+                          </TableCell>
+                          <TableCell>
+                            {fmtDate(row.delivery_confirmed_at ?? row.deliveryConfirmedAt)}
                           </TableCell>
                           <TableCell>{row.attempts ?? row.attempt_count ?? "—"}</TableCell>
                           <TableCell>{row.provider_message_id ?? row.providerMessageId ?? "—"}</TableCell>
@@ -1053,10 +1111,17 @@ export default function AdminNotificationsPage() {
                           </TableCell>
                         </TableRow>
                         <TableRow>
-                          <TableCell colSpan={16} sx={{ py: 0, border: 0 }}>
+                          <TableCell colSpan={DISPATCH_TABLE_COLS} sx={{ py: 0, border: 0 }}>
                             <Collapse in={expandedDispatch === id}>
                               <Box sx={{ p: 2, bgcolor: "rgba(0,0,0,0.25)", borderRadius: 2, mb: 1 }}>
-                                <AuditJsonBlock title="Payload" value={row.payload ?? row.request_payload} />
+                                <AuditJsonBlock
+                                  title="Delivery Event"
+                                  value={row.delivery_event ?? row.deliveryEvent}
+                                />
+                                <AuditJsonBlock
+                                  title="Delivery Events Raw"
+                                  value={row.delivery_events_raw ?? row.deliveryEventsRaw}
+                                />
                                 <AuditJsonBlock title="Response" value={row.response ?? row.provider_response} />
                                 <AuditJsonBlock
                                   title="Message Snapshot"
@@ -1075,7 +1140,7 @@ export default function AdminNotificationsPage() {
                   })}
                   {visibleDispatches.length === 0 && (
                     <TableRow>
-                      <TableCell colSpan={16} align="center" sx={{ opacity: 0.6, py: 3, whiteSpace: "normal" }}>
+                      <TableCell colSpan={DISPATCH_TABLE_COLS} align="center" sx={{ opacity: 0.6, py: 3, whiteSpace: "normal" }}>
                         {dispatches.length > 0
                           ? "Nenhum disparo corresponde aos filtros selecionados. Limpe os filtros ou clique em Atualizar."
                           : "Nenhum disparo encontrado. Se você acabou de enviar um teste, clique em Atualizar. Caso continue vazio, verifique no Network se a API retornou rows/dispatches."}
@@ -1088,7 +1153,7 @@ export default function AdminNotificationsPage() {
 
             <Paper variant="outlined" sx={{ mt: 3, p: 2, borderRadius: 3 }}>
               <Typography variant="subtitle1" sx={{ fontWeight: 800, mb: 2 }}>
-                Eventos Brevo WhatsApp
+                Consultar eventos Brevo
               </Typography>
               <Stack direction={{ xs: "column", md: "row" }} spacing={2} sx={{ mb: 2 }}>
                 <TextField

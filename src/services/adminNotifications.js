@@ -95,8 +95,7 @@ export async function syncBrevoWhatsAppTemplates() {
 
 function buildBrevoEventsQuery(params = {}) {
   const query = {};
-  const contact = params.contactNumber ?? params.phone;
-  if (contact) query.contactNumber = String(contact).trim();
+  if (params.contactNumber) query.contactNumber = String(params.contactNumber).trim();
   if (params.days != null && params.days !== "") query.days = params.days;
   if (params.limit != null && params.limit !== "") query.limit = params.limit;
   if (params.offset != null && params.offset !== "") query.offset = params.offset;
