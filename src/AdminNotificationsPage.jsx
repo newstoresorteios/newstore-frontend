@@ -125,10 +125,19 @@ export default function AdminNotificationsPage() {
   const [error, setError] = React.useState("");
   const [health, setHealth] = React.useState(null);
   const [dispatches, setDispatches] = React.useState([]);
-  const [inbound, setInbound] = React.useState([]);
+  const [inboundMessages, setInboundMessages] = React.useState([]);
   const [templates, setTemplates] = React.useState([]);
 
-  const [dispatchFilters, setDispatchFilters] = React.useState({ status: "", channel: "", provider: "" });
+  const [loadingDispatches, setLoadingDispatches] = React.useState(false);
+  const [loadingTemplates, setLoadingTemplates] = React.useState(false);
+  const [loadingInbound, setLoadingInbound] = React.useState(false);
+  const [dispatchError, setDispatchError] = React.useState("");
+  const [templatesError, setTemplatesError] = React.useState("");
+  const [inboundError, setInboundError] = React.useState("");
+
+  const [dispatchStatus, setDispatchStatus] = React.useState("");
+  const [dispatchChannel, setDispatchChannel] = React.useState("");
+  const [dispatchProvider, setDispatchProvider] = React.useState("");
   const [expandedDispatch, setExpandedDispatch] = React.useState(null);
   const [expandedInbound, setExpandedInbound] = React.useState(null);
 
@@ -152,42 +161,95 @@ export default function AdminNotificationsPage() {
   const [manualResult, setManualResult] = React.useState(null);
   const [manualError, setManualError] = React.useState("");
 
-  const loadDispatches = React.useCallback(async (filters = dispatchFilters) => {
+  const buildDispatchFilters = React.useCallback(() => {
     const params = { limit: 50 };
-    if (filters.status) params.status = filters.status;
-    if (filters.channel) params.channel = filters.channel;
-    if (filters.provider) params.provider = filters.provider;
-    const rows = await listNotificationDispatches(params);
-    setDispatches(rows);
-    return rows;
-  }, [dispatchFilters]);
+    if (dispatchStatus) params.status = dispatchStatus;
+    if (dispatchChannel.trim()) params.channel = dispatchChannel.trim();
+    if (dispatchProvider.trim()) params.provider = dispatchProvider.trim();
+    return params;
+  }, [dispatchStatus, dispatchChannel, dispatchProvider]);
+
+  const loadDispatches = React.useCallback(async () => {
+    setLoadingDispatches(true);
+    setDispatchError("");
+    try {
+      const rows = await listNotificationDispatches(buildDispatchFilters());
+      console.log("[AdminNotificationsPage] dispatches loaded", {
+        count: rows.length,
+        sample: rows[0] || null,
+      });
+      setDispatches(Array.isArray(rows) ? rows : []);
+    } catch (err) {
+      console.error("[AdminNotificationsPage] dispatches error", err);
+      setDispatches([]);
+      setDispatchError(err?.message || "Erro ao carregar disparos");
+    } finally {
+      setLoadingDispatches(false);
+    }
+  }, [buildDispatchFilters]);
+
+  const loadTemplates = React.useCallback(async () => {
+    setLoadingTemplates(true);
+    setTemplatesError("");
+    try {
+      const rows = await listNotificationTemplates();
+      console.log("[AdminNotificationsPage] templates loaded", {
+        count: rows.length,
+        sample: rows[0] || null,
+      });
+      setTemplates(Array.isArray(rows) ? rows : []);
+    } catch (err) {
+      console.error("[AdminNotificationsPage] templates error", err);
+      setTemplates([]);
+      setTemplatesError(err?.message || "Erro ao carregar templates");
+    } finally {
+      setLoadingTemplates(false);
+    }
+  }, []);
 
   const loadInbound = React.useCallback(async () => {
-    const rows = await listInboundMessages({ limit: 50 });
-    setInbound(rows);
-    return rows;
+    setLoadingInbound(true);
+    setInboundError("");
+    try {
+      const rows = await listInboundMessages({ limit: 50 });
+      console.log("[AdminNotificationsPage] inbound loaded", {
+        count: rows.length,
+        sample: rows[0] || null,
+      });
+      setInboundMessages(Array.isArray(rows) ? rows : []);
+    } catch (err) {
+      console.error("[AdminNotificationsPage] inbound error", err);
+      setInboundMessages([]);
+      setInboundError(err?.message || "Erro ao carregar mensagens recebidas");
+    } finally {
+      setLoadingInbound(false);
+    }
   }, []);
 
   const loadAll = React.useCallback(async () => {
     setLoading(true);
     setError("");
     try {
-      const [h, d, t, i] = await Promise.all([
-        getNotificationHealth(),
-        listNotificationDispatches({ limit: 50 }),
-        listNotificationTemplates(),
-        listInboundMessages({ limit: 50 }),
-      ]);
+      const h = await getNotificationHealth();
       setHealth(h);
-      setDispatches(d);
-      setTemplates(t);
-      setInbound(i);
     } catch (e) {
-      setError(e?.message || "Falha ao carregar dados da Central de Notificações.");
-    } finally {
-      setLoading(false);
+      setError(e?.message || "Falha ao carregar health da Central de Notificações.");
     }
-  }, []);
+    await Promise.allSettled([loadDispatches(), loadTemplates(), loadInbound()]);
+    setLoading(false);
+  }, [loadDispatches, loadTemplates, loadInbound]);
+
+  const visibleDispatches = React.useMemo(() => {
+    const status = dispatchStatus.trim();
+    const channel = dispatchChannel.trim();
+    const provider = dispatchProvider.trim();
+    return dispatches.filter((row) => {
+      if (status && row.status !== status) return false;
+      if (channel && row.channel !== channel) return false;
+      if (provider && row.provider !== provider) return false;
+      return true;
+    });
+  }, [dispatches, dispatchStatus, dispatchChannel, dispatchProvider]);
 
   React.useEffect(() => {
     loadAll();
@@ -556,8 +618,8 @@ export default function AdminNotificationsPage() {
                 <InputLabel>Status</InputLabel>
                 <Select
                   label="Status"
-                  value={dispatchFilters.status}
-                  onChange={(e) => setDispatchFilters((f) => ({ ...f, status: e.target.value }))}
+                  value={dispatchStatus}
+                  onChange={(e) => setDispatchStatus(e.target.value)}
                 >
                   <MenuItem value="">Todos</MenuItem>
                   <MenuItem value="sent">sent</MenuItem>
@@ -569,25 +631,31 @@ export default function AdminNotificationsPage() {
               <TextField
                 size="small"
                 label="Canal"
-                value={dispatchFilters.channel}
-                onChange={(e) => setDispatchFilters((f) => ({ ...f, channel: e.target.value }))}
+                value={dispatchChannel}
+                onChange={(e) => setDispatchChannel(e.target.value)}
               />
               <TextField
                 size="small"
                 label="Provider"
-                value={dispatchFilters.provider}
-                onChange={(e) => setDispatchFilters((f) => ({ ...f, provider: e.target.value }))}
+                value={dispatchProvider}
+                onChange={(e) => setDispatchProvider(e.target.value)}
               />
               <Button
                 variant="outlined"
                 startIcon={<RefreshRoundedIcon />}
-                onClick={() => loadDispatches().catch((e) => setError(e?.message))}
+                disabled={loadingDispatches}
+                onClick={() => loadDispatches()}
               >
-                Atualizar
+                {loadingDispatches ? "Atualizando…" : "Atualizar"}
               </Button>
             </Stack>
+            {dispatchError && (
+              <Alert severity="error" sx={{ mb: 2 }}>
+                {dispatchError}
+              </Alert>
+            )}
             <Typography variant="body2" sx={{ mb: 1, opacity: 0.75 }}>
-              Total carregado: {dispatches.length}
+              Total carregado: {dispatches.length} | Exibindo: {visibleDispatches.length}
             </Typography>
             <TableContainer>
               <Table size="small">
@@ -610,7 +678,7 @@ export default function AdminNotificationsPage() {
                   </TableRow>
                 </TableHead>
                 <TableBody>
-                  {dispatches.map((row, idx) => {
+                  {visibleDispatches.map((row, idx) => {
                     const id = row.id ?? `d-${idx}`;
                     const payload = row.payload ?? row.request_payload;
                     const response = row.response ?? row.provider_response;
@@ -665,11 +733,12 @@ export default function AdminNotificationsPage() {
                       </React.Fragment>
                     );
                   })}
-                  {!dispatches.length && (
+                  {visibleDispatches.length === 0 && (
                     <TableRow>
                       <TableCell colSpan={14} align="center" sx={{ opacity: 0.6, py: 3, whiteSpace: "normal" }}>
-                        Nenhum disparo encontrado. Se você acabou de enviar um teste, clique em Atualizar. Caso
-                        continue vazio, verifique no Network se a API retornou rows/dispatches.
+                        {dispatches.length > 0
+                          ? "Nenhum disparo corresponde aos filtros selecionados. Limpe os filtros ou clique em Atualizar."
+                          : "Nenhum disparo encontrado. Se você acabou de enviar um teste, clique em Atualizar. Caso continue vazio, verifique no Network se a API retornou rows/dispatches."}
                       </TableCell>
                     </TableRow>
                   )}
@@ -689,12 +758,18 @@ export default function AdminNotificationsPage() {
               variant="outlined"
               startIcon={<RefreshRoundedIcon />}
               sx={{ mb: 2 }}
-              onClick={() => loadInbound().catch((e) => setError(e?.message))}
+              disabled={loadingInbound}
+              onClick={() => loadInbound()}
             >
-              Atualizar
+              {loadingInbound ? "Atualizando…" : "Atualizar"}
             </Button>
+            {inboundError && (
+              <Alert severity="error" sx={{ mb: 2 }}>
+                {inboundError}
+              </Alert>
+            )}
             <Typography variant="body2" sx={{ mb: 1, opacity: 0.75 }}>
-              Mensagens carregadas: {inbound.length}
+              Mensagens carregadas: {inboundMessages.length}
             </Typography>
             <TableContainer>
               <Table size="small">
@@ -712,7 +787,7 @@ export default function AdminNotificationsPage() {
                   </TableRow>
                 </TableHead>
                 <TableBody>
-                  {inbound.map((row, idx) => {
+                  {inboundMessages.map((row, idx) => {
                     const id = row.id ?? `i-${idx}`;
                     const raw = row.payload ?? row.raw ?? row;
                     return (
@@ -749,7 +824,7 @@ export default function AdminNotificationsPage() {
                       </React.Fragment>
                     );
                   })}
-                  {!inbound.length && (
+                  {inboundMessages.length === 0 && (
                     <TableRow>
                       <TableCell colSpan={9} align="center" sx={{ opacity: 0.6, py: 3, whiteSpace: "normal" }}>
                         Nenhuma mensagem recebida ainda. Esta aba só será preenchida após configurar o webhook inbound
@@ -768,6 +843,20 @@ export default function AdminNotificationsPage() {
             <Alert severity="info" sx={{ mb: 2 }}>
               Os IDs dos templates da Brevo são configurados no banco ou nas variáveis de ambiente do backend.
             </Alert>
+            <Button
+              variant="outlined"
+              startIcon={<RefreshRoundedIcon />}
+              sx={{ mb: 2 }}
+              disabled={loadingTemplates}
+              onClick={() => loadTemplates()}
+            >
+              {loadingTemplates ? "Atualizando…" : "Atualizar templates"}
+            </Button>
+            {templatesError && (
+              <Alert severity="error" sx={{ mb: 2 }}>
+                {templatesError}
+              </Alert>
+            )}
             <Typography variant="body2" sx={{ mb: 1, opacity: 0.75 }}>
               Templates carregados: {templates.length}
             </Typography>
@@ -803,8 +892,8 @@ export default function AdminNotificationsPage() {
                   {!templates.length && (
                     <TableRow>
                       <TableCell colSpan={8} align="center" sx={{ opacity: 0.6, py: 3, whiteSpace: "normal" }}>
-                        Nenhum template carregado. Verifique se a tabela notification_templates possui registros ou se a
-                        API retornou rows/templates.
+                        Nenhum template carregado. Verifique se a tabela notification_templates possui registros ou
+                        clique em sincronizar modelos da Brevo, se essa função estiver disponível.
                       </TableCell>
                     </TableRow>
                   )}
