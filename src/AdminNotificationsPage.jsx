@@ -89,9 +89,19 @@ function fmtDate(v) {
   return Number.isNaN(d.getTime()) ? String(v) : d.toLocaleString("pt-BR");
 }
 
+const BREVO_EVENT_FILTER_OPTIONS = [
+  { value: "", label: "Todos" },
+  { value: "sent", label: "sent" },
+  { value: "delivered", label: "delivered" },
+  { value: "read", label: "read" },
+  { value: "failed", label: "failed" },
+  { value: "rejected", label: "rejected" },
+];
+
 function statusChipColor(status) {
   const s = String(status || "").toLowerCase();
-  if (s === "sent" || s === "delivered") return "success";
+  if (s === "accepted" || s === "sent") return "success";
+  if (s === "delivered") return "success";
   if (s === "read") return "info";
   if (s === "failed" || s === "rejected") return "error";
   if (s === "skipped") return "warning";
@@ -101,12 +111,13 @@ function statusChipColor(status) {
 
 function dispatchStatusLabel(row) {
   const status = String(row?.status || "").toLowerCase();
-  const hasMsgId = Boolean(row?.provider_message_id ?? row?.providerMessageId);
-  if (status === "sent" && hasMsgId) return "Aceito pela Brevo";
+  if (status === "accepted") return "Aceito pela Brevo";
+  if (status === "sent") return "Aceito pela Brevo";
   if (status === "delivered") return "Entregue";
   if (status === "read") return "Lido";
   if (status === "failed") return "Falhou";
   if (status === "rejected") return "Rejeitado";
+  if (status === "skipped") return "Ignorado";
   return row?.status ?? "—";
 }
 
@@ -500,19 +511,30 @@ export default function AdminNotificationsPage() {
     try {
       const res = await syncDispatchDeliveryStatus(dispatchId);
       const matched = res?.matched_event ?? res?.matchedEvent ?? null;
+      const statusUpdatedTo = res?.status_updated_to ?? res?.statusUpdatedTo ?? null;
+      const syncMessage = res?.message ?? "";
       if (!matched) {
         setDeliverySyncById((s) => ({
           ...s,
           [dispatchId]: {
             loading: false,
-            info: "Nenhum evento de entrega encontrado ainda para este messageId.",
+            info: syncMessage || "Nenhum evento de entrega encontrado ainda para este messageId.",
             matched: null,
+            statusUpdatedTo: null,
+            message: syncMessage,
           },
         }));
       } else {
         setDeliverySyncById((s) => ({
           ...s,
-          [dispatchId]: { loading: false, matched, info: "", error: "" },
+          [dispatchId]: {
+            loading: false,
+            matched,
+            statusUpdatedTo,
+            message: syncMessage,
+            info: "",
+            error: "",
+          },
         }));
       }
       await loadDispatches();
@@ -543,9 +565,9 @@ export default function AdminNotificationsPage() {
     setBrevoEventsLoading(true);
     setBrevoEventsError("");
     try {
-      const params = { days: brevoEventsDays };
-      if (brevoEventsPhone.trim()) params.phone = brevoEventsPhone.trim();
-      if (brevoEventsEvent.trim()) params.event = brevoEventsEvent.trim();
+      const params = { days: brevoEventsDays, limit: 50, offset: 0 };
+      if (brevoEventsPhone.trim()) params.contactNumber = brevoEventsPhone.trim();
+      if (brevoEventsEvent) params.event = brevoEventsEvent;
       const rows = await getBrevoWhatsAppEvents(params);
       setBrevoEvents(Array.isArray(rows) ? rows : []);
     } catch (err) {
@@ -834,7 +856,8 @@ export default function AdminNotificationsPage() {
                 </Stack>
                 {Number(result?.statusCode) === 201 && (
                   <Alert severity="success" sx={{ mt: 1 }}>
-                    Envio aceito pela Brevo. Consulte os eventos Brevo para confirmar entrega/leitura ou falha.
+                    Envio aceito pela Brevo. Ainda não há confirmação de entrega. Consulte os eventos Brevo para
+                    verificar se foi entregue, lido, rejeitado ou falhou.
                   </Alert>
                 )}
                 {(result?.recipient_forced || result?.recipientForced) && (
@@ -858,8 +881,12 @@ export default function AdminNotificationsPage() {
                   onChange={(e) => setDispatchStatus(e.target.value)}
                 >
                   <MenuItem value="">Todos</MenuItem>
+                  <MenuItem value="accepted">accepted</MenuItem>
                   <MenuItem value="sent">sent</MenuItem>
+                  <MenuItem value="delivered">delivered</MenuItem>
+                  <MenuItem value="read">read</MenuItem>
                   <MenuItem value="failed">failed</MenuItem>
+                  <MenuItem value="rejected">rejected</MenuItem>
                   <MenuItem value="skipped">skipped</MenuItem>
                   <MenuItem value="pending">pending</MenuItem>
                 </Select>
@@ -911,7 +938,7 @@ export default function AdminNotificationsPage() {
               Total carregado: {dispatches.length} | Exibindo: {visibleDispatches.length}
             </Typography>
             <Alert severity="info" sx={{ mb: 2 }}>
-              Status sent/accepted indica que a Brevo aceitou o envio. Entrega real depende dos eventos da Brevo.
+              Accepted/sent significa que a Brevo aceitou o envio. A entrega real depende dos eventos da Brevo.
             </Alert>
             <TableContainer>
               <Table size="small">
@@ -985,12 +1012,29 @@ export default function AdminNotificationsPage() {
                                   {syncState.loading ? "…" : "Atualizar entrega"}
                                 </Button>
                                 {syncState.matched && (
-                                  <Typography variant="caption" sx={{ display: "block" }}>
-                                    {syncState.matched.event ?? syncState.matched.name} —{" "}
-                                    {fmtDate(syncState.matched.date ?? syncState.matched.timestamp)}
-                                    {(syncState.matched.reason || syncState.matched.error) &&
-                                      ` (${syncState.matched.reason || syncState.matched.error})`}
-                                  </Typography>
+                                  <Stack spacing={0.25}>
+                                    <Typography variant="caption" sx={{ display: "block" }}>
+                                      event: {syncState.matched.event ?? syncState.matched.name ?? "—"}
+                                    </Typography>
+                                    <Typography variant="caption" sx={{ display: "block" }}>
+                                      date: {fmtDate(syncState.matched.date ?? syncState.matched.timestamp)}
+                                    </Typography>
+                                    {(syncState.matched.reason || syncState.matched.error) && (
+                                      <Typography variant="caption" sx={{ display: "block" }}>
+                                        reason: {syncState.matched.reason || syncState.matched.error}
+                                      </Typography>
+                                    )}
+                                    {syncState.statusUpdatedTo && (
+                                      <Typography variant="caption" sx={{ display: "block" }}>
+                                        status_updated_to: {syncState.statusUpdatedTo}
+                                      </Typography>
+                                    )}
+                                    {syncState.message && (
+                                      <Typography variant="caption" sx={{ display: "block" }}>
+                                        message: {syncState.message}
+                                      </Typography>
+                                    )}
+                                  </Stack>
                                 )}
                                 {syncState.info && (
                                   <Typography variant="caption" color="text.secondary">
@@ -1049,11 +1093,12 @@ export default function AdminNotificationsPage() {
               <Stack direction={{ xs: "column", md: "row" }} spacing={2} sx={{ mb: 2 }}>
                 <TextField
                   size="small"
-                  label="Número"
+                  label="Número WhatsApp"
                   value={brevoEventsPhone}
                   onChange={(e) => setBrevoEventsPhone(e.target.value)}
-                  placeholder="Vazio = número de teste do backend"
-                  sx={{ minWidth: 200 }}
+                  placeholder="5585999498149"
+                  helperText="Vazio = número de teste do backend"
+                  sx={{ minWidth: 220 }}
                 />
                 <TextField
                   size="small"
@@ -1064,14 +1109,20 @@ export default function AdminNotificationsPage() {
                   inputProps={{ min: 1 }}
                   sx={{ width: 100 }}
                 />
-                <TextField
-                  size="small"
-                  label="Evento (opcional)"
-                  value={brevoEventsEvent}
-                  onChange={(e) => setBrevoEventsEvent(e.target.value)}
-                  placeholder="delivered, read, failed…"
-                  sx={{ minWidth: 160 }}
-                />
+                <FormControl size="small" sx={{ minWidth: 160 }}>
+                  <InputLabel>Evento</InputLabel>
+                  <Select
+                    label="Evento"
+                    value={brevoEventsEvent}
+                    onChange={(e) => setBrevoEventsEvent(e.target.value)}
+                  >
+                    {BREVO_EVENT_FILTER_OPTIONS.map((opt) => (
+                      <MenuItem key={opt.value || "all"} value={opt.value}>
+                        {opt.label}
+                      </MenuItem>
+                    ))}
+                  </Select>
+                </FormControl>
                 <Button variant="contained" disabled={brevoEventsLoading} onClick={onFetchBrevoEvents}>
                   {brevoEventsLoading ? "Consultando…" : "Consultar eventos Brevo"}
                 </Button>
@@ -1113,7 +1164,9 @@ export default function AdminNotificationsPage() {
                             <TableCell>{fmtDate(ev.date ?? ev.timestamp ?? ev.created_at)}</TableCell>
                             <TableCell>{ev.event ?? ev.name ?? ev.type ?? "—"}</TableCell>
                             <TableCell>{ev.messageId ?? ev.message_id ?? ev.id ?? "—"}</TableCell>
-                            <TableCell>{ev.phone ?? ev.number ?? ev.to ?? "—"}</TableCell>
+                            <TableCell>
+                              {ev.contactNumber ?? ev.contact_number ?? ev.phone ?? ev.number ?? ev.to ?? "—"}
+                            </TableCell>
                             <TableCell>{ev.reason ?? ev.error ?? ev.description ?? "—"}</TableCell>
                           </TableRow>
                           <TableRow>

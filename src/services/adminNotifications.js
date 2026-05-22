@@ -93,8 +93,22 @@ export async function syncBrevoWhatsAppTemplates() {
   return postJSON("/admin/notifications/templates/sync-brevo-whatsapp", {});
 }
 
+function buildBrevoEventsQuery(params = {}) {
+  const query = {};
+  const contact = params.contactNumber ?? params.phone;
+  if (contact) query.contactNumber = String(contact).trim();
+  if (params.days != null && params.days !== "") query.days = params.days;
+  if (params.limit != null && params.limit !== "") query.limit = params.limit;
+  if (params.offset != null && params.offset !== "") query.offset = params.offset;
+  if (params.event) query.event = params.event;
+  return query;
+}
+
 export async function getBrevoWhatsAppEvents(params = {}) {
-  const data = await apiGet("/api/admin/notifications/brevo-whatsapp-events", params);
+  const data = await apiGet(
+    "/api/admin/notifications/brevo-whatsapp-events",
+    buildBrevoEventsQuery(params)
+  );
   const list = extractList(data, ["events", "rows", "items"]);
   debugListResponse("brevo-whatsapp-events response", data, list);
   return list;
