@@ -1,5 +1,5 @@
 // src/services/adminNotifications.js
-import { getJSON, postJSON } from "../lib/api";
+import { apiJoin, authHeaders, getJSON, postJSON } from "../lib/api";
 
 function buildQuery(params = {}) {
   const usp = new URLSearchParams();
@@ -10,7 +10,6 @@ function buildQuery(params = {}) {
   return q ? `?${q}` : "";
 }
 
-/** GET admin notifications — path may be /api/admin/... or /admin/... (apiJoin normalizes). */
 async function apiGet(path, params = {}) {
   let p = String(path || "");
   if (p.startsWith("/api/")) p = p.slice(4);
@@ -20,7 +19,6 @@ async function apiGet(path, params = {}) {
 
 export function extractList(data, keys = []) {
   if (Array.isArray(data)) return data;
-
   if (!data || typeof data !== "object") return [];
 
   const allKeys = [
@@ -31,16 +29,11 @@ export function extractList(data, keys = []) {
     "templates",
     "inbound",
     "messages",
+    "events",
   ];
 
   for (const key of allKeys) {
-    const val = data[key];
-    if (Array.isArray(val)) {
-      return val;
-    }
-    if (val && typeof val === "object" && Array.isArray(val.rows)) {
-      return val.rows;
-    }
+    if (Array.isArray(data[key])) return data[key];
   }
 
   if (data.result && typeof data.result === "object") {
@@ -65,6 +58,7 @@ function debugListResponse(label, data, list) {
     hasTemplates: Array.isArray(data?.templates),
     hasInbound: Array.isArray(data?.inbound),
     hasMessages: Array.isArray(data?.messages),
+    hasEvents: Array.isArray(data?.events),
     rawCount: data?.count ?? null,
     extractedCount: Array.isArray(list) ? list.length : 0,
   });
@@ -95,6 +89,22 @@ export async function listNotificationTemplates() {
   return list;
 }
 
+export async function syncBrevoWhatsAppTemplates() {
+  return postJSON("/admin/notifications/templates/sync-brevo-whatsapp", {});
+}
+
+export async function getBrevoWhatsAppEvents(params = {}) {
+  const data = await apiGet("/api/admin/notifications/brevo-whatsapp-events", params);
+  const list = extractList(data, ["events", "rows", "items"]);
+  debugListResponse("brevo-whatsapp-events response", data, list);
+  return list;
+}
+
+export async function syncDispatchDeliveryStatus(dispatchId) {
+  const id = encodeURIComponent(String(dispatchId));
+  return postJSON(`/admin/notifications/dispatches/${id}/sync-delivery-status`, {});
+}
+
 export async function sendTestWhatsApp(payload) {
   return postJSON("/admin/notifications/test-whatsapp", payload);
 }
@@ -105,4 +115,36 @@ export async function estimateAudience(payload) {
 
 export async function manualSendNotification(payload) {
   return postJSON("/admin/notifications/manual-send", payload);
+}
+
+export async function exportNotificationDispatchesCsv(params = {}) {
+  const query = new URLSearchParams();
+  if (params.status) query.set("status", params.status);
+  if (params.channel) query.set("channel", params.channel);
+  if (params.provider) query.set("provider", params.provider);
+  if (params.from) query.set("from", params.from);
+  if (params.to) query.set("to", params.to);
+
+  const qs = query.toString();
+  const url = apiJoin(`/admin/notifications/dispatches/export.csv${qs ? `?${qs}` : ""}`);
+
+  const res = await fetch(url, {
+    method: "GET",
+    headers: { ...authHeaders() },
+    credentials: "omit",
+  });
+
+  if (!res.ok) {
+    throw new Error("Erro ao exportar CSV de disparos.");
+  }
+
+  const blob = await res.blob();
+  const downloadUrl = window.URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = downloadUrl;
+  a.download = `notification-dispatches-${new Date().toISOString().slice(0, 10)}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  window.URL.revokeObjectURL(downloadUrl);
 }
