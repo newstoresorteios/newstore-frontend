@@ -4,13 +4,20 @@ import { useNavigate } from "react-router-dom";
 import {
   Alert,
   AppBar,
+  Autocomplete,
   Box,
   Button,
+  Checkbox,
   Chip,
   Collapse,
   Container,
   CssBaseline,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
   FormControl,
+  FormControlLabel,
   Grid,
   IconButton,
   InputLabel,
@@ -45,9 +52,11 @@ import {
   listNotificationDispatches,
   listNotificationTemplates,
   manualSendNotification,
-  sendTestWhatsApp,
+  manualSendSelectedNotification,
+  searchNotificationRecipients,
   syncBrevoWhatsAppTemplates,
   syncDispatchDeliveryStatus,
+  updateNotificationTemplate,
 } from "./services/adminNotifications";
 
 const theme = createTheme({
@@ -64,16 +73,15 @@ const theme = createTheme({
   typography: { fontFamily: ["Inter", "system-ui", "Segoe UI", "Roboto", "Arial"].join(",") },
 });
 
-const TAB_LABELS = ["Enviar teste", "Disparos", "Mensagens recebidas", "Templates", "Audiência futura"];
+const TAB_LABELS = ["Enviar mensagem", "Disparos", "Mensagens recebidas", "Templates", "Audiência futura"];
 
-const DEFAULT_TEST_PARAMS = {
-  customer_name: "Paulo",
-  prize_name: "Teste New Store",
-  ticket_price: "90,00",
-  numbers: "07",
-  authorize_url: "https://www.sorteionewstore.com.br/cativo/autorizar/teste",
-  decline_url: "https://www.sorteionewstore.com.br/cativo/recusar/teste",
-  message: "Teste da Central de Notificações",
+const DEFAULT_ADVANCED_PARAMS = {
+  customer_name: "",
+  prize_name: "",
+  ticket_price: "",
+  numbers: "",
+  authorize_url: "",
+  decline_url: "",
 };
 
 const AUDIENCE_FILTERS = [
@@ -172,6 +180,51 @@ function brevoModelOptionId(tpl) {
   return `${key}::${pid}`;
 }
 
+function templateSelectOptionId(tpl) {
+  if (tpl?.id != null) return `id:${tpl.id}`;
+  return brevoModelOptionId(tpl);
+}
+
+function getTemplateDefaultMessage(tpl) {
+  if (!tpl) return "";
+  if (tpl.default_message) return String(tpl.default_message);
+  let dp = tpl.default_params ?? tpl.defaultParams;
+  if (typeof dp === "string" && dp.trim()) {
+    try {
+      dp = JSON.parse(dp);
+    } catch {
+      dp = null;
+    }
+  }
+  if (dp && typeof dp === "object" && dp.message) return String(dp.message);
+  return String(tpl.body_preview ?? tpl.bodyPreview ?? tpl.preview ?? tpl.preview_text ?? "");
+}
+
+function recipientDedupeKey(r) {
+  if (r?.type === "user" && r.user_id != null) return `user:${r.user_id}`;
+  return `phone:${String(r?.phone || "").replace(/\D/g, "")}`;
+}
+
+function mapRecipientToApi(r) {
+  return {
+    type: r.type,
+    user_id: r.user_id ?? null,
+    name: r.name ?? null,
+    email: r.email ?? null,
+    phone: r.phone ?? null,
+  };
+}
+
+function mapSearchHitToRecipient(hit) {
+  return {
+    type: "user",
+    user_id: hit.user_id ?? hit.userId ?? hit.id,
+    name: hit.name ?? hit.full_name ?? hit.fullName ?? "Cliente",
+    email: hit.email ?? null,
+    phone: hit.phone ?? hit.whatsapp ?? hit.mobile ?? null,
+  };
+}
+
 function formatAuditJson(value) {
   if (value == null || value === "") return "{}";
   let obj = value;
@@ -251,15 +304,31 @@ export default function AdminNotificationsPage() {
   const [expandedDispatch, setExpandedDispatch] = React.useState(null);
   const [expandedInbound, setExpandedInbound] = React.useState(null);
 
-  const [testForm, setTestForm] = React.useState({
-    phone: "",
+  const [recipientSearch, setRecipientSearch] = React.useState("");
+  const [recipientOptions, setRecipientOptions] = React.useState([]);
+  const [recipientSearchLoading, setRecipientSearchLoading] = React.useState(false);
+  const [selectedRecipients, setSelectedRecipients] = React.useState([]);
+  const [showManualPhone, setShowManualPhone] = React.useState(false);
+  const [manualPhone, setManualPhone] = React.useState("");
+  const [selectedTemplateOptionId, setSelectedTemplateOptionId] = React.useState("");
+  const [sendForm, setSendForm] = React.useState({
     template_key: "GENERIC_TEST",
     template_id: "",
-    ...DEFAULT_TEST_PARAMS,
+    message: "",
+    ...DEFAULT_ADVANCED_PARAMS,
   });
-  const [testSending, setTestSending] = React.useState(false);
-  const [testResult, setTestResult] = React.useState(null);
-  const [testError, setTestError] = React.useState("");
+  const [advancedOpen, setAdvancedOpen] = React.useState(false);
+  const [useCustomRecipient, setUseCustomRecipient] = React.useState(false);
+  const [sendSending, setSendSending] = React.useState(false);
+  const [sendResult, setSendResult] = React.useState(null);
+  const [sendError, setSendError] = React.useState("");
+
+  const [editingTemplate, setEditingTemplate] = React.useState(null);
+  const [templateEditForm, setTemplateEditForm] = React.useState(null);
+  const [templateEditJsonError, setTemplateEditJsonError] = React.useState("");
+  const [templateSaving, setTemplateSaving] = React.useState(false);
+  const [templateSaveMessage, setTemplateSaveMessage] = React.useState("");
+  const [templateSaveError, setTemplateSaveError] = React.useState("");
 
   const [audienceFilter, setAudienceFilter] = React.useState("all_users");
   const [audienceUserId, setAudienceUserId] = React.useState("");
@@ -274,7 +343,6 @@ export default function AdminNotificationsPage() {
   const [syncingBrevo, setSyncingBrevo] = React.useState(false);
   const [syncBrevoMessage, setSyncBrevoMessage] = React.useState("");
   const [syncBrevoError, setSyncBrevoError] = React.useState("");
-  const [selectedBrevoModelId, setSelectedBrevoModelId] = React.useState("");
 
   const [deliverySyncById, setDeliverySyncById] = React.useState({});
 
@@ -380,58 +448,222 @@ export default function AdminNotificationsPage() {
     loadAll();
   }, [loadAll]);
 
-  const templateKeys = React.useMemo(() => {
-    const keys = (templates || [])
-      .map((t) => t.template_key ?? t.templateKey ?? t.key)
-      .filter(Boolean);
-    if (!keys.includes("GENERIC_TEST")) keys.unshift("GENERIC_TEST");
-    return [...new Set(keys)];
-  }, [templates]);
-
-  const syncedBrevoTemplates = React.useMemo(
-    () =>
-      (templates || []).filter((t) => {
-        const ch = String(t.channel || "").toLowerCase();
-        const pr = String(t.provider || "").toLowerCase();
-        const pid = t.provider_template_id ?? t.providerTemplateId;
-        return ch === "whatsapp" && pr === "brevo" && pid;
-      }),
-    [templates]
-  );
-
   const testMode = Boolean(health?.testMode);
   const allowReal = Boolean(health?.allowRealRecipients);
   const showTestAlert = testMode || !allowReal;
+  const customRecipientsEnabled = Boolean(health?.adminTestCustomRecipientsEnabled);
 
-  const onSendTest = async () => {
-    setTestSending(true);
-    setTestError("");
-    setTestResult(null);
+  const selectedRecipientKeys = React.useMemo(
+    () => new Set(selectedRecipients.map(recipientDedupeKey)),
+    [selectedRecipients]
+  );
+
+  const filteredRecipientOptions = React.useMemo(
+    () =>
+      recipientOptions.filter((opt) => {
+        const r = mapSearchHitToRecipient(opt);
+        return !selectedRecipientKeys.has(recipientDedupeKey(r));
+      }),
+    [recipientOptions, selectedRecipientKeys]
+  );
+
+  React.useEffect(() => {
+    const q = recipientSearch.trim();
+    if (q.length < 2) {
+      setRecipientOptions([]);
+      return undefined;
+    }
+    let cancelled = false;
+    const timer = setTimeout(async () => {
+      setRecipientSearchLoading(true);
+      try {
+        const rows = await searchNotificationRecipients(q, 20);
+        if (!cancelled) setRecipientOptions(Array.isArray(rows) ? rows : []);
+      } catch {
+        if (!cancelled) setRecipientOptions([]);
+      } finally {
+        if (!cancelled) setRecipientSearchLoading(false);
+      }
+    }, 300);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [recipientSearch]);
+
+  const updateSendField = (name, value) => setSendForm((f) => ({ ...f, [name]: value }));
+
+  const addRecipient = (recipient) => {
+    const key = recipientDedupeKey(recipient);
+    setSelectedRecipients((prev) => {
+      if (prev.some((r) => recipientDedupeKey(r) === key)) return prev;
+      return [...prev, recipient];
+    });
+    setRecipientSearch("");
+  };
+
+  const removeRecipient = (key) => {
+    setSelectedRecipients((prev) => prev.filter((r) => recipientDedupeKey(r) !== key));
+  };
+
+  const onAddManualPhone = () => {
+    const phone = manualPhone.trim();
+    if (!phone) return;
+    addRecipient({ type: "manual_phone", user_id: null, name: "Contato avulso", email: null, phone });
+    setManualPhone("");
+    setShowManualPhone(false);
+  };
+
+  const onSelectSendTemplate = (optionId) => {
+    setSelectedTemplateOptionId(optionId);
+    if (!optionId) return;
+    const tpl = templates.find((t) => templateSelectOptionId(t) === optionId);
+    if (!tpl) return;
+    setSendForm((f) => ({
+      ...f,
+      template_key: tpl.template_key ?? tpl.templateKey ?? f.template_key,
+      template_id: String(tpl.provider_template_id ?? tpl.providerTemplateId ?? ""),
+      message: getTemplateDefaultMessage(tpl) || f.message,
+    }));
+  };
+
+  const onSendMessage = async () => {
+    setSendError("");
+    setSendResult(null);
+
+    if (!selectedRecipients.length) {
+      setSendError("Selecione pelo menos um destinatário.");
+      return;
+    }
+
+    const templateId = sendForm.template_id?.trim();
+    if (!templateId) {
+      setSendError("Informe o Template ID ou selecione um template com provider_template_id.");
+      return;
+    }
+
+    const message = sendForm.message?.trim();
+    if (!message) {
+      setSendError("Informe a mensagem principal.");
+      return;
+    }
+
+    const params = {
+      message,
+      customer_name: sendForm.customer_name?.trim() || undefined,
+      prize_name: sendForm.prize_name?.trim() || undefined,
+      ticket_price: sendForm.ticket_price?.trim() || undefined,
+      numbers: sendForm.numbers?.trim() || undefined,
+      authorize_url: sendForm.authorize_url?.trim() || undefined,
+      decline_url: sendForm.decline_url?.trim() || undefined,
+    };
+
+    const recipients = selectedRecipients.map((r) => {
+      const mapped = mapRecipientToApi(r);
+      if (!params.customer_name && r.name && r.type === "user") {
+        return { ...mapped, name: r.name };
+      }
+      return mapped;
+    });
+
+    if (!params.customer_name && selectedRecipients.length === 1 && selectedRecipients[0].name) {
+      params.customer_name = selectedRecipients[0].name;
+    }
+
+    setSendSending(true);
     try {
-      const res = await sendTestWhatsApp({
-        phone: testForm.phone,
-        template_key: testForm.template_key,
-        template_id: testForm.template_id || null,
-        params: {
-          customer_name: testForm.customer_name,
-          prize_name: testForm.prize_name,
-          ticket_price: testForm.ticket_price,
-          numbers: testForm.numbers,
-          authorize_url: testForm.authorize_url,
-          decline_url: testForm.decline_url,
-          message: testForm.message,
-        },
+      const res = await manualSendSelectedNotification({
+        channel: "whatsapp",
+        provider: "brevo",
+        template_key: sendForm.template_key,
+        template_id: templateId,
+        message,
+        params,
+        recipients,
+        use_custom_recipient: useCustomRecipient,
+        dry_run: false,
       });
-      setTestResult(res);
+      setSendResult(res);
     } catch (e) {
-      setTestError(e?.message || "Falha ao enviar teste.");
+      setSendError(parseNotificationsError(e));
     } finally {
-      setTestSending(false);
+      setSendSending(false);
       try {
         await loadDispatches();
       } catch (reloadErr) {
-        console.warn("[adminNotifications] reload dispatches after test failed", reloadErr?.message);
+        console.warn("[adminNotifications] reload dispatches after send failed", reloadErr?.message);
       }
+    }
+  };
+
+  const openTemplateEditor = (row) => {
+    let dp = row.default_params ?? row.defaultParams;
+    if (dp && typeof dp === "object") {
+      try {
+        dp = JSON.stringify(dp, null, 2);
+      } catch {
+        dp = "{}";
+      }
+    } else if (!dp) {
+      dp = "{}";
+    }
+    setEditingTemplate(row);
+    setTemplateEditForm({
+      template_key: row.template_key ?? row.templateKey ?? "",
+      provider_template_id: row.provider_template_id ?? row.providerTemplateId ?? "",
+      name: row.name ?? row.title ?? "",
+      description: row.description ?? "",
+      body_preview: row.body_preview ?? row.bodyPreview ?? row.preview ?? row.preview_text ?? "",
+      default_message: row.default_message ?? "",
+      default_params_json: typeof dp === "string" ? dp : "{}",
+      language: row.language ?? row.locale ?? "",
+      category: row.category ?? "",
+      is_active: row.is_active ?? row.active ?? true,
+    });
+    setTemplateEditJsonError("");
+    setTemplateSaveMessage("");
+    setTemplateSaveError("");
+  };
+
+  const closeTemplateEditor = () => {
+    setEditingTemplate(null);
+    setTemplateEditForm(null);
+    setTemplateEditJsonError("");
+  };
+
+  const onSaveTemplate = async () => {
+    if (!editingTemplate?.id || !templateEditForm) return;
+    let default_params;
+    try {
+      default_params = JSON.parse(templateEditForm.default_params_json || "{}");
+      setTemplateEditJsonError("");
+    } catch {
+      setTemplateEditJsonError("JSON inválido em Default Params.");
+      return;
+    }
+    setTemplateSaving(true);
+    setTemplateSaveError("");
+    setTemplateSaveMessage("");
+    try {
+      await updateNotificationTemplate(editingTemplate.id, {
+        template_key: templateEditForm.template_key,
+        provider_template_id: templateEditForm.provider_template_id || null,
+        name: templateEditForm.name,
+        description: templateEditForm.description,
+        body_preview: templateEditForm.body_preview,
+        default_message: templateEditForm.default_message,
+        default_params,
+        language: templateEditForm.language || null,
+        category: templateEditForm.category || null,
+        is_active: templateEditForm.is_active,
+      });
+      setTemplateSaveMessage("Template salvo com sucesso.");
+      await loadTemplates();
+      closeTemplateEditor();
+    } catch (err) {
+      setTemplateSaveError(parseNotificationsError(err));
+    } finally {
+      setTemplateSaving(false);
     }
   };
 
@@ -484,8 +716,6 @@ export default function AdminNotificationsPage() {
     }
   };
 
-  const updateTestField = (name, value) => setTestForm((f) => ({ ...f, [name]: value }));
-
   const onSyncBrevoTemplates = async () => {
     setSyncingBrevo(true);
     setSyncBrevoError("");
@@ -501,18 +731,6 @@ export default function AdminNotificationsPage() {
     } finally {
       setSyncingBrevo(false);
     }
-  };
-
-  const onSelectBrevoModel = (optionId) => {
-    setSelectedBrevoModelId(optionId);
-    if (!optionId) return;
-    const tpl = syncedBrevoTemplates.find((t) => brevoModelOptionId(t) === optionId);
-    if (!tpl) return;
-    setTestForm((f) => ({
-      ...f,
-      template_key: tpl.template_key ?? tpl.templateKey ?? f.template_key,
-      template_id: String(tpl.provider_template_id ?? tpl.providerTemplateId ?? ""),
-    }));
   };
 
   const onSyncDispatchDelivery = async (dispatchId) => {
@@ -590,14 +808,9 @@ export default function AdminNotificationsPage() {
     }
   };
 
-  const result = testResult?.result || testResult;
-  const dispatch = testResult?.dispatch || testResult?.data?.dispatch;
-  const deliveryCheck =
-    testResult?.delivery_check ??
-    testResult?.deliveryCheck ??
-    result?.delivery_check ??
-    result?.deliveryCheck ??
-    null;
+  const sendSummary = sendResult?.summary ?? sendResult;
+  const sendCampaign = sendResult?.campaign ?? sendSummary?.campaign;
+  const sendDispatches = sendResult?.dispatches ?? sendSummary?.dispatches ?? [];
   const manualCampaign = manualResult?.campaign;
   const manualDispatch = manualResult?.dispatch;
 
@@ -611,7 +824,7 @@ export default function AdminNotificationsPage() {
           <IconButton edge="start" color="inherit" onClick={() => nav("/admin")} aria-label="Voltar">
             <ArrowBackIosNewRoundedIcon />
           </IconButton>
-          <Typography sx={{ fontWeight: 900, ml: 1, flex: 1 }}>Central de Notificações</Typography>
+          <Typography sx={{ fontWeight: 900, ml: 1, flex: 1 }}>Central de Comunicação</Typography>
           <IconButton color="inherit" onClick={loadAll} disabled={loading} aria-label="Recarregar">
             <RefreshRoundedIcon />
           </IconButton>
@@ -620,10 +833,11 @@ export default function AdminNotificationsPage() {
 
       <Container maxWidth="xl" sx={{ py: 3 }}>
         <Typography variant="h5" sx={{ fontWeight: 900, mb: 0.5 }}>
-          Central de Notificações
+          Central de Comunicação
         </Typography>
         <Typography sx={{ opacity: 0.75, mb: 3, maxWidth: 900 }}>
-          Monitore envios de WhatsApp/E-mail, visualize webhooks e teste mensagens antes de ativar disparos reais.
+          Envie mensagens controladas, gerencie templates locais, acompanhe disparos e monitore entregas. O backend
+          pode redirecionar envios em modo teste conforme configuração.
         </Typography>
 
         {error && (
@@ -708,54 +922,109 @@ export default function AdminNotificationsPage() {
 
         {tab === 0 && (
           <Paper variant="outlined" sx={{ p: { xs: 2, md: 3 }, borderRadius: 4 }}>
-            <Typography variant="subtitle1" sx={{ fontWeight: 800, mb: 2 }}>
-              Enviar teste WhatsApp
+            <Typography variant="subtitle1" sx={{ fontWeight: 800, mb: 0.5 }}>
+              Enviar mensagem
             </Typography>
-            <Grid container spacing={2}>
-              <Grid item xs={12} md={6}>
+            <Typography variant="body2" sx={{ opacity: 0.75, mb: 2, maxWidth: 720 }}>
+              Envie mensagens controladas para clientes selecionados. Em modo teste, o backend pode redirecionar os
+              envios conforme configuração.
+            </Typography>
+
+            <Typography variant="subtitle2" sx={{ fontWeight: 800, mb: 1 }}>
+              Destinatários
+            </Typography>
+            <Autocomplete
+              freeSolo
+              options={filteredRecipientOptions}
+              loading={recipientSearchLoading}
+              inputValue={recipientSearch}
+              onInputChange={(_, value) => setRecipientSearch(value)}
+              getOptionLabel={(opt) =>
+                typeof opt === "string"
+                  ? opt
+                  : opt.name ?? opt.full_name ?? opt.fullName ?? opt.phone ?? opt.email ?? ""
+              }
+              filterOptions={(x) => x}
+              onChange={(_, value) => {
+                if (!value || typeof value === "string") return;
+                addRecipient(mapSearchHitToRecipient(value));
+              }}
+              renderOption={(props, opt) => (
+                <li {...props} key={opt.user_id ?? opt.userId ?? opt.id ?? opt.phone}>
+                  <Box>
+                    <Typography variant="body2" sx={{ fontWeight: 700 }}>
+                      {opt.name ?? opt.full_name ?? opt.fullName ?? "Cliente"}
+                    </Typography>
+                    <Typography variant="caption" sx={{ display: "block", opacity: 0.8 }}>
+                      {opt.phone ?? opt.whatsapp ?? "—"} · {opt.email ?? "—"}
+                    </Typography>
+                    {(opt.balance != null || opt.saldo != null) && (
+                      <Typography variant="caption" sx={{ display: "block", opacity: 0.7 }}>
+                        Saldo: {opt.balance ?? opt.saldo}
+                      </Typography>
+                    )}
+                  </Box>
+                </li>
+              )}
+              renderInput={(params) => (
+                <TextField
+                  {...params}
+                  placeholder="Buscar por nome, telefone ou e-mail"
+                  helperText="Digite pelo menos 2 caracteres para buscar clientes."
+                />
+              )}
+              sx={{ mb: 1 }}
+            />
+            <Button size="small" sx={{ mb: 1 }} onClick={() => setShowManualPhone((v) => !v)}>
+              {showManualPhone ? "Cancelar telefone avulso" : "Adicionar telefone avulso"}
+            </Button>
+            {showManualPhone && (
+              <Stack direction={{ xs: "column", sm: "row" }} spacing={1} sx={{ mb: 2 }}>
                 <TextField
                   fullWidth
-                  label="Telefone destino original"
-                  name="phone"
-                  value={testForm.phone}
-                  onChange={(e) => updateTestField("phone", e.target.value)}
+                  size="small"
+                  label="Telefone"
+                  value={manualPhone}
+                  onChange={(e) => setManualPhone(e.target.value)}
                   placeholder="5585999999999"
-                  helperText="Em modo teste, o backend ignora este telefone e envia para o número de teste."
                 />
-              </Grid>
-              <Grid item xs={12} md={6}>
+                <Button variant="outlined" onClick={onAddManualPhone}>
+                  Adicionar
+                </Button>
+              </Stack>
+            )}
+            {selectedRecipients.length > 0 && (
+              <Stack direction="row" flexWrap="wrap" gap={1} sx={{ mb: 2 }}>
+                {selectedRecipients.map((r) => {
+                  const key = recipientDedupeKey(r);
+                  const label =
+                    r.type === "manual_phone"
+                      ? `${r.name}: ${r.phone}`
+                      : `${r.name}${r.phone ? ` (${r.phone})` : ""}`;
+                  return <Chip key={key} label={label} onDelete={() => removeRecipient(key)} />;
+                })}
+              </Stack>
+            )}
+
+            <Grid container spacing={2} sx={{ mt: 1 }}>
+              <Grid item xs={12}>
                 <FormControl fullWidth>
-                  <InputLabel>Template Key</InputLabel>
+                  <InputLabel>Template</InputLabel>
                   <Select
-                    label="Template Key"
-                    value={testForm.template_key}
-                    onChange={(e) => updateTestField("template_key", e.target.value)}
-                  >
-                    {templateKeys.map((k) => (
-                      <MenuItem key={k} value={k}>
-                        {k}
-                      </MenuItem>
-                    ))}
-                  </Select>
-                </FormControl>
-              </Grid>
-              <Grid item xs={12} md={6}>
-                <FormControl fullWidth>
-                  <InputLabel>Modelo Brevo sincronizado</InputLabel>
-                  <Select
-                    label="Modelo Brevo sincronizado"
-                    value={selectedBrevoModelId}
-                    onChange={(e) => onSelectBrevoModel(e.target.value)}
+                    label="Template"
+                    value={selectedTemplateOptionId}
+                    onChange={(e) => onSelectSendTemplate(e.target.value)}
                   >
                     <MenuItem value="">
-                      <em>Nenhum (preencher manualmente)</em>
+                      <em>Selecione um template</em>
                     </MenuItem>
-                    {syncedBrevoTemplates.map((tpl) => {
-                      const oid = brevoModelOptionId(tpl);
-                      const name = tpl.name ?? tpl.title ?? oid;
+                    {templates.map((tpl) => {
+                      const oid = templateSelectOptionId(tpl);
+                      const name = tpl.name ?? tpl.title ?? tpl.template_key ?? tpl.templateKey ?? oid;
+                      const pid = tpl.provider_template_id ?? tpl.providerTemplateId ?? "—";
                       return (
                         <MenuItem key={oid} value={oid}>
-                          {name} ({tpl.template_key ?? tpl.templateKey})
+                          {name} · {pid}
                         </MenuItem>
                       );
                     })}
@@ -765,149 +1034,196 @@ export default function AdminNotificationsPage() {
               <Grid item xs={12} md={6}>
                 <TextField
                   fullWidth
-                  label="Template ID (opcional)"
-                  value={testForm.template_id}
-                  onChange={(e) => updateTestField("template_id", e.target.value)}
-                  placeholder="ID do template Brevo"
-                  helperText="Se vazio, o backend tenta usar o template configurado no banco/env."
+                  size="small"
+                  label="Template Key"
+                  value={sendForm.template_key}
+                  onChange={(e) => updateSendField("template_key", e.target.value)}
                 />
               </Grid>
               <Grid item xs={12} md={6}>
                 <TextField
                   fullWidth
-                  label="Nome do cliente"
-                  value={testForm.customer_name}
-                  onChange={(e) => updateTestField("customer_name", e.target.value)}
-                />
-              </Grid>
-              <Grid item xs={12} md={6}>
-                <TextField
-                  fullWidth
-                  label="Prêmio/Campanha"
-                  value={testForm.prize_name}
-                  onChange={(e) => updateTestField("prize_name", e.target.value)}
-                />
-              </Grid>
-              <Grid item xs={12} md={6}>
-                <TextField
-                  fullWidth
-                  label="Valor da cota"
-                  value={testForm.ticket_price}
-                  onChange={(e) => updateTestField("ticket_price", e.target.value)}
-                />
-              </Grid>
-              <Grid item xs={12} md={6}>
-                <TextField
-                  fullWidth
-                  label="Números"
-                  value={testForm.numbers}
-                  onChange={(e) => updateTestField("numbers", e.target.value)}
-                />
-              </Grid>
-              <Grid item xs={12} md={6}>
-                <TextField
-                  fullWidth
-                  label="Link autorizar"
-                  value={testForm.authorize_url}
-                  onChange={(e) => updateTestField("authorize_url", e.target.value)}
-                />
-              </Grid>
-              <Grid item xs={12} md={6}>
-                <TextField
-                  fullWidth
-                  label="Link recusar"
-                  value={testForm.decline_url}
-                  onChange={(e) => updateTestField("decline_url", e.target.value)}
+                  size="small"
+                  label="Template ID (Brevo)"
+                  value={sendForm.template_id}
+                  onChange={(e) => updateSendField("template_id", e.target.value)}
+                  helperText="Preenchido automaticamente ao selecionar um template."
                 />
               </Grid>
               <Grid item xs={12}>
                 <TextField
                   fullWidth
                   multiline
-                  minRows={2}
-                  label="Mensagem livre"
-                  value={testForm.message}
-                  onChange={(e) => updateTestField("message", e.target.value)}
+                  minRows={4}
+                  label="Mensagem"
+                  value={sendForm.message}
+                  onChange={(e) => updateSendField("message", e.target.value)}
+                  helperText="Para WhatsApp via Brevo, o template precisa possuir um parâmetro como {{ params.message }} para que este texto seja enviado."
                 />
               </Grid>
             </Grid>
+
+            <Button
+              size="small"
+              startIcon={advancedOpen ? <ExpandLessRoundedIcon /> : <ExpandMoreRoundedIcon />}
+              onClick={() => setAdvancedOpen((v) => !v)}
+              sx={{ mt: 2 }}
+            >
+              Parâmetros avançados
+            </Button>
+            <Collapse in={advancedOpen}>
+              <Grid container spacing={2} sx={{ mt: 0.5 }}>
+                <Grid item xs={12} md={6}>
+                  <TextField
+                    fullWidth
+                    label="Nome do cliente"
+                    value={sendForm.customer_name}
+                    onChange={(e) => updateSendField("customer_name", e.target.value)}
+                  />
+                </Grid>
+                <Grid item xs={12} md={6}>
+                  <TextField
+                    fullWidth
+                    label="Prêmio/Campanha"
+                    value={sendForm.prize_name}
+                    onChange={(e) => updateSendField("prize_name", e.target.value)}
+                  />
+                </Grid>
+                <Grid item xs={12} md={6}>
+                  <TextField
+                    fullWidth
+                    label="Valor da cota"
+                    value={sendForm.ticket_price}
+                    onChange={(e) => updateSendField("ticket_price", e.target.value)}
+                  />
+                </Grid>
+                <Grid item xs={12} md={6}>
+                  <TextField
+                    fullWidth
+                    label="Números"
+                    value={sendForm.numbers}
+                    onChange={(e) => updateSendField("numbers", e.target.value)}
+                  />
+                </Grid>
+                <Grid item xs={12} md={6}>
+                  <TextField
+                    fullWidth
+                    label="Link autorizar"
+                    value={sendForm.authorize_url}
+                    onChange={(e) => updateSendField("authorize_url", e.target.value)}
+                  />
+                </Grid>
+                <Grid item xs={12} md={6}>
+                  <TextField
+                    fullWidth
+                    label="Link recusar"
+                    value={sendForm.decline_url}
+                    onChange={(e) => updateSendField("decline_url", e.target.value)}
+                  />
+                </Grid>
+              </Grid>
+            </Collapse>
+
+            <Box sx={{ mt: 2 }}>
+              <FormControlLabel
+                control={
+                  <Checkbox
+                    checked={useCustomRecipient}
+                    disabled={!customRecipientsEnabled}
+                    onChange={(e) => setUseCustomRecipient(e.target.checked)}
+                  />
+                }
+                label="Enviar para o número selecionado/digitado neste teste"
+              />
+              {!customRecipientsEnabled && (
+                <Typography variant="caption" sx={{ display: "block", opacity: 0.75, ml: 4 }}>
+                  Backend configurado para redirecionar envios para o número de teste.
+                </Typography>
+              )}
+              <Typography variant="caption" sx={{ display: "block", opacity: 0.65, ml: 4, mt: 0.5 }}>
+                Campanhas e envios em massa continuam controlados pelo backend.
+              </Typography>
+            </Box>
+
             <Button
               variant="contained"
               sx={{ mt: 2, borderRadius: 999 }}
-              disabled={testSending}
-              onClick={onSendTest}
+              disabled={sendSending}
+              onClick={onSendMessage}
             >
-              {testSending ? "Enviando…" : "Enviar WhatsApp de teste"}
+              {sendSending ? "Enviando…" : "Enviar mensagem"}
             </Button>
-            {testError && (
+            {sendError && (
               <Alert severity="error" sx={{ mt: 2 }}>
-                {testError}
+                {sendError}
               </Alert>
             )}
-            {testResult && (
+            {sendResult && (
               <Paper variant="outlined" sx={{ mt: 2, p: 2, borderRadius: 3 }}>
                 <Typography variant="subtitle2" sx={{ fontWeight: 800, mb: 1 }}>
                   Resultado do envio
                 </Typography>
                 <Stack spacing={0.5}>
-                  <Typography variant="body2">ok: {String(testResult.ok ?? testResult.success ?? "—")}</Typography>
-                  <Typography variant="body2">dispatch.id: {dispatch?.id ?? "—"}</Typography>
-                  <Typography variant="body2">dispatch.status: {dispatch?.status ?? "—"}</Typography>
-                  <Typography variant="body2">result.statusCode: {result?.statusCode ?? "—"}</Typography>
-                  <Typography variant="body2">result.messageId: {result?.messageId ?? "—"}</Typography>
-                  <Typography variant="body2">result.recipient: {result?.recipient ?? "—"}</Typography>
+                  <Typography variant="body2">ok: {String(sendResult.ok ?? sendResult.success ?? "—")}</Typography>
                   <Typography variant="body2">
-                    result.recipient_original: {result?.recipient_original ?? result?.recipientOriginal ?? "—"}
+                    campaign_id: {sendCampaign?.id ?? sendResult.campaign_id ?? sendResult.campaignId ?? "—"}
                   </Typography>
                   <Typography variant="body2">
-                    result.recipient_forced: {String(result?.recipient_forced ?? result?.recipientForced ?? false)}
+                    total solicitado:{" "}
+                    {sendSummary?.requested_count ?? sendSummary?.requestedCount ?? sendResult.requested_count ?? "—"}
                   </Typography>
-                  {result?.reason === "missing_template_id" && (
-                    <Alert severity="error" sx={{ mt: 1 }}>
-                      {result.message ||
-                        "Template ID ausente. Configure BREVO_WHATSAPP_GENERIC_TEST_TEMPLATE_ID, preencha provider_template_id no banco ou informe template_id no formulário."}
+                  <Typography variant="body2">
+                    aceitos pela Brevo:{" "}
+                    {sendSummary?.accepted_count ?? sendSummary?.acceptedCount ?? sendResult.accepted_count ?? "—"}
+                  </Typography>
+                  <Typography variant="body2">
+                    falhas: {sendSummary?.failed_count ?? sendSummary?.failedCount ?? sendResult.failed_count ?? "—"}
+                  </Typography>
+                  <Typography variant="body2">
+                    ignorados: {sendSummary?.skipped_count ?? sendSummary?.skippedCount ?? sendResult.skipped_count ?? "—"}
+                  </Typography>
+                  <Typography variant="body2">
+                    redirecionados (modo teste):{" "}
+                    {sendSummary?.forced_count ?? sendSummary?.forcedCount ?? sendResult.forced_count ?? "—"}
+                  </Typography>
+                  {(sendResult.warning ?? sendSummary?.warning) && (
+                    <Alert severity="warning" sx={{ mt: 1 }}>
+                      {sendResult.warning ?? sendSummary?.warning}
                     </Alert>
                   )}
-                  {(result?.reason || result?.error) && result?.reason !== "missing_template_id" && (
-                    <Typography variant="body2" color="warning.main">
-                      {result.reason || result.error}
-                    </Typography>
-                  )}
                 </Stack>
-                {deliveryCheck && (
-                  <Paper variant="outlined" sx={{ mt: 2, p: 1.5, borderRadius: 2 }}>
-                    <Typography variant="subtitle2" sx={{ fontWeight: 800, mb: 1 }}>
-                      Diagnóstico de entrega (delivery_check)
-                    </Typography>
-                    <Stack spacing={0.5}>
-                      <Typography variant="body2">
-                        checked: {String(deliveryCheck.checked ?? "—")}
-                      </Typography>
-                      <Typography variant="body2">
-                        matched: {String(deliveryCheck.matched ?? "—")}
-                      </Typography>
-                      <Typography variant="body2">
-                        events_checked: {deliveryCheck.events_checked ?? deliveryCheck.eventsChecked ?? "—"}
-                      </Typography>
-                      <Typography variant="body2">
-                        matched_event: {deliveryCheck.matched_event ?? deliveryCheck.matchedEvent ?? "—"}
-                      </Typography>
-                      <Typography variant="body2">
-                        matched_reason: {deliveryCheck.matched_reason ?? deliveryCheck.matchedReason ?? "—"}
-                      </Typography>
-                      <Typography variant="body2">message: {deliveryCheck.message ?? "—"}</Typography>
-                    </Stack>
-                  </Paper>
-                )}
-                {Number(result?.statusCode) === 201 && (
-                  <Alert severity="success" sx={{ mt: 1 }}>
-                    Envio aceito pela Brevo. A entrega real será confirmada pelos eventos da Brevo.
-                  </Alert>
-                )}
-                {(result?.recipient_forced || result?.recipientForced) && (
-                  <Alert severity="info" sx={{ mt: 1 }}>
-                    Envio redirecionado para o número de teste pelo backend.
-                  </Alert>
+                <Alert severity="info" sx={{ mt: 1 }}>
+                  Accepted significa que a Brevo aceitou o envio. A entrega real é confirmada pelos eventos da Brevo.
+                </Alert>
+                {Array.isArray(sendDispatches) && sendDispatches.length > 0 && (
+                  <TableContainer sx={{ mt: 2 }}>
+                    <Table size="small">
+                      <TableHead>
+                        <TableRow>
+                          <TableCell>dispatch_id</TableCell>
+                          <TableCell>recipient</TableCell>
+                          <TableCell>original</TableCell>
+                          <TableCell>forçado?</TableCell>
+                          <TableCell>modo</TableCell>
+                          <TableCell>status</TableCell>
+                          <TableCell>provider_message_id</TableCell>
+                        </TableRow>
+                      </TableHead>
+                      <TableBody>
+                        {sendDispatches.map((d, idx) => (
+                          <TableRow key={d.id ?? idx}>
+                            <TableCell>{d.id ?? "—"}</TableCell>
+                            <TableCell>{d.recipient ?? d.to ?? "—"}</TableCell>
+                            <TableCell>{d.recipient_original ?? d.recipientOriginal ?? "—"}</TableCell>
+                            <TableCell>{boolLabel(d.recipient_forced ?? d.recipientForced)}</TableCell>
+                            <TableCell>{d.recipient_mode ?? d.recipientMode ?? "—"}</TableCell>
+                            <TableCell>{d.status ?? "—"}</TableCell>
+                            <TableCell>{d.provider_message_id ?? d.providerMessageId ?? "—"}</TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </TableContainer>
                 )}
               </Paper>
             )}
@@ -1356,9 +1672,18 @@ export default function AdminNotificationsPage() {
         {tab === 3 && (
           <Paper variant="outlined" sx={{ p: { xs: 2, md: 3 }, borderRadius: 4 }}>
             <Alert severity="info" sx={{ mb: 2 }}>
-              Sincronize os modelos WhatsApp da Brevo para preencher provider_template_id automaticamente no envio de
-              teste.
+              Sincronize os modelos WhatsApp da Brevo para atualizar provider_template_id. Edite aqui o modelo local
+              usado pelo sistema — alterações não substituem o template aprovado na Brevo.
             </Alert>
+            <Alert severity="warning" sx={{ mb: 2 }}>
+              Alterações nesta tela ajustam o modelo local usado pelo sistema. Para alterar o conteúdo aprovado do
+              WhatsApp, edite o template na Brevo.
+            </Alert>
+            {templateSaveMessage && (
+              <Alert severity="success" sx={{ mb: 2 }} onClose={() => setTemplateSaveMessage("")}>
+                {templateSaveMessage}
+              </Alert>
+            )}
             <Stack direction="row" spacing={2} flexWrap="wrap" sx={{ mb: 2 }}>
               <Button
                 variant="contained"
@@ -1405,6 +1730,7 @@ export default function AdminNotificationsPage() {
                     <TableCell>Nome</TableCell>
                     <TableCell>Ativo</TableCell>
                     <TableCell>Preview</TableCell>
+                    <TableCell align="right">Ações</TableCell>
                   </TableRow>
                 </TableHead>
                 <TableBody>
@@ -1423,13 +1749,23 @@ export default function AdminNotificationsPage() {
                         />
                       </TableCell>
                       <TableCell sx={{ maxWidth: 280, whiteSpace: "pre-wrap" }}>
-                        {row.preview ?? row.preview_text ?? "—"}
+                        {row.body_preview ?? row.bodyPreview ?? row.preview ?? row.preview_text ?? "—"}
+                      </TableCell>
+                      <TableCell align="right">
+                        <Button
+                          size="small"
+                          variant="outlined"
+                          disabled={row.id == null}
+                          onClick={() => openTemplateEditor(row)}
+                        >
+                          Editar
+                        </Button>
                       </TableCell>
                     </TableRow>
                   ))}
                   {!templates.length && (
                     <TableRow>
-                      <TableCell colSpan={7} align="center" sx={{ opacity: 0.6, py: 3, whiteSpace: "normal" }}>
+                      <TableCell colSpan={8} align="center" sx={{ opacity: 0.6, py: 3, whiteSpace: "normal" }}>
                         Nenhum template carregado. Verifique se a tabela notification_templates possui registros ou
                         clique em sincronizar modelos da Brevo.
                       </TableCell>
@@ -1545,6 +1881,109 @@ export default function AdminNotificationsPage() {
             )}
           </Paper>
         )}
+
+        <Dialog open={Boolean(editingTemplate && templateEditForm)} onClose={closeTemplateEditor} maxWidth="md" fullWidth>
+          <DialogTitle>Editar template local</DialogTitle>
+          <DialogContent>
+            <Alert severity="warning" sx={{ mb: 2, mt: 1 }}>
+              Alterações nesta tela ajustam o modelo local usado pelo sistema. Para alterar o conteúdo aprovado do
+              WhatsApp, edite o template na Brevo.
+            </Alert>
+            {templateSaveError && (
+              <Alert severity="error" sx={{ mb: 2 }}>
+                {templateSaveError}
+              </Alert>
+            )}
+            {templateEditForm && (
+              <Stack spacing={2} sx={{ pt: 1 }}>
+                <TextField
+                  fullWidth
+                  label="Template Key"
+                  value={templateEditForm.template_key}
+                  onChange={(e) => setTemplateEditForm((f) => ({ ...f, template_key: e.target.value }))}
+                />
+                <TextField
+                  fullWidth
+                  label="Provider Template ID"
+                  value={templateEditForm.provider_template_id}
+                  onChange={(e) => setTemplateEditForm((f) => ({ ...f, provider_template_id: e.target.value }))}
+                />
+                <TextField
+                  fullWidth
+                  label="Nome"
+                  value={templateEditForm.name}
+                  onChange={(e) => setTemplateEditForm((f) => ({ ...f, name: e.target.value }))}
+                />
+                <TextField
+                  fullWidth
+                  label="Descrição"
+                  value={templateEditForm.description}
+                  onChange={(e) => setTemplateEditForm((f) => ({ ...f, description: e.target.value }))}
+                />
+                <TextField
+                  fullWidth
+                  multiline
+                  minRows={2}
+                  label="Preview / Corpo local"
+                  value={templateEditForm.body_preview}
+                  onChange={(e) => setTemplateEditForm((f) => ({ ...f, body_preview: e.target.value }))}
+                />
+                <TextField
+                  fullWidth
+                  multiline
+                  minRows={2}
+                  label="Mensagem padrão"
+                  value={templateEditForm.default_message}
+                  onChange={(e) => setTemplateEditForm((f) => ({ ...f, default_message: e.target.value }))}
+                />
+                <TextField
+                  fullWidth
+                  multiline
+                  minRows={6}
+                  label="Default Params JSON"
+                  value={templateEditForm.default_params_json}
+                  onChange={(e) => {
+                    setTemplateEditForm((f) => ({ ...f, default_params_json: e.target.value }));
+                    setTemplateEditJsonError("");
+                  }}
+                  error={Boolean(templateEditJsonError)}
+                  helperText={templateEditJsonError || "JSON com parâmetros padrão do template."}
+                />
+                <TextField
+                  fullWidth
+                  label="Idioma"
+                  value={templateEditForm.language}
+                  onChange={(e) => setTemplateEditForm((f) => ({ ...f, language: e.target.value }))}
+                />
+                <TextField
+                  fullWidth
+                  label="Categoria"
+                  value={templateEditForm.category}
+                  onChange={(e) => setTemplateEditForm((f) => ({ ...f, category: e.target.value }))}
+                />
+                <FormControl fullWidth>
+                  <InputLabel>Ativo</InputLabel>
+                  <Select
+                    label="Ativo"
+                    value={templateEditForm.is_active ? "true" : "false"}
+                    onChange={(e) =>
+                      setTemplateEditForm((f) => ({ ...f, is_active: e.target.value === "true" }))
+                    }
+                  >
+                    <MenuItem value="true">Sim</MenuItem>
+                    <MenuItem value="false">Não</MenuItem>
+                  </Select>
+                </FormControl>
+              </Stack>
+            )}
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={closeTemplateEditor}>Cancelar</Button>
+            <Button variant="contained" disabled={templateSaving} onClick={onSaveTemplate}>
+              {templateSaving ? "Salvando…" : "Salvar template"}
+            </Button>
+          </DialogActions>
+        </Dialog>
       </Container>
     </ThemeProvider>
   );

@@ -1,5 +1,5 @@
 // src/services/adminNotifications.js
-import { apiJoin, authHeaders, getJSON, postJSON } from "../lib/api";
+import { apiJoin, authHeaders, getJSON, patchJSON, postJSON } from "../lib/api";
 
 function buildQuery(params = {}) {
   const usp = new URLSearchParams();
@@ -25,6 +25,7 @@ export function extractList(data, keys = []) {
     ...keys,
     "rows",
     "items",
+    "recipients",
     "dispatches",
     "templates",
     "inbound",
@@ -54,6 +55,7 @@ function debugListResponse(label, data, list) {
     rawType: Array.isArray(data) ? "array" : typeof data,
     hasRows: Array.isArray(data?.rows),
     hasItems: Array.isArray(data?.items),
+    hasRecipients: Array.isArray(data?.recipients),
     hasDispatches: Array.isArray(data?.dispatches),
     hasTemplates: Array.isArray(data?.templates),
     hasInbound: Array.isArray(data?.inbound),
@@ -116,6 +118,25 @@ export async function getBrevoWhatsAppEvents(params = {}) {
 export async function syncDispatchDeliveryStatus(dispatchId) {
   const id = encodeURIComponent(String(dispatchId));
   return postJSON(`/admin/notifications/dispatches/${id}/sync-delivery-status`, {});
+}
+
+export async function searchNotificationRecipients(query, limit = 20) {
+  const data = await apiGet("/api/admin/notifications/recipients/search", {
+    q: query,
+    limit,
+  });
+  const list = extractList(data, ["rows", "recipients", "items"]);
+  debugListResponse("recipients search response", data, list);
+  return list;
+}
+
+export async function updateNotificationTemplate(id, payload) {
+  const tid = encodeURIComponent(String(id));
+  return patchJSON(`/admin/notifications/templates/${tid}`, payload);
+}
+
+export async function manualSendSelectedNotification(payload) {
+  return postJSON("/admin/notifications/manual-send-selected", payload);
 }
 
 export async function sendTestWhatsApp(payload) {
