@@ -22,6 +22,7 @@ import DrawBoardPage from "./DrawBoardPage";
 import AdminOpenDrawBuyers from "./AdminOpenDrawBuyers";
 import AdminAnalytics from './AdminAnalytics';
 import AdminNotificationsPage from "./AdminNotificationsPage";
+import AdminHistoricoSaldo from "./AdminHistoricoSaldo";
 
 export default function App() {
   const [selecionados, setSelecionados] = React.useState([]);
@@ -87,6 +88,14 @@ export default function App() {
               element={
                 <AdminRoute>
                   <AdminVencedores />
+                </AdminRoute>
+              }
+            />
+            <Route
+              path="/admin/historico-saldo"
+              element={
+                <AdminRoute>
+                  <AdminHistoricoSaldo />
                 </AdminRoute>
               }
             />

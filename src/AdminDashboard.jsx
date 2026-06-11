@@ -424,6 +424,10 @@ export default function AdminDashboard() {
               <br /> COM SALDO ATIVO
             </BigCard>
 
+            <BigCard color="success.dark" onClick={() => navigate("/admin/historico-saldo")}>
+              HISTÓRICO DE SALDO
+            </BigCard>
+
             <BigCard color="warning.main" onClick={() => navigate("/admin/vencedores")}>
               LISTA DE VENCEDORES
               <br /> DOS SORTEIOS
