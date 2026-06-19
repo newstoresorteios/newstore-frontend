@@ -23,6 +23,7 @@ import AdminOpenDrawBuyers from "./AdminOpenDrawBuyers";
 import AdminAnalytics from './AdminAnalytics';
 import AdminNotificationsPage from "./AdminNotificationsPage";
 import AdminHistoricoSaldo from "./AdminHistoricoSaldo";
+import AutorizacaoCativoPage from "./AutorizacaoCativoPage";
 
 export default function App() {
   const [selecionados, setSelecionados] = React.useState([]);
@@ -45,6 +46,7 @@ export default function App() {
 
             <Route path="/cadastro" element={<RegisterPage />} />
             <Route path="/login" element={<LoginPage />} />
+            <Route path="/autorizacao-cativo" element={<AutorizacaoCativoPage />} />
 
             {/* CONTA: autenticado e não-admin */}
             <Route
