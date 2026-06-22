@@ -389,11 +389,21 @@ export default function AdminDashboard() {
     if (drawMode === "adicionais") {
       try {
         setAdditionalCreating(true);
+        const bannerTitle = String(additionalForm.banner_title || "SORTEIO ADICIONAL");
+        const ticketPriceCents = Math.max(
+          0,
+          Math.floor(Number(additionalForm.ticket_price_cents || 10000))
+        );
+        const maxNumbersPerSelection = Math.max(
+          1,
+          Math.floor(Number(additionalForm.max_numbers_per_selection || 25))
+        );
         const created = await postJSON("/admin/additional-draws", {
-          product_name: "SORTEIO ADICIONAL",
-          banner_title: "SORTEIO ADICIONAL",
-          ticket_price_cents: 10000,
-          max_numbers_per_selection: 25,
+          draw_type: "adicional",
+          product_name: bannerTitle,
+          banner_title: bannerTitle,
+          ticket_price_cents: ticketPriceCents,
+          max_numbers_per_selection: maxNumbersPerSelection,
           number_count: 100,
         });
         const createdId =
@@ -413,7 +423,7 @@ export default function AdminDashboard() {
 
     try {
       setPrincipalCreating(true);
-      await postJSON("/admin/dashboard/new", {});
+      await postJSON("/admin/dashboard/new", { draw_type: "principal", number_count: 100 });
       await loadSummary();
       // Notifica o frontend para refetch imediato de config/numbers (reservados) sem esperar polling
       try {

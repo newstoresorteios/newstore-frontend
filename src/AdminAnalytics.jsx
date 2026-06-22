@@ -409,7 +409,7 @@ export default function AdminAnalytics() {
   const hasMetric = (value) => value !== null && value !== undefined && value !== "";
   const gmv30dCents = hasMetric(kpiSummary?.gmv_30d_cents)
     ? kpiSummary.gmv_30d_cents
-    : (overview ? totals.gmv_paid_cents : null);
+    : (hasMetric(totals.gmv_30d_cents) ? totals.gmv_30d_cents : null);
   const gmvAllTimeCents = hasMetric(kpiSummary?.gmv_all_time_cents)
     ? kpiSummary.gmv_all_time_cents
     : null;
@@ -419,6 +419,21 @@ export default function AdminAnalytics() {
   const gmvCurrentYearCents = hasMetric(kpiSummary?.gmv_current_year_cents)
     ? kpiSummary.gmv_current_year_cents
     : null;
+  const paidOrdersAllTime = hasMetric(kpiSummary?.paid_orders_all_time)
+    ? Number(kpiSummary.paid_orders_all_time)
+    : null;
+  const paidOrders30d = hasMetric(kpiSummary?.paid_orders_30d)
+    ? Number(kpiSummary.paid_orders_30d)
+    : null;
+  const averageTicketAllTimeCents = hasMetric(kpiSummary?.average_ticket_all_time_cents)
+    ? kpiSummary.average_ticket_all_time_cents
+    : (hasMetric(kpiSummary?.average_ticket_cents) ? kpiSummary.average_ticket_cents : null);
+  const uniqueBuyersAllTime = hasMetric(kpiSummary?.unique_buyers_all_time)
+    ? Number(kpiSummary.unique_buyers_all_time)
+    : null;
+  const averageOrdersPerBuyer = hasMetric(kpiSummary?.average_orders_per_buyer)
+    ? Number(kpiSummary.average_orders_per_buyer)
+    : (paidOrdersAllTime != null && uniqueBuyersAllTime > 0 ? paidOrdersAllTime / uniqueBuyersAllTime : null);
   const series = overview?.series || [];
   const dailyGMV = series.map(x => ({
     day: dateKey(x.day),
@@ -702,26 +717,26 @@ export default function AdminAnalytics() {
                 />
                 <KpiCard
                   label="Pedidos confirmados"
-                  value={overview ? Number(totals.orders_paid || 0).toLocaleString("pt-BR") : "—"}
-                  hint="últimos 30 dias"
-                  loading={overviewState.loading}
-                  error={Boolean(overviewState.error)}
+                  value={paidOrdersAllTime != null ? paidOrdersAllTime.toLocaleString("pt-BR") : "—"}
+                  hint={paidOrders30d != null ? `${paidOrders30d.toLocaleString("pt-BR")} nos últimos 30 dias` : "desde o início"}
+                  loading={kpiDashboardState.loading}
+                  error={Boolean(kpiDashboardState.error)}
                   accent={CHART_COLORS.secondary}
                 />
                 <KpiCard
                   label="Valor médio por pedido"
-                  value={overview ? BRL(totals.avg_ticket_paid_cents) : "—"}
+                  value={hasMetric(averageTicketAllTimeCents) ? BRL(averageTicketAllTimeCents) : "—"}
                   hint="desde o início"
-                  loading={overviewState.loading}
-                  error={Boolean(overviewState.error)}
+                  loading={kpiDashboardState.loading}
+                  error={Boolean(kpiDashboardState.error)}
                   accent={CHART_COLORS.warning}
                 />
                 <KpiCard
                   label="Clientes únicos"
-                  value={overview ? Number(totals.unique_buyers_paid || 0).toLocaleString("pt-BR") : "—"}
-                  hint="com pagamento aprovado"
-                  loading={overviewState.loading}
-                  error={Boolean(overviewState.error)}
+                  value={uniqueBuyersAllTime != null ? uniqueBuyersAllTime.toLocaleString("pt-BR") : "—"}
+                  hint="desde o início"
+                  loading={kpiDashboardState.loading}
+                  error={Boolean(kpiDashboardState.error)}
                   accent={CHART_COLORS.secondary}
                 />
                 <KpiCard
@@ -734,10 +749,10 @@ export default function AdminAnalytics() {
                 />
                 <KpiCard
                   label="Pedidos por cliente"
-                  value={overview ? Number(totals.avg_orders_per_buyer || 0).toFixed(2) : "—"}
-                  hint="últimos 30 dias"
-                  loading={overviewState.loading}
-                  error={Boolean(overviewState.error)}
+                  value={averageOrdersPerBuyer != null ? averageOrdersPerBuyer.toFixed(2) : "—"}
+                  hint="desde o início"
+                  loading={kpiDashboardState.loading}
+                  error={Boolean(kpiDashboardState.error)}
                   accent={CHART_COLORS.muted}
                 />
                 <KpiCard
@@ -929,7 +944,7 @@ export default function AdminAnalytics() {
                     <TableHead>
                       <TableRow>
                         <SortableHeader label="Sorteio" column="id" sortConfig={drawRankingSort} onSort={(column) => changeSort(setDrawRankingSort, column)} />
-                        <SortableHeader label="Percentual vendido" column="fill" sortConfig={drawRankingSort} onSort={(column) => changeSort(setDrawRankingSort, column)} align="right" />
+                        <SortableHeader label="Percentual vendido registrado" column="fill" sortConfig={drawRankingSort} onSort={(column) => changeSort(setDrawRankingSort, column)} align="right" />
                         <SortableHeader label="Valor vendido (GMV)" column="gmv" sortConfig={drawRankingSort} onSort={(column) => changeSort(setDrawRankingSort, column)} align="right" />
                       </TableRow>
                     </TableHead>
@@ -1019,7 +1034,7 @@ export default function AdminAnalytics() {
         {tab === 1 && (
           <Stack spacing={2}>
             <Section
-              title="Percentual vendido por sorteio"
+              title="Percentual vendido registrado por sorteio"
               right={
                 <Button onClick={() => loadDrawLists()} startIcon={<RefreshRoundedIcon />} size="small" variant="outlined">
                   Atualizar
@@ -1034,7 +1049,7 @@ export default function AdminAnalytics() {
                     <XAxis dataKey="id" />
                     <YAxis unit="%" />
                     <RTooltip />
-                    <Bar dataKey="fr" name="Percentual vendido" fill={CHART_COLORS.primary} radius={[4, 4, 0, 0]} />
+                    <Bar dataKey="fr" name="Percentual vendido registrado" fill={CHART_COLORS.primary} radius={[4, 4, 0, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
               </Box>
@@ -1073,7 +1088,7 @@ export default function AdminAnalytics() {
                         <SortableHeader label="Produto" column="product" sortConfig={drawsTableSort} onSort={(column) => changeSort(setDrawsTableSort, column)} />
                         <SortableHeader label="Status" column="status" sortConfig={drawsTableSort} onSort={(column) => changeSort(setDrawsTableSort, column)} />
                         <SortableHeader label="Vendidos" column="sold" sortConfig={drawsTableSort} onSort={(column) => changeSort(setDrawsTableSort, column)} align="right" />
-                        <SortableHeader label="Percentual vendido" column="fill" sortConfig={drawsTableSort} onSort={(column) => changeSort(setDrawsTableSort, column)} align="right" />
+                        <SortableHeader label="Percentual vendido registrado" column="fill" sortConfig={drawsTableSort} onSort={(column) => changeSort(setDrawsTableSort, column)} align="right" />
                         <SortableHeader label="Valor vendido (GMV)" column="gmv" sortConfig={drawsTableSort} onSort={(column) => changeSort(setDrawsTableSort, column)} align="right" />
                         <SortableHeader label="Valor médio por pedido" column="averageTicket" sortConfig={drawsTableSort} onSort={(column) => changeSort(setDrawsTableSort, column)} align="right" />
                         <SortableHeader label="Pedidos confirmados" column="paidOrders" sortConfig={drawsTableSort} onSort={(column) => changeSort(setDrawsTableSort, column)} align="right" />
