@@ -19,6 +19,7 @@ import PixModal from "./PixModal";
 import { checkPixStatus } from "./services/pix";
 // ▲ PIX
 import AutoPaySection from "./AutoPaySection";
+import PushNotificationSettings from "./components/PushNotificationSettings";
 
 const theme = createTheme({
   palette: {
@@ -772,6 +773,8 @@ export default function AccountPage() {
           >
             {headingName}
           </Typography>
+
+          <PushNotificationSettings />
 
           {/* Configurações do sorteio (apenas admin) */}
           {isAdminUser && (

@@ -59,6 +59,14 @@ export default function App() {
                 </ProtectedRoute>
               }
             />
+            <Route
+              path="/me"
+              element={
+                <ProtectedRoute>
+                  <AccountPage />
+                </ProtectedRoute>
+              }
+            />
 
             {/* ADMIN (somente admin) */}
             <Route

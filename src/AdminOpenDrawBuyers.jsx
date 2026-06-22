@@ -2,7 +2,7 @@
 import * as React from "react";
 import { useNavigate, Link as RouterLink } from "react-router-dom";
 import {
-  AppBar, Box, Button, Chip, Container, CssBaseline, Divider, IconButton,
+  Alert, AppBar, Box, Button, Chip, Container, CssBaseline, Divider, IconButton,
   Paper, Stack, Tab, Tabs, TextField, ThemeProvider, Toolbar, Typography, createTheme,
   Table, TableBody, TableCell, TableContainer, TableHead, TableRow
 } from "@mui/material";
@@ -155,6 +155,7 @@ export default function AdminOpenDrawBuyers() {
   const navigate = useNavigate();
   useAuth();
 
+  const [drawMode, setDrawMode] = React.useState("principal");
   const [tab, setTab] = React.useState(0);
   const [loading, setLoading] = React.useState(true);
   const [drawId, setDrawId] = React.useState(null);
@@ -162,23 +163,122 @@ export default function AdminOpenDrawBuyers() {
   const [remaining, setRemaining] = React.useState(0);
   const [buyers, setBuyers] = React.useState([]);      // [{user_id, name, email, numbers[], count, total_cents}]
   const [numbers, setNumbers] = React.useState([]);    // [{n, user_id, name, email}]
+  const [gridNumbers, setGridNumbers] = React.useState([]);
   const [query, setQuery] = React.useState("");
   const [exportError, setExportError] = React.useState("");
+  const [emptyMessage, setEmptyMessage] = React.useState("");
+  const [loadError, setLoadError] = React.useState("");
+  const loadSequence = React.useRef(0);
 
   const load = React.useCallback(async () => {
+    const sequence = ++loadSequence.current;
     setLoading(true);
+    setDrawId(null);
+    setSold(0);
+    setRemaining(0);
+    setBuyers([]);
+    setNumbers([]);
+    setGridNumbers([]);
+    setEmptyMessage("");
+    setLoadError("");
+    setExportError("");
+
     try {
-      const r = await getJSON("/admin/dashboard/open-buyers");
-      setDrawId(r.draw_id ?? null);
-      setSold(r.sold ?? 0);
-      setRemaining(r.remaining ?? Math.max(0, 100 - Number(r.sold || 0)));
-      setBuyers(Array.isArray(r.buyers) ? r.buyers : []);
-      setNumbers(Array.isArray(r.numbers) ? r.numbers : []);
+      if (drawMode === "principal") {
+        const r = await getJSON("/admin/dashboard/open-buyers");
+        if (sequence !== loadSequence.current) return;
+
+        const principalTotal = Math.max(0, Number(r.total || 0));
+        setDrawId(r.draw_id ?? null);
+        setSold(Number(r.sold || 0));
+        setRemaining(Number(r.remaining ?? Math.max(0, principalTotal - Number(r.sold || 0))));
+        setBuyers(Array.isArray(r.buyers) ? r.buyers : []);
+        setNumbers(Array.isArray(r.numbers) ? r.numbers : []);
+        setGridNumbers(Array.from({ length: principalTotal || 100 }, (_, n) => n));
+        return;
+      }
+
+      const payload = await getJSON("/admin/additional-draws");
+      const items = Array.isArray(payload?.draws) ? payload.draws : [];
+      const openItems = items
+        .filter((item) => {
+          const draw = item?.draw || {};
+          const type = String(draw.draw_type || "").toLowerCase();
+          const status = String(draw.status || "").toLowerCase();
+          return status === "open" && (type === "adicional" || type === "secundario");
+        })
+        .sort((a, b) => Number(b?.draw?.id || 0) - Number(a?.draw?.id || 0));
+      const current = openItems[0] || null;
+
+      if (sequence !== loadSequence.current) return;
+      if (!current?.draw?.id) {
+        setEmptyMessage("Nenhum sorteio adicional aberto encontrado.");
+        return;
+      }
+
+      const additionalDrawId = Number(current.draw.id);
+      const numberPayload = await getJSON(`/admin/additional-draws/${additionalDrawId}/numbers`);
+      if (sequence !== loadSequence.current) return;
+
+      const allNumbers = Array.isArray(numberPayload?.numbers) ? numberPayload.numbers : [];
+      const stats = current.stats || {};
+      const additionalTotal = Number(stats.total_numbers ?? stats.total ?? allNumbers.length ?? 0);
+      const additionalSold = Number(stats.sold_count ?? stats.sold ?? 0);
+      const additionalRemaining = Number(
+        stats.remaining ?? stats.available_count ?? stats.available ?? Math.max(0, additionalTotal - additionalSold)
+      );
+      const ticketPriceCents = Number(
+        current?.config?.ticket_price_cents ?? current?.draw?.ticket_price_cents ?? 0
+      );
+      const additionalBuyers = (Array.isArray(current.buyers) ? current.buyers : []).map((buyer) => {
+        const buyerNumbers = Array.isArray(buyer.numbers) ? buyer.numbers.map(Number) : [];
+        const count = Number(buyer.numbers_count ?? buyer.count ?? buyerNumbers.length ?? 0);
+        return {
+          ...buyer,
+          numbers: buyerNumbers,
+          count,
+          total_cents: Number(buyer.total_cents ?? count * ticketPriceCents),
+        };
+      });
+      const soldNumbers = allNumbers
+        .filter((item) => item?.payment_id || ["sold", "approved", "paid", "pago"].includes(String(item?.status || "").toLowerCase()))
+        .map((item) => ({
+          n: Number(item.n),
+          user_id: item.user_id ?? null,
+          name: item.user_name || null,
+          email: item.user_email || null,
+        }));
+
+      setDrawId(additionalDrawId);
+      setSold(additionalSold);
+      setRemaining(additionalRemaining);
+      setBuyers(additionalBuyers);
+      setNumbers(soldNumbers);
+      setGridNumbers(
+        allNumbers
+          .map((item) => Number(item?.n))
+          .filter((n) => Number.isInteger(n) && n >= 0)
+          .sort((a, b) => a - b)
+      );
+    } catch (error) {
+      if (sequence === loadSequence.current) {
+        setLoadError(
+          drawMode === "adicional"
+            ? "Não foi possível carregar os compradores do sorteio adicional."
+            : "Não foi possível carregar os compradores do sorteio principal."
+        );
+      }
     } finally {
-      setLoading(false);
+      if (sequence === loadSequence.current) setLoading(false);
     }
-  }, []);
+  }, [drawMode]);
   React.useEffect(() => { load(); }, [load]);
+
+  const isAdditionalMode = drawMode === "adicional";
+  const drawTypeSlug = isAdditionalMode ? "adicional" : "principal";
+  const screenTitle = isAdditionalMode
+    ? "Sorteio Adicional — Compradores"
+    : "Sorteio Ativo — Compradores";
 
   // Map de user_id -> idx/color
   const idToIdx = React.useMemo(() => {
@@ -218,7 +318,7 @@ export default function AdminOpenDrawBuyers() {
     const url  = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `sorteio_${drawId}_compradores.csv`;
+    a.download = `sorteio_${drawTypeSlug}_${drawId}_compradores.csv`;
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -227,6 +327,12 @@ export default function AdminOpenDrawBuyers() {
   const exportPNGMobile = async () => {
     if (loading) {
       alert("Aguarde carregar os dados do sorteio antes de exportar.");
+      return;
+    }
+    const isStandardGrid =
+      gridNumbers.length === 100 && gridNumbers.every((n, index) => Number(n) === index);
+    if (!isStandardGrid) {
+      alert("A exportação PNG da grade está disponível somente para sorteios com números de 00 a 99.");
       return;
     }
 
@@ -259,7 +365,7 @@ export default function AdminOpenDrawBuyers() {
     ctx.fillStyle = "#FFFFFF";
     ctx.font = "900 44px Inter, system-ui, Segoe UI, Roboto, Arial";
     ctx.textBaseline = "top";
-    ctx.fillText("Sorteio Ativo — Grade 00–99", Mx, y);
+    ctx.fillText(`${isAdditionalMode ? "Sorteio Adicional" : "Sorteio Ativo"} — Grade 00–99`, Mx, y);
     y += 44 + 16;
 
     // Metadados
@@ -340,7 +446,7 @@ export default function AdminOpenDrawBuyers() {
     const dataUrl = canvas.toDataURL("image/png");
     const a = document.createElement("a");
     a.href = dataUrl;
-    a.download = `sorteio_${drawId}_grade_1080x1920.png`;
+    a.download = `sorteio_${drawTypeSlug}_${drawId}_grade_1080x1920.png`;
     a.click();
   };
 
@@ -615,7 +721,11 @@ export default function AdminOpenDrawBuyers() {
 
         ctx.font = "700 28px Inter, system-ui, Arial";
         ctx.fillStyle = "rgba(255,255,255,.72)";
-        ctx.fillText("Sorteio Ativo — participantes confirmados", P, TOP_Y + 166);
+        ctx.fillText(
+          `${isAdditionalMode ? "Sorteio Adicional" : "Sorteio Ativo"} — participantes confirmados`,
+          P,
+          TOP_Y + 166
+        );
 
         const metaY = TOP_Y + 220;
 
@@ -760,7 +870,7 @@ export default function AdminOpenDrawBuyers() {
         return;
       }
 
-      const base = safeFilename(`sorteio_${drawId}_lista_1080x1920`);
+      const base = safeFilename(`sorteio_${drawTypeSlug}_${drawId}_lista_1080x1920`);
       const zip = new JSZip();
 
       for (let p = 0; p < pages.length; p++) {
@@ -811,6 +921,7 @@ export default function AdminOpenDrawBuyers() {
       zip.file(
         `${base}_README.txt`,
         [
+          `Tipo: ${isAdditionalMode ? "Adicional" : "Principal"}`,
           `Sorteio: ${drawId}`,
           `Total compradores: ${list.length}`,
           `Vendidos: ${sold}`,
@@ -854,10 +965,43 @@ export default function AdminOpenDrawBuyers() {
 
       <Container maxWidth="lg" sx={{ py: { xs: 3, md: 5 } }}>
         <Stack spacing={2.5}>
-          <Typography sx={{ fontWeight: 900, fontSize: { xs: 22, md: 28 } }}>
-            Sorteio Ativo — Compradores
-          </Typography>
+          <Stack
+            direction={{ xs: "column", sm: "row" }}
+            spacing={2}
+            alignItems={{ xs: "flex-start", sm: "center" }}
+          >
+            <Typography sx={{ fontWeight: 900, fontSize: { xs: 22, md: 28 }, flex: 1 }}>
+              {screenTitle}
+            </Typography>
+            <Stack spacing={0.75}>
+              <Typography variant="caption" sx={{ opacity: 0.72, fontWeight: 800 }}>
+                Tipo de sorteio
+              </Typography>
+              <Stack direction="row" spacing={1}>
+                <Button
+                  size="small"
+                  variant={!isAdditionalMode ? "contained" : "outlined"}
+                  onClick={() => setDrawMode("principal")}
+                  sx={{ borderRadius: 999, fontWeight: 800 }}
+                >
+                  Principal
+                </Button>
+                <Button
+                  size="small"
+                  variant={isAdditionalMode ? "contained" : "outlined"}
+                  onClick={() => setDrawMode("adicional")}
+                  sx={{ borderRadius: 999, fontWeight: 800 }}
+                >
+                  Adicional
+                </Button>
+              </Stack>
+            </Stack>
+          </Stack>
 
+          {emptyMessage && <Alert severity="info">{emptyMessage}</Alert>}
+          {loadError && <Alert severity="error">{loadError}</Alert>}
+
+          {!emptyMessage && !loadError && (
           <Paper variant="outlined" sx={{ p: { xs: 2, md: 3 }, borderRadius: 4 }}>
             <Stack direction="row" spacing={1.5} alignItems="center" flexWrap="wrap">
               <Stack sx={{ mr: 3 }}>
@@ -883,13 +1027,29 @@ export default function AdminOpenDrawBuyers() {
                 sx={{ minWidth: { xs: "100%", sm: 280 } }}
               />
 
-              <Button startIcon={<DownloadRoundedIcon />} onClick={exportCSV} variant="outlined">
+              <Button
+                startIcon={<DownloadRoundedIcon />}
+                onClick={exportCSV}
+                variant="outlined"
+                disabled={loading || !drawId}
+              >
                 Exportar CSV
               </Button>
-              <Button startIcon={<DownloadRoundedIcon />} onClick={exportPNGMobile} variant="contained">
+              <Button
+                startIcon={<DownloadRoundedIcon />}
+                onClick={exportPNGMobile}
+                variant="contained"
+                disabled={loading || !drawId}
+              >
                 Exportar PNG (Grade 1080×1920)
               </Button>
-              <Button startIcon={<DownloadRoundedIcon />} onClick={exportPNGListMobile} variant="contained" color="primary">
+              <Button
+                startIcon={<DownloadRoundedIcon />}
+                onClick={exportPNGListMobile}
+                variant="contained"
+                color="primary"
+                disabled={loading || !drawId}
+              >
                 Exportar ZIP (Lista PNGs 1080×1920)
               </Button>
             </Stack>
@@ -958,7 +1118,7 @@ export default function AdminOpenDrawBuyers() {
                     gap: .6,
                   }}
                 >
-                  {Array.from({ length: 100 }, (_, n) => {
+                  {gridNumbers.map((n) => {
                     const owner = numbers.find(x => Number(x.n) === n);
                     const idx   = owner ? (idToIdx.get(owner.user_id) ?? 0) : 0;
                     const bg    = owner ? buyerColor(idx) : "transparent";
@@ -990,6 +1150,7 @@ export default function AdminOpenDrawBuyers() {
               </Box>
             )}
           </Paper>
+          )}
         </Stack>
       </Container>
     </ThemeProvider>
