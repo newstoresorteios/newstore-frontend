@@ -9,6 +9,7 @@ import {
   Container,
   CssBaseline,
   Divider,
+  Alert,
   IconButton,
   Menu,
   MenuItem,
@@ -71,7 +72,7 @@ async function getJSON(path) {
   });
   if (!r.ok) {
     let err = `${r.status}`;
-    try { const j = await r.json(); if (j?.error) err = j.error; } catch {}
+    try { const j = await r.json(); if (j?.error || j?.message) err = j.error || j.message; } catch {}
     throw new Error(err);
   }
   return r.json();
@@ -85,11 +86,51 @@ async function postJSON(path, body, method = "POST") {
   });
   if (!r.ok) {
     let err = `${r.status}`;
-    try { const j = await r.json(); if (j?.error) err = j.error; } catch {}
+    try { const j = await r.json(); if (j?.error || j?.message) err = j.error || j.message; } catch {}
     throw new Error(err);
   }
   return r.json().catch(() => ({}));
 }
+
+const EMPTY_ADDITIONAL_FORM = {
+  banner_title: "",
+  ticket_price_cents: "",
+  max_numbers_per_selection: 25,
+};
+
+const normalizeAdditionalDraws = (payload) => {
+  const list = Array.isArray(payload)
+    ? payload
+    : payload?.draws ?? payload?.data?.draws ?? [];
+
+  if (!Array.isArray(list)) return [];
+
+  return list
+    .map((item) => {
+      if (!item || typeof item !== "object") return null;
+      const draw = item.draw && typeof item.draw === "object" ? item.draw : item;
+      const config = item.config && typeof item.config === "object" ? item.config : {};
+      const stats = item.stats && typeof item.stats === "object" ? item.stats : {};
+      const buyers = Array.isArray(item.buyers)
+        ? item.buyers
+        : Array.isArray(draw?.buyers)
+        ? draw.buyers
+        : [];
+      return draw?.id == null ? null : { draw, config, stats, buyers };
+    })
+    .filter(Boolean);
+};
+
+const additionalFormFromItem = (item) => ({
+  banner_title: String(item?.config?.banner_title ?? item?.draw?.banner_title ?? ""),
+  ticket_price_cents: String(
+    item?.config?.ticket_price_cents ?? item?.draw?.ticket_price_cents ?? ""
+  ),
+  max_numbers_per_selection:
+    item?.config?.max_numbers_per_selection ??
+    item?.draw?.max_numbers_per_selection ??
+    25,
+});
 
 /* ---------- Card grande clicável (as 3 listas) ---------- */
 function BigCard({ children, color, outlined = false, onClick }) {
@@ -135,32 +176,39 @@ export default function AdminDashboard() {
   const navigate = useNavigate();
   const { logout } = useAuth();
 
-  // resumo
-  const [drawId, setDrawId] = React.useState(null);
-  const [sold, setSold] = React.useState(0);
-  const [remaining, setRemaining] = React.useState(0);
-
-  // preço (em centavos)
-  const [price, setPrice] = React.useState("");
-
-  // novos campos
-  const [maxSelect, setMaxSelect] = React.useState(5);
-  const [bannerTitle, setBannerTitle] = React.useState("");
-
-  const [loading, setLoading] = React.useState(true);
-  const [saving, setSaving] = React.useState(false);
-  const [creating, setCreating] = React.useState(false);
+  const [principalDraw, setPrincipalDraw] = React.useState(null);
+  const [principalStats, setPrincipalStats] = React.useState({ sold: 0, remaining: 0 });
+  const [principalForm, setPrincipalForm] = React.useState({
+    ticket_price_cents: "",
+    max_numbers_per_selection: 5,
+    banner_title: "",
+  });
+  const [principalLoading, setPrincipalLoading] = React.useState(true);
+  const [principalSaving, setPrincipalSaving] = React.useState(false);
+  const [principalCreating, setPrincipalCreating] = React.useState(false);
+  const [drawMode, setDrawMode] = React.useState("principal");
+  const [additionalDraws, setAdditionalDraws] = React.useState([]);
+  const [selectedAdditionalDrawId, setSelectedAdditionalDrawId] = React.useState("");
+  const [selectedAdditionalItem, setSelectedAdditionalItem] = React.useState(null);
+  const [additionalForm, setAdditionalForm] = React.useState(EMPTY_ADDITIONAL_FORM);
+  const [additionalLoading, setAdditionalLoading] = React.useState(false);
+  const [additionalSaving, setAdditionalSaving] = React.useState(false);
+  const [additionalCreating, setAdditionalCreating] = React.useState(false);
+  const [additionalError, setAdditionalError] = React.useState("");
+  const selectedAdditionalDrawIdRef = React.useRef("");
 
   const loadSummary = React.useCallback(async () => {
-    setLoading(true);
+    setPrincipalLoading(true);
     try {
       // resumo do dashboard
       const r = await getJSON("/admin/dashboard/summary");
-      setDrawId(r.draw_id ?? null);
-      setSold(r.sold ?? 0);
-      setRemaining(r.remaining ?? 0);
+      setPrincipalDraw(r.draw_id == null ? null : { id: r.draw_id });
+      setPrincipalStats({ sold: r.sold ?? 0, remaining: r.remaining ?? r.available ?? 0 });
       if (Number.isFinite(Number(r.price_cents))) {
-        setPrice(String(Number(r.price_cents)));
+        setPrincipalForm((form) => ({
+          ...form,
+          ticket_price_cents: String(Number(r.price_cents)),
+        }));
       }
 
       // configurações públicas
@@ -174,7 +222,10 @@ export default function AdminDashboard() {
           cfg?.current_draw?.price_cents ??
           null;
         if (cfgCents != null && Number.isFinite(Number(cfgCents))) {
-          setPrice(String(Number(cfgCents)));
+          setPrincipalForm((form) => ({
+            ...form,
+            ticket_price_cents: String(Number(cfgCents)),
+          }));
         }
 
         const maxSel =
@@ -183,7 +234,10 @@ export default function AdminDashboard() {
           cfg?.max_select ??
           null;
         if (maxSel != null && !Number.isNaN(Number(maxSel))) {
-          setMaxSelect(Number(maxSel));
+          setPrincipalForm((form) => ({
+            ...form,
+            max_numbers_per_selection: Number(maxSel),
+          }));
         }
 
         const banner =
@@ -191,36 +245,129 @@ export default function AdminDashboard() {
           cfg?.promo_title ??
           cfg?.headline ??
           "";
-        if (banner != null) setBannerTitle(String(banner));
+        if (banner != null) {
+          setPrincipalForm((form) => ({ ...form, banner_title: String(banner) }));
+        }
       } catch (e) {
         console.warn("[AdminDashboard] GET /config opcional:", e?.message || e);
       }
     } catch (e) {
       console.error("[AdminDashboard] GET /summary failed:", e);
-      setDrawId(null);
-      setSold(0);
-      setRemaining(0);
+      setPrincipalDraw(null);
+      setPrincipalStats({ sold: 0, remaining: 0 });
     } finally {
-      setLoading(false);
+      setPrincipalLoading(false);
     }
   }, []);
 
   React.useEffect(() => { loadSummary(); }, [loadSummary]);
 
+  const selectAdditionalItem = React.useCallback((item) => {
+    const id = item?.draw?.id == null ? "" : String(item.draw.id);
+    selectedAdditionalDrawIdRef.current = id;
+    setSelectedAdditionalDrawId(id);
+    setSelectedAdditionalItem(item || null);
+    setAdditionalForm(item ? additionalFormFromItem(item) : EMPTY_ADDITIONAL_FORM);
+  }, []);
+
+  const loadAdditionalDraws = React.useCallback(async (preferredId, selectNewest = false) => {
+    setAdditionalLoading(true);
+    setAdditionalError("");
+    try {
+      const response = await fetch(apiJoin("/admin/additional-draws"), {
+        headers: { "Content-Type": "application/json", ...authHeaders() },
+        credentials: "omit",
+        cache: "no-store",
+      });
+      if (response.status === 204 || response.status === 404) {
+        setAdditionalDraws([]);
+        selectAdditionalItem(null);
+        return;
+      }
+      if (!response.ok) throw new Error(`${response.status}`);
+      const payload = await response.json().catch(() => ({}));
+      const draws = normalizeAdditionalDraws(payload);
+      setAdditionalDraws(draws);
+      const wantedId = preferredId ?? selectedAdditionalDrawIdRef.current;
+      const selected =
+        draws.find((item) => String(item.draw.id) === String(wantedId)) ||
+        (selectNewest
+          ? [...draws].sort((a, b) => Number(b.draw.id) - Number(a.draw.id))[0]
+          : null) ||
+        draws[0] ||
+        null;
+      selectAdditionalItem(selected);
+    } catch (e) {
+      if (String(e?.message || "") === "404") {
+        setAdditionalDraws([]);
+        selectAdditionalItem(null);
+        setAdditionalError("");
+      } else {
+        setAdditionalError("Não foi possível carregar os sorteios adicionais.");
+      }
+    } finally {
+      setAdditionalLoading(false);
+    }
+  }, [selectAdditionalItem]);
+
+  React.useEffect(() => {
+    if (drawMode === "adicionais") loadAdditionalDraws();
+  }, [drawMode, loadAdditionalDraws]);
+
   // SALVAR: mantém o fluxo do preço que já funciona e tenta salvar os novos campos
   const onSaveAll = async () => {
-    setSaving(true);
+    if (drawMode === "adicionais") {
+      if (!selectedAdditionalItem?.draw?.id) {
+        alert("Nenhum sorteio adicional cadastrado para atualizar.");
+        return;
+      }
+      setAdditionalSaving(true);
+      try {
+        await postJSON(
+          `/admin/additional-draws/${selectedAdditionalItem.draw.id}`,
+          {
+            banner_title: String(additionalForm.banner_title || ""),
+            product_name: String(additionalForm.banner_title || ""),
+            ticket_price_cents: Math.max(
+              0,
+              Math.floor(Number(additionalForm.ticket_price_cents || 0))
+            ),
+            max_numbers_per_selection: Math.max(
+              1,
+              Math.floor(Number(additionalForm.max_numbers_per_selection || 1))
+            ),
+          },
+          "PATCH"
+        );
+        await loadAdditionalDraws(selectedAdditionalItem.draw.id);
+        alert("Sorteio adicional atualizado.");
+      } catch (e) {
+        console.error("[AdminDashboard] PATCH additional draw failed:", e);
+        alert("Não foi possível atualizar o sorteio adicional.");
+      } finally {
+        setAdditionalSaving(false);
+      }
+      return;
+    }
+
+    setPrincipalSaving(true);
     let msg = "Configurações atualizadas.";
     try {
       // 1) preço — usa a rota que já funciona hoje
-      const priceCents = Math.max(0, Math.floor(Number(price || 0)));
+      const priceCents = Math.max(
+        0,
+        Math.floor(Number(principalForm.ticket_price_cents || 0))
+      );
       await postJSON("/admin/dashboard/ticket-price", { price_cents: priceCents });
 
       // 2) banner + max — tenta POST /config (se seu backend ainda não tiver, isso cairá no catch)
       try {
         await postJSON("/config", {
-          banner_title: String(bannerTitle || ""),
-          max_numbers_per_selection: Math.max(1, Math.floor(Number(maxSelect || 1))),
+          banner_title: String(principalForm.banner_title || ""),
+          max_numbers_per_selection: Math.max(
+            1,
+            Math.floor(Number(principalForm.max_numbers_per_selection || 1))
+          ),
         });
       } catch (e) {
         console.warn("[AdminDashboard] POST /config falhou:", e?.message || e);
@@ -234,14 +381,49 @@ export default function AdminDashboard() {
       console.error("[AdminDashboard] salvar configs falhou:", e);
       alert("Não foi possível atualizar as configurações agora.");
     } finally {
-      setSaving(false);
+      setPrincipalSaving(false);
     }
   };
 
   const onNewDraw = async () => {
+    if (drawMode === "adicionais") {
+      try {
+        setAdditionalCreating(true);
+        const bannerTitle = String(additionalForm.banner_title || "SORTEIO ADICIONAL");
+        const ticketPriceCents = Math.max(
+          0,
+          Math.floor(Number(additionalForm.ticket_price_cents || 10000))
+        );
+        const maxNumbersPerSelection = Math.max(
+          1,
+          Math.floor(Number(additionalForm.max_numbers_per_selection || 25))
+        );
+        const created = await postJSON("/admin/additional-draws", {
+          draw_type: "adicional",
+          product_name: bannerTitle,
+          banner_title: bannerTitle,
+          ticket_price_cents: ticketPriceCents,
+          max_numbers_per_selection: maxNumbersPerSelection,
+          number_count: 100,
+        });
+        const createdId =
+          created?.draw?.id ??
+          created?.data?.draw?.id ??
+          created?.id ??
+          created?.draw_id;
+        await loadAdditionalDraws(createdId, createdId == null);
+      } catch (e) {
+        console.error("[AdminDashboard] POST additional draw failed:", e);
+        alert("Não foi possível criar o sorteio adicional.");
+      } finally {
+        setAdditionalCreating(false);
+      }
+      return;
+    }
+
     try {
-      setCreating(true);
-      await postJSON("/admin/dashboard/new", {});
+      setPrincipalCreating(true);
+      await postJSON("/admin/dashboard/new", { draw_type: "principal", number_count: 100 });
       await loadSummary();
       // Notifica o frontend para refetch imediato de config/numbers (reservados) sem esperar polling
       try {
@@ -251,7 +433,7 @@ export default function AdminDashboard() {
     } catch (e) {
       console.error("[AdminDashboard] POST /new failed:", e);
     } finally {
-      setCreating(false);
+      setPrincipalCreating(false);
     }
   };
 
@@ -262,6 +444,22 @@ export default function AdminDashboard() {
   const closeMenu = () => setMenuEl(null);
   const goPainel = () => { closeMenu(); navigate("/admin"); };
   const doLogout = () => { closeMenu(); logout(); navigate("/"); };
+
+  const isAdditionalMode = drawMode === "adicionais";
+  const currentLoading = isAdditionalMode ? additionalLoading : principalLoading;
+  const currentDrawId = isAdditionalMode
+    ? selectedAdditionalItem?.draw?.id
+    : principalDraw?.id;
+  const currentSold = isAdditionalMode
+    ? selectedAdditionalItem?.stats?.sold ?? 0
+    : principalStats.sold;
+  const currentRemaining = isAdditionalMode
+    ? selectedAdditionalItem?.stats?.remaining ??
+      selectedAdditionalItem?.stats?.available ??
+      0
+    : principalStats.remaining ?? principalStats.available ?? 0;
+  const currentCreating = isAdditionalMode ? additionalCreating : principalCreating;
+  const currentSaving = isAdditionalMode ? additionalSaving : principalSaving;
 
   return (
     <ThemeProvider theme={theme}>
@@ -304,25 +502,77 @@ export default function AdminDashboard() {
 
           {/* Painel (resumo + preço e configs) */}
           <Paper variant="outlined" sx={{ p: { xs: 3, md: 4 }, borderRadius: 4, width: "100%" }}>
+            <Stack direction="row" spacing={1} sx={{ mb: 3, flexWrap: "wrap" }}>
+              <Button
+                variant={!isAdditionalMode ? "contained" : "outlined"}
+                color="primary"
+                onClick={() => setDrawMode("principal")}
+                sx={{ borderRadius: 999, px: 3, fontWeight: 900 }}
+              >
+                PRINCIPAL
+              </Button>
+              <Button
+                variant={isAdditionalMode ? "contained" : "outlined"}
+                color="primary"
+                onClick={() => setDrawMode("adicionais")}
+                sx={{ borderRadius: 999, px: 3, fontWeight: 900 }}
+              >
+                ADICIONAIS
+              </Button>
+            </Stack>
+
+            {isAdditionalMode && !additionalLoading && additionalDraws.length === 0 && (
+              <Alert severity="info" sx={{ mb: 3, bgcolor: "rgba(2,136,209,0.12)" }}>
+                Nenhum sorteio adicional cadastrado.
+              </Alert>
+            )}
+
+            {isAdditionalMode && additionalError && (
+              <Alert severity="error" sx={{ mb: 3, bgcolor: "rgba(211,47,47,0.12)" }}>
+                {additionalError}
+              </Alert>
+            )}
+
+            {isAdditionalMode && additionalDraws.length > 0 && (
+              <TextField
+                select
+                label="Sorteio adicional"
+                value={selectedAdditionalDrawId}
+                onChange={(e) => {
+                  const item = additionalDraws.find(
+                    (candidate) => String(candidate.draw.id) === e.target.value
+                  );
+                  selectAdditionalItem(item || null);
+                }}
+                sx={{ mb: 3, minWidth: 280 }}
+              >
+                {additionalDraws.map((item) => (
+                  <MenuItem key={item.draw.id} value={String(item.draw.id)}>
+                    #{item.draw.id} - {item.draw.product_name || item.draw.banner_title || "Sorteio adicional"}
+                  </MenuItem>
+                ))}
+              </TextField>
+            )}
+
             <Stack direction="row" spacing={4} alignItems="center" flexWrap="wrap">
               <Stack>
                 <Typography sx={{ opacity: 0.7, fontWeight: 700 }}>Nº Sorteio Atual</Typography>
                 <Typography variant="h4" sx={{ fontWeight: 900 }}>
-                  {loading ? "…" : drawId ?? "-"}
+                  {currentLoading ? "…" : currentDrawId ?? "-"}
                 </Typography>
               </Stack>
 
               <Stack>
                 <Typography sx={{ opacity: 0.7, fontWeight: 700 }}>Nºs Vendidos</Typography>
                 <Typography variant="h4" sx={{ fontWeight: 900 }}>
-                  {loading ? "…" : sold}
+                  {currentLoading ? "…" : currentSold}
                 </Typography>
               </Stack>
 
               <Stack>
                 <Typography sx={{ opacity: 0.7, fontWeight: 700 }}>Nºs Restantes</Typography>
                 <Typography variant="h4" sx={{ fontWeight: 900 }}>
-                  {loading ? "…" : remaining}
+                  {currentLoading ? "…" : currentRemaining}
                 </Typography>
               </Stack>
 
@@ -330,11 +580,11 @@ export default function AdminDashboard() {
 
               <Button
                 onClick={onNewDraw}
-                disabled={creating}
+                disabled={currentCreating}
                 variant="outlined"
                 sx={{ borderRadius: 999, px: 3 }}
               >
-                {creating ? "Criando..." : "NOVO SORTEIO"}
+                {currentCreating ? "Criando..." : "NOVO SORTEIO"}
               </Button>
             </Stack>
 
@@ -344,8 +594,19 @@ export default function AdminDashboard() {
             <Typography sx={{ opacity: 0.7, fontWeight: 700, mb: 1 }}>Valor por Ticket</Typography>
             <Stack direction="row" spacing={2} alignItems="center" sx={{ mb: 2 }}>
               <TextField
-                value={price}
-                onChange={(e) => setPrice(e.target.value)}
+                value={
+                  isAdditionalMode
+                    ? additionalForm.ticket_price_cents
+                    : principalForm.ticket_price_cents
+                }
+                onChange={(e) => {
+                  const ticket_price_cents = e.target.value;
+                  if (isAdditionalMode) {
+                    setAdditionalForm((form) => ({ ...form, ticket_price_cents }));
+                  } else {
+                    setPrincipalForm((form) => ({ ...form, ticket_price_cents }));
+                  }
+                }}
                 placeholder="em centavos (ex.: 100 = R$ 1,00)"
                 inputProps={{ inputMode: "numeric", pattern: "[0-9]*" }}
                 sx={{ maxWidth: 320 }}
@@ -359,8 +620,19 @@ export default function AdminDashboard() {
             <Stack direction="row" spacing={2} alignItems="center" sx={{ mb: 2 }}>
               <TextField
                 type="number"
-                value={maxSelect}
-                onChange={(e) => setMaxSelect(e.target.value)}
+                value={
+                  isAdditionalMode
+                    ? additionalForm.max_numbers_per_selection
+                    : principalForm.max_numbers_per_selection
+                }
+                onChange={(e) => {
+                  const max_numbers_per_selection = e.target.value;
+                  if (isAdditionalMode) {
+                    setAdditionalForm((form) => ({ ...form, max_numbers_per_selection }));
+                  } else {
+                    setPrincipalForm((form) => ({ ...form, max_numbers_per_selection }));
+                  }
+                }}
                 placeholder="Ex.: 5"
                 inputProps={{ min: 1 }}
                 sx={{ maxWidth: 320 }}
@@ -373,8 +645,17 @@ export default function AdminDashboard() {
             </Typography>
             <Stack direction="row" spacing={2} alignItems="center" sx={{ mb: 3 }}>
               <TextField
-                value={bannerTitle}
-                onChange={(e) => setBannerTitle(e.target.value)}
+                value={
+                  isAdditionalMode ? additionalForm.banner_title : principalForm.banner_title
+                }
+                onChange={(e) => {
+                  const banner_title = e.target.value;
+                  if (isAdditionalMode) {
+                    setAdditionalForm((form) => ({ ...form, banner_title }));
+                  } else {
+                    setPrincipalForm((form) => ({ ...form, banner_title }));
+                  }
+                }}
                 placeholder="Ex.: Sorteio de um Watch Winder…"
                 fullWidth
               />
@@ -382,13 +663,70 @@ export default function AdminDashboard() {
 
             <Button
               onClick={onSaveAll}
-              disabled={saving}
+              disabled={currentSaving || (isAdditionalMode && !selectedAdditionalItem)}
               variant="contained"
               color="primary"
               sx={{ borderRadius: 999, px: 3 }}
             >
-              {saving ? "Salvando..." : "ATUALIZAR"}
+              {currentSaving ? "Salvando..." : "ATUALIZAR"}
             </Button>
+
+            {isAdditionalMode && selectedAdditionalItem && (
+              <>
+                <Divider sx={{ my: 3 }} />
+                <Typography variant="h6" sx={{ fontWeight: 900, mb: 2 }}>
+                  Compradores deste sorteio
+                </Typography>
+
+                {selectedAdditionalItem.buyers.length === 0 ? (
+                  <Typography sx={{ opacity: 0.7 }}>
+                    Nenhum comprador neste sorteio.
+                  </Typography>
+                ) : (
+                  <Box sx={{ overflowX: "auto" }}>
+                    <Box sx={{ minWidth: 640 }}>
+                      <Box
+                        sx={{
+                          display: "grid",
+                          gridTemplateColumns: "1.2fr 1.6fr 0.7fr 1.5fr",
+                          gap: 2,
+                          pb: 1,
+                          borderBottom: "1px solid rgba(255,255,255,0.16)",
+                        }}
+                      >
+                        {['Nome', 'Email', 'Quantidade', 'Números'].map((label) => (
+                          <Typography key={label} sx={{ fontWeight: 800, opacity: 0.8 }}>
+                            {label}
+                          </Typography>
+                        ))}
+                      </Box>
+
+                      {selectedAdditionalItem.buyers.map((buyer, index) => {
+                        const numbers = Array.isArray(buyer?.numbers) ? buyer.numbers : [];
+                        const numbersCount = buyer?.numbers_count ?? numbers.length;
+                        return (
+                          <Box
+                            key={buyer?.user_id ?? `${buyer?.email || "buyer"}-${index}`}
+                            sx={{
+                              display: "grid",
+                              gridTemplateColumns: "1.2fr 1.6fr 0.7fr 1.5fr",
+                              gap: 2,
+                              py: 1.25,
+                              borderBottom: "1px solid rgba(255,255,255,0.08)",
+                            }}
+                          >
+                            <Typography>{buyer?.name || "-"}</Typography>
+                            <Typography>{buyer?.email || "-"}</Typography>
+                            <Typography>{numbersCount}</Typography>
+                            <Typography>{numbers.length ? numbers.join(", ") : "-"}</Typography>
+                          </Box>
+                        );
+                      })}
+                    </Box>
+                  </Box>
+                )}
+              </>
+            )}
           </Paper>
 
           {/* As 3 listas */}

@@ -8,12 +8,8 @@ import {
   Chip,
   Container,
   CssBaseline,
-  FormControl,
   IconButton,
-  InputLabel,
-  MenuItem,
   Paper,
-  Select,
   Stack,
   Table,
   TableBody,
@@ -63,12 +59,6 @@ function asList(data, keys = []) {
   return [];
 }
 
-function looksLikeIdList(value) {
-  const s = String(value || "").trim();
-  if (!s) return false;
-  return /[,;\s]/.test(s) || /^\[/.test(s);
-}
-
 export default function AdminPushTest() {
   const nav = useNavigate();
   const [status, setStatus] = React.useState(null);
@@ -78,11 +68,9 @@ export default function AdminPushTest() {
   const [sendError, setSendError] = React.useState(null);
   const [sendResult, setSendResult] = React.useState(null);
 
-  const [userId, setUserId] = React.useState("");
   const [title, setTitle] = React.useState("");
   const [body, setBody] = React.useState("");
   const [url, setUrl] = React.useState("");
-  const [category, setCategory] = React.useState("operational");
 
   const loadStatus = React.useCallback(async () => {
     setLoading(true);
@@ -134,15 +122,6 @@ export default function AdminPushTest() {
     setSendError(null);
     setSendResult(null);
 
-    const uid = String(userId || "").trim();
-    if (!uid) {
-      setSendError("O user_id do usuário de teste é obrigatório.");
-      return;
-    }
-    if (looksLikeIdList(uid)) {
-      setSendError("Envio individual apenas: não use lista de IDs.");
-      return;
-    }
     if (!title.trim()) {
       setSendError("O título é obrigatório.");
       return;
@@ -163,11 +142,9 @@ export default function AdminPushTest() {
     setSending(true);
     try {
       const result = await sendAdminTestPush({
-        user_id: uid,
         title: title.trim(),
         body: body.trim(),
         url: url.trim() || undefined,
-        category,
       });
       setSendResult(result);
       await loadStatus();
@@ -257,14 +234,6 @@ export default function AdminPushTest() {
 
             <Stack spacing={2}>
               <TextField
-                label="user_id do usuário de teste"
-                value={userId}
-                onChange={(e) => setUserId(e.target.value)}
-                fullWidth
-                required
-                helperText="Apenas um usuário. Listas e audiência não são permitidas."
-              />
-              <TextField
                 label="Título"
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
@@ -291,18 +260,6 @@ export default function AdminPushTest() {
                 fullWidth
                 placeholder="/conta"
               />
-              <FormControl fullWidth>
-                <InputLabel id="push-category-label">Categoria</InputLabel>
-                <Select
-                  labelId="push-category-label"
-                  label="Categoria"
-                  value={category}
-                  onChange={(e) => setCategory(e.target.value)}
-                >
-                  <MenuItem value="operational">operational</MenuItem>
-                  <MenuItem value="marketing">marketing</MenuItem>
-                </Select>
-              </FormControl>
 
               <Button
                 variant="contained"

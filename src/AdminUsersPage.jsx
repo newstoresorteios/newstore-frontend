@@ -3,7 +3,7 @@ import * as React from "react";
 import {
   AppBar, Toolbar, IconButton, Typography, Container, CssBaseline, Paper, Stack,
   TextField, Button, Table, TableHead, TableBody, TableRow, TableCell, TableContainer,
-  Checkbox, Divider, Snackbar, Alert, CircularProgress, createTheme, ThemeProvider, Box, Chip
+  Checkbox, Divider, Snackbar, Alert, CircularProgress, createTheme, ThemeProvider, Box, Chip, MenuItem
 } from "@mui/material";
 import ArrowBackIosNewRoundedIcon from "@mui/icons-material/ArrowBackIosNewRounded";
 import SearchRoundedIcon from "@mui/icons-material/SearchRounded";
@@ -180,6 +180,84 @@ function normalizeBoardPayload(payload) {
   return out;
 }
 
+function normalizeSecondaryBoardPayload(payload) {
+  const raw = Array.isArray(payload)
+    ? payload
+    : payload?.secondary_numbers ||
+      payload?.numbers ||
+      payload?.items ||
+      payload?.draw?.numbers ||
+      (Array.isArray(payload?.data) ? payload.data : null) ||
+      payload?.data?.numbers ||
+      payload?.data?.items ||
+      payload?.data?.draw?.numbers ||
+      payload?.result?.numbers ||
+      [];
+
+  if (Array.isArray(raw) && raw.length) {
+    return raw
+      .map((c, idx) => {
+        const n =
+          typeof c === "number" || typeof c === "string"
+            ? Number(c)
+            : Number(c?.n ?? c?.number ?? c?.num ?? c?.value ?? idx);
+        const s = String(c?.status ?? c?.state ?? "").toLowerCase();
+        let state = "blocked";
+        if (s === "available" || s === "open" || s === "disponivel") state = "open";
+        else if (s === "reserved" || s === "reservado") state = "reserved";
+        else if (s === "sold" || s === "taken" || s === "indisponivel") state = "taken";
+        else if (s === "blocked" || s === "bloqueado") state = "blocked";
+        return { n, label: String(n).padStart(2, "0"), state };
+      })
+      .filter(c => Number.isInteger(c.n) && c.n >= 0 && c.n <= 99);
+  }
+
+  return [];
+}
+
+function normalizeAdditionalDrawItem(item) {
+  const draw = item?.draw && typeof item.draw === "object" ? item.draw : item || {};
+  const config = item?.config && typeof item.config === "object" ? item.config : {};
+  const stats = item?.stats && typeof item.stats === "object" ? item.stats : {};
+  const id = Number(draw.id ?? item?.id ?? config.id);
+
+  if (!Number.isInteger(id) || id <= 0) return null;
+
+  return {
+    id,
+    draw_id: id,
+    draw,
+    config,
+    stats,
+    label:
+      draw.banner_title ||
+      draw.product_name ||
+      draw.promo_phrase ||
+      config.banner_title ||
+      `Sorteio adicional #${id}`,
+    status: draw.status,
+    draw_type: draw.draw_type || "adicional",
+    ticket_price_cents:
+      draw.ticket_price_cents ??
+      draw.price_cents ??
+      config.ticket_price_cents ??
+      null,
+    max_numbers_per_selection:
+      draw.max_numbers_per_selection ??
+      config.max_numbers_per_selection ??
+      null,
+  };
+}
+
+function normalizeAdditionalDrawsPayload(payload) {
+  const list = Array.isArray(payload)
+    ? payload
+    : payload?.draws ?? payload?.data?.draws ?? [];
+
+  if (!Array.isArray(list)) return [];
+  return list.map(normalizeAdditionalDrawItem).filter(Boolean);
+}
+
 /** Busca a grade (board) para um sorteio. */
 async function fetchBoard(drawId) {
   const paths = [
@@ -196,6 +274,22 @@ async function fetchBoard(drawId) {
   }
   // fallback: grade "vazia" (tudo livre)
   return Array.from({ length: 100 }, (_, n) => ({ n, label: String(n).padStart(2, "0"), state: "open" }));
+}
+
+async function findOpenSecondaryDrawId() {
+  const j = await safeJSON("/admin/additional-draws");
+  const list = normalizeAdditionalDrawsPayload(j);
+  const additional =
+    list.find((item) => String(item.status || "open").toLowerCase() === "open") ||
+    list[0];
+  return additional?.id ?? null;
+}
+
+async function fetchSecondaryBoard(drawId) {
+  const j = await safeJSON(`/admin/additional-draws/${drawId}/numbers`);
+  if (!j) return [];
+  const board = normalizeSecondaryBoardPayload(j);
+  return board;
 }
 
 /* -------------------------------- Normalizadores -------------------------------- */
@@ -237,15 +331,21 @@ export default function AdminUsersPage() {
   const [toast, setToast] = React.useState({ open: false, msg: "", sev: "success" });
 
   // atribuição de números
+  const [assignDrawMode, setAssignDrawMode] = React.useState("principal");
   const [drawId, setDrawId] = React.useState("");
   const [numbersCsv, setNumbersCsv] = React.useState("");
+  const [secondaryAssignDrawId, setSecondaryAssignDrawId] = React.useState("");
+  const [secondaryAssignNumbers, setSecondaryAssignNumbers] = React.useState("");
+  const [additionalAssignDraws, setAdditionalAssignDraws] = React.useState([]);
   const [assigning, setAssigning] = React.useState(false);
   const [creditCouponOnAssign, setCreditCouponOnAssign] = React.useState(true);
   const [noCouponCreditReason, setNoCouponCreditReason] = React.useState("");
 
   // board (referência)
   const [board, setBoard] = React.useState([]);
+  const [secondaryAssignBoard, setSecondaryAssignBoard] = React.useState([]);
   const [boardLoading, setBoardLoading] = React.useState(false);
+  const [secondaryAssignBoardLoading, setSecondaryAssignBoardLoading] = React.useState(false);
 
   React.useEffect(() => {
     let alive = true;
@@ -286,6 +386,30 @@ export default function AdminUsersPage() {
     })();
     return () => { cancel = true; };
   }, [drawId]);
+
+  React.useEffect(() => {
+    const idNum = Number(secondaryAssignDrawId);
+    if (!Number.isInteger(idNum) || idNum <= 0) return;
+    let cancel = false;
+    (async () => {
+      setSecondaryAssignBoardLoading(true);
+      const b = await fetchSecondaryBoard(idNum);
+      if (!cancel) setSecondaryAssignBoard(b);
+      setSecondaryAssignBoardLoading(false);
+    })();
+    return () => { cancel = true; };
+  }, [secondaryAssignDrawId]);
+
+  React.useEffect(() => {
+    if (assignDrawMode !== "adicional") return;
+    let cancel = false;
+    (async () => {
+      const payload = await safeJSON("/admin/additional-draws");
+      const list = normalizeAdditionalDrawsPayload(payload);
+      if (!cancel) setAdditionalAssignDraws(list);
+    })();
+    return () => { cancel = true; };
+  }, [assignDrawMode]);
 
   const filtered = React.useMemo(() => {
     const s = q.trim().toLowerCase();
@@ -395,8 +519,11 @@ export default function AdminUsersPage() {
       setToast({ open: true, sev: "warning", msg: "Selecione um usuário na lista." });
       return;
     }
-    const d = Number(drawId);
-    const nums = String(numbersCsv || "")
+    const isSecondaryAssign = assignDrawMode === "adicional";
+    const activeDrawId = isSecondaryAssign ? secondaryAssignDrawId : drawId;
+    const activeNumbersCsv = isSecondaryAssign ? secondaryAssignNumbers : numbersCsv;
+    const d = Number(activeDrawId);
+    const nums = String(activeNumbersCsv || "")
       .split(/[,\s;]+/)
       .map((s) => s.trim())
       .filter(Boolean)
@@ -407,36 +534,55 @@ export default function AdminUsersPage() {
       setToast({ open: true, sev: "warning", msg: "Informe um sorteio e pelo menos um número." });
       return;
     }
-    if (!creditCouponOnAssign && !String(noCouponCreditReason || "").trim()) {
+    if (!isSecondaryAssign && !creditCouponOnAssign && !String(noCouponCreditReason || "").trim()) {
       setToast({ open: true, sev: "warning", msg: "Informe o motivo da cortesia/sem crédito." });
       return;
     }
 
     try {
       setAssigning(true);
-      const r = await fetch(apiJoin(`/admin/users/${form.id}/assign-numbers`), {
+      const assignUrl = isSecondaryAssign
+        ? `/admin/additional-draws/${d}/assign-numbers`
+        : `/admin/users/${form.id}/assign-numbers`;
+      const assignPayload = isSecondaryAssign
+        ? {
+            user_id: form.id,
+            numbers: nums,
+            generate_balance: true,
+          }
+        : {
+            user_id: form.id,
+            draw_id: d,
+            numbers: nums,
+            credit_coupon: creditCouponOnAssign,
+            no_coupon_credit_reason: creditCouponOnAssign ? null : String(noCouponCreditReason || "").trim(),
+          };
+
+      const r = await fetch(apiJoin(assignUrl), {
         method: "POST",
         headers: { "Content-Type": "application/json", ...authHeaders() },
         credentials: "include",
-        body: JSON.stringify({
-          user_id: form.id,
-          draw_id: d,
-          numbers: nums,
-          credit_coupon: creditCouponOnAssign,
-          no_coupon_credit_reason: creditCouponOnAssign ? null : String(noCouponCreditReason || "").trim(),
-        }),
+        body: JSON.stringify(assignPayload),
       });
       if (!r.ok) throw new Error("assign_failed");
       setToast({ open: true, sev: "success", msg: "Números atribuídos com sucesso." });
-      setNumbersCsv("");
+      if (isSecondaryAssign) setSecondaryAssignNumbers("");
+      else setNumbersCsv("");
       setNoCouponCreditReason("");
       setCreditCouponOnAssign(true);
 
       // atualiza a referência do board
-      setBoardLoading(true);
-      const b = await fetchBoard(d);
-      setBoard(b);
-      setBoardLoading(false);
+      if (isSecondaryAssign) {
+        setSecondaryAssignBoardLoading(true);
+        const b = await fetchSecondaryBoard(d);
+        setSecondaryAssignBoard(b);
+        setSecondaryAssignBoardLoading(false);
+      } else {
+        setBoardLoading(true);
+        const b = await fetchBoard(d);
+        setBoard(b);
+        setBoardLoading(false);
+      }
     } catch {
       setToast({ open: true, sev: "error", msg: "Falha ao atribuir números." });
     } finally {
@@ -462,6 +608,14 @@ export default function AdminUsersPage() {
           "linear-gradient(180deg, #3A2E12 0%, #2A230D 100%)",
       };
     }
+    if (state === "blocked") {
+      return {
+        color: "rgba(255,255,255,.45)",
+        border: "1px solid rgba(255,255,255,.18)",
+        background:
+          "linear-gradient(180deg, #2A2A2A 0%, #1A1A1A 100%)",
+      };
+    }
     return {
       color: "#0E0E0E",
       border: "1px solid rgba(255,255,255,.2)",
@@ -469,6 +623,14 @@ export default function AdminUsersPage() {
         "linear-gradient(180deg, #67C23A 0%, #58A834 100%)",
     };
   };
+
+  const isSecondaryAssignMode = assignDrawMode === "adicional";
+  const activeAssignDrawId = isSecondaryAssignMode ? secondaryAssignDrawId : drawId;
+  const activeAssignNumbers = isSecondaryAssignMode ? secondaryAssignNumbers : numbersCsv;
+  const activeAssignBoard = isSecondaryAssignMode ? secondaryAssignBoard : board;
+  const activeBoardLoading = isSecondaryAssignMode ? secondaryAssignBoardLoading : boardLoading;
+  const setActiveAssignDrawId = isSecondaryAssignMode ? setSecondaryAssignDrawId : setDrawId;
+  const setActiveAssignNumbers = isSecondaryAssignMode ? setSecondaryAssignNumbers : setNumbersCsv;
 
   return (
     <ThemeProvider theme={theme}>
@@ -578,22 +740,66 @@ export default function AdminUsersPage() {
               Atribuir números ao cliente selecionado
             </Typography>
             <Stack direction={{ xs: "column", md: "row" }} spacing={2} alignItems={{ xs: "stretch", md: "center" }}>
+              <Stack spacing={0.75} sx={{ minWidth: 220 }}>
+                <Typography variant="caption" sx={{ opacity: 0.75, fontWeight: 800 }}>
+                  Tipo de sorteio
+                </Typography>
+                <Stack direction="row" spacing={1}>
+                  <Button
+                    variant={!isSecondaryAssignMode ? "contained" : "outlined"}
+                    color="success"
+                    onClick={() => setAssignDrawMode("principal")}
+                    sx={{ borderRadius: 999, fontWeight: 800 }}
+                  >
+                    Principal
+                  </Button>
+                  <Button
+                    variant={isSecondaryAssignMode ? "contained" : "outlined"}
+                    color="success"
+                    onClick={() => setAssignDrawMode("adicional")}
+                    sx={{ borderRadius: 999, fontWeight: 800 }}
+                  >
+                    Adicional
+                  </Button>
+                </Stack>
+              </Stack>
+              {isSecondaryAssignMode && (
+                <TextField
+                  select
+                  label="Sorteio adicional"
+                  value={secondaryAssignDrawId}
+                  onChange={(e) => setSecondaryAssignDrawId(e.target.value)}
+                  sx={{ minWidth: 240 }}
+                >
+                  {additionalAssignDraws.map((additional) => (
+                    <MenuItem key={additional.id} value={String(additional.id)}>
+                      {additional.label}
+                    </MenuItem>
+                  ))}
+                </TextField>
+              )}
               <TextField
-                label="Sorteio (ID)"
-                value={drawId}
-                onChange={(e) => setDrawId(e.target.value)}
+                label={isSecondaryAssignMode ? "Sorteio ID" : "Sorteio (ID)"}
+                value={activeAssignDrawId}
+                onChange={(e) => setActiveAssignDrawId(e.target.value)}
                 sx={{ maxWidth: 220 }}
               />
               <TextField
                 label="Números (separados por vírgula ou espaço)"
-                value={numbersCsv}
-                onChange={(e) => setNumbersCsv(e.target.value)}
+                value={activeAssignNumbers}
+                onChange={(e) => setActiveAssignNumbers(e.target.value)}
                 fullWidth
               />
               <Stack direction="row" spacing={1}>
                 <Button
                   variant="outlined"
                   onClick={async () => {
+                    if (isSecondaryAssignMode) {
+                      const id = await findOpenSecondaryDrawId();
+                      if (id != null) setSecondaryAssignDrawId(String(id));
+                      else setToast({ open: true, sev: "info", msg: "Nenhum sorteio adicional aberto." });
+                      return;
+                    }
                     const id = await findOpenDrawId();
                     if (id != null) setDrawId(String(id));
                   }}
@@ -641,10 +847,20 @@ export default function AdminUsersPage() {
                 <Chip size="small" label="Disponível" sx={{ bgcolor: "#67C23A", color: "#0E0E0E", fontWeight: 800 }} />
                 <Chip size="small" label="Reservado"  sx={{ bgcolor: "#FFD54F", color: "#000", fontWeight: 800 }} />
                 <Chip size="small" label="Indisponível" sx={{ bgcolor: "#E57373", color: "#000", fontWeight: 800 }} />
+                {isSecondaryAssignMode && (
+                  <Chip size="small" label="Bloqueado" sx={{ bgcolor: "#2A2A2A", color: "rgba(255,255,255,.72)", fontWeight: 800 }} />
+                )}
                 <Box sx={{ flex: 1 }} />
                 <Button size="small" onClick={async () => {
-                  const idNum = Number(drawId);
+                  const idNum = Number(activeAssignDrawId);
                   if (!Number.isInteger(idNum) || idNum <= 0) return;
+                  if (isSecondaryAssignMode) {
+                    setSecondaryAssignBoardLoading(true);
+                    const b = await fetchSecondaryBoard(idNum);
+                    setSecondaryAssignBoard(b);
+                    setSecondaryAssignBoardLoading(false);
+                    return;
+                  }
                   setBoardLoading(true);
                   const b = await fetchBoard(idNum);
                   setBoard(b);
@@ -655,11 +871,15 @@ export default function AdminUsersPage() {
               </Stack>
 
               <Paper variant="outlined" sx={{ p: { xs: 1, md: 1.5 } }}>
-                {boardLoading ? (
+                {activeBoardLoading ? (
                   <Stack alignItems="center" py={3} gap={1}>
                     <CircularProgress />
                     <Typography sx={{ opacity: .8 }}>Carregando grade…</Typography>
                   </Stack>
+                ) : isSecondaryAssignMode && !activeAssignBoard.length ? (
+                  <Typography sx={{ opacity: .8, py: 3, textAlign: "center" }}>
+                    Nenhum número encontrado para o sorteio adicional.
+                  </Typography>
                 ) : (
                   <Box
                     role="grid"
@@ -674,7 +894,7 @@ export default function AdminUsersPage() {
                       gap: { xs: .6, sm: .7, md: .8 },
                     }}
                   >
-                    {board.map((c) => (
+                    {activeAssignBoard.map((c) => (
                       <Box
                         key={c.n}
                         sx={{
@@ -689,7 +909,8 @@ export default function AdminUsersPage() {
                         }}
                         title={
                           c.state === "taken" ? "Indisponível" :
-                          c.state === "reserved" ? "Reservado" : "Disponível"
+                          c.state === "reserved" ? "Reservado" :
+                          c.state === "blocked" ? "Bloqueado" : "Disponível"
                         }
                       >
                         {c.label}

@@ -58,6 +58,7 @@ import {
   syncDispatchDeliveryStatus,
   updateNotificationTemplate,
 } from "./services/adminNotifications";
+import AdminPushTestPanel from "./components/AdminPushTestPanel";
 
 const theme = createTheme({
   palette: {
@@ -842,6 +843,8 @@ export default function AdminNotificationsPage() {
           Envie mensagens controladas, gerencie templates locais, acompanhe disparos e monitore entregas. O backend
           pode redirecionar envios em modo teste conforme configuração.
         </Typography>
+
+        <AdminPushTestPanel />
 
         {error && (
           <Alert severity="error" sx={{ mb: 2 }}>

@@ -171,6 +171,127 @@ async function checkUserPurchaseLimit({ addCount = 0, drawId } = {}) {
   return { blocked, current, max };
 }
 
+const normalizeSecondaryStatus = (status) => {
+  const st = String(status || "").toLowerCase();
+  if (st === "available") return "available";
+  if (st === "reserved") return "reserved";
+  if (st === "sold" || st === "taken") return "sold";
+  if (st === "blocked") return "blocked";
+  return "blocked";
+};
+
+const getSecondaryDrawFromPayload = (payload) => {
+  const draw =
+    payload?.draw ||
+    payload?.secondary_draw ||
+    payload?.secondaryDraw ||
+    payload?.data?.draw ||
+    payload?.data?.secondary_draw ||
+    payload?.data?.secondaryDraw ||
+    payload?.current ||
+    (payload?.data && !Array.isArray(payload.data) ? payload.data : null) ||
+    payload;
+  if (!draw || typeof draw !== "object") return null;
+
+  const id =
+    draw.id ??
+    draw.secondary_draw_id ??
+    draw.secondaryDrawId ??
+    draw.draw_id ??
+    draw.drawId;
+  if (id == null) return null;
+  return { ...draw, id };
+};
+
+const getSecondaryNumbersFromPayload = (payload) => {
+  const raw = Array.isArray(payload)
+    ? payload
+    : payload?.numbers ||
+      payload?.items ||
+      payload?.draw?.numbers ||
+      (Array.isArray(payload?.data) ? payload.data : null) ||
+      payload?.data?.numbers ||
+      payload?.data?.items ||
+      payload?.data?.draw?.numbers ||
+      payload?.result?.numbers ||
+      [];
+
+  return raw
+    .map((item) => {
+      const n =
+        typeof item === "number" || typeof item === "string"
+          ? Number(item)
+          : Number(item?.n ?? item?.number ?? item?.num ?? item?.value);
+      if (!Number.isInteger(n) || n < 0 || n > 99) return null;
+      return {
+        ...item,
+        n,
+        status: normalizeSecondaryStatus(item?.status),
+      };
+    })
+    .filter(Boolean);
+};
+
+const formatSecondaryMoney = (cents) => {
+  const value = Number(cents);
+  if (!Number.isFinite(value) || value <= 0) return "-";
+  return (value / 100).toLocaleString("pt-BR", {
+    style: "currency",
+    currency: "BRL",
+  });
+};
+
+const getSecondaryReservationId = (reservation) =>
+  reservation?.reservation_id ?? reservation?.reservationId ?? reservation?.id;
+
+const getSecondaryPixErrorMessage = (error) => {
+  const code = String(error || "");
+  const messages = {
+    mp_token_missing: "Token Mercado Pago ausente no backend local.",
+    reservation_expired: "Reserva expirada. Selecione os números novamente.",
+    reservation_not_active: "Reserva não está ativa.",
+    mercado_pago_payment_failed: "Falha ao criar pagamento Mercado Pago.",
+    secondary_payment_create_failed: "Falha ao criar pagamento do sorteio secundário.",
+  };
+  return messages[code] || "Falha ao gerar PIX do secundário.";
+};
+
+const normalizeAdditionalPixPayment = (payload) => {
+  const source =
+    payload?.payment ||
+    payload?.data?.payment ||
+    payload?.data ||
+    payload ||
+    {};
+  const rawQrCodeBase64 = String(
+    source?.qr_code_base64 ||
+      source?.qrCodeBase64 ||
+      source?.pix_qr_code_base64 ||
+      ""
+  );
+
+  return {
+    ...payload,
+    ...source,
+    paymentId: source?.paymentId ?? source?.payment_id ?? source?.id ?? null,
+    payment_id: source?.payment_id ?? source?.paymentId ?? source?.id ?? null,
+    reservation_id:
+      source?.reservation_id ?? source?.reservationId ?? payload?.reservation_id ?? null,
+    amount_cents:
+      source?.amount_cents ?? source?.amountCents ?? payload?.amount_cents ?? null,
+    copy_paste_code:
+      source?.copy_paste_code ||
+      source?.copyPaste ||
+      source?.pix_copy_paste ||
+      source?.qr_code ||
+      "",
+    qr_code_base64: rawQrCodeBase64.replace(
+      /^data:image\/[a-z0-9.+-]+;base64,/i,
+      ""
+    ),
+  };
+};
+
 export default function NewStorePage({
   reservados = MOCK_RESERVADOS,
   indisponiveis = MOCK_INDISPONIVEIS,
@@ -200,6 +321,36 @@ export default function NewStorePage({
 
   // Draw atual (se o backend expuser)
   const [currentDrawId, setCurrentDrawId] = React.useState(null);
+
+  const [secondaryDraw, setSecondaryDraw] = React.useState(null);
+  const [secondaryNumbers, setSecondaryNumbers] = React.useState([]);
+  const [selectedSecondaryNumbers, setSelectedSecondaryNumbers] = React.useState([]);
+  const [secondaryReservation, setSecondaryReservation] = React.useState(null);
+  const [secondaryPayment, setSecondaryPayment] = React.useState(null);
+  const [secondaryLoading, setSecondaryLoading] = React.useState(false);
+  const [secondaryNumbersLoading, setSecondaryNumbersLoading] = React.useState(false);
+  const [secondaryReserveLoading, setSecondaryReserveLoading] = React.useState(false);
+  const [secondaryPixLoading, setSecondaryPixLoading] = React.useState(false);
+  const [secondaryPixOpen, setSecondaryPixOpen] = React.useState(false);
+  const [secondaryError, setSecondaryError] = React.useState("");
+  const [secondaryNotice, setSecondaryNotice] = React.useState("");
+  const secondaryPreviewNumbers = React.useMemo(
+    () => Array.from({ length: 100 }, (_, idx) => idx),
+    []
+  );
+  const [additionalDraws, setAdditionalDraws] = React.useState([]);
+  const [additionalNumbersByDrawId, setAdditionalNumbersByDrawId] = React.useState({});
+  const [selectedAdditionalNumbersByDrawId, setSelectedAdditionalNumbersByDrawId] = React.useState({});
+  const [additionalReservationsByDrawId, setAdditionalReservationsByDrawId] = React.useState({});
+  const [additionalPaymentByDrawId, setAdditionalPaymentByDrawId] = React.useState({});
+  const [additionalLoading, setAdditionalLoading] = React.useState(false);
+  const [additionalLoadingByDrawId, setAdditionalLoadingByDrawId] = React.useState({});
+  const [additionalNumbersLoadingByDrawId, setAdditionalNumbersLoadingByDrawId] = React.useState({});
+  const [additionalReserveLoadingByDrawId, setAdditionalReserveLoadingByDrawId] = React.useState({});
+  const [additionalPixLoadingByDrawId, setAdditionalPixLoadingByDrawId] = React.useState({});
+  const [additionalErrorByDrawId, setAdditionalErrorByDrawId] = React.useState({});
+  const [additionalNoticeByDrawId, setAdditionalNoticeByDrawId] = React.useState({});
+  const [additionalPixOpenDrawId, setAdditionalPixOpenDrawId] = React.useState(null);
 
   // Limite acumulado do usuário
   const [limitUsage, setLimitUsage] = React.useState({
@@ -554,6 +705,575 @@ export default function NewStorePage({
     (Number.isFinite(remainingFromServer) &&
       selecionados.length > Math.max(0, remainingFromServer));
 
+  const getSecondaryHeaders = React.useCallback(
+    (withJson = false) => {
+      const headers = withJson ? { "Content-Type": "application/json" } : {};
+      const authToken = sanitizeToken(token) || getAuthToken();
+      if (authToken) headers.Authorization = `Bearer ${authToken}`;
+      return headers;
+    },
+    [token]
+  );
+
+  const fetchSecondaryNumbers = React.useCallback(async (drawId) => {
+    const res = await fetch(
+      `${API_BASE}/api/secondary-draws/${encodeURIComponent(drawId)}/numbers`,
+      {
+        credentials: "include",
+        cache: "no-store",
+      }
+    );
+    if (!res.ok) throw new Error(`secondary_numbers_${res.status}`);
+    const payload = await res.json().catch(() => ({}));
+    return getSecondaryNumbersFromPayload(payload);
+  }, []);
+
+  const reloadSecondaryNumbers = React.useCallback(
+    async (drawId = secondaryDraw?.id) => {
+      if (drawId == null) return;
+      setSecondaryNumbersLoading(true);
+      try {
+        const nextNumbers = await fetchSecondaryNumbers(drawId);
+        setSecondaryNumbers(nextNumbers);
+      } finally {
+        setSecondaryNumbersLoading(false);
+      }
+    },
+    [fetchSecondaryNumbers, secondaryDraw?.id]
+  );
+
+  React.useEffect(() => {
+    const legacySecondaryEnabled =
+      process.env.REACT_APP_ENABLE_LEGACY_SECONDARY === "true";
+    if (!legacySecondaryEnabled) {
+      setSecondaryDraw(null);
+      setSecondaryNumbers([]);
+      setSelectedSecondaryNumbers([]);
+      setSecondaryReservation(null);
+      setSecondaryPayment(null);
+      setSecondaryLoading(false);
+      setSecondaryNumbersLoading(false);
+      return undefined;
+    }
+
+    let alive = true;
+
+    (async () => {
+      setSecondaryLoading(true);
+      setSecondaryNumbersLoading(true);
+      setSecondaryError("");
+      try {
+        const res = await fetch(`${API_BASE}/api/secondary-draws/current`, {
+          credentials: "include",
+          cache: "no-store",
+        });
+
+        if (res.status === 204 || res.status === 404) {
+          if (!alive) return;
+          setSecondaryDraw(null);
+          setSecondaryNumbers([]);
+          setSelectedSecondaryNumbers([]);
+          setSecondaryReservation(null);
+          setSecondaryPayment(null);
+          setSecondaryNotice("");
+          return;
+        }
+
+        if (!res.ok) throw new Error(`secondary_current_${res.status}`);
+
+        const payload = await res.json().catch(() => ({}));
+        const draw = getSecondaryDrawFromPayload(payload);
+        if (!draw) {
+          if (!alive) return;
+          setSecondaryDraw(null);
+          setSecondaryNumbers([]);
+          setSelectedSecondaryNumbers([]);
+          setSecondaryReservation(null);
+          setSecondaryPayment(null);
+          setSecondaryNotice("");
+          return;
+        }
+
+        const nextNumbers = await fetchSecondaryNumbers(draw.id);
+        if (!alive) return;
+        setSecondaryDraw(draw);
+        setSecondaryNumbers(nextNumbers);
+        setSelectedSecondaryNumbers([]);
+        setSecondaryReservation(null);
+        setSecondaryPayment(null);
+        setSecondaryNotice("");
+      } catch (e) {
+        if (!alive) return;
+        setSecondaryError("Não foi possível carregar o sorteio secundário.");
+      } finally {
+        if (alive) {
+          setSecondaryLoading(false);
+          setSecondaryNumbersLoading(false);
+        }
+      }
+    })();
+
+    return () => {
+      alive = false;
+    };
+  }, [fetchSecondaryNumbers]);
+
+  const secondaryNumberByValue = React.useMemo(() => {
+    const map = new Map();
+    for (const item of secondaryNumbers) map.set(item.n, item);
+    return map;
+  }, [secondaryNumbers]);
+
+  const secondaryPriceCents = Number(
+    secondaryDraw?.price_cents ??
+      secondaryDraw?.ticket_price_cents ??
+      secondaryDraw?.quota_price_cents ??
+      0
+  );
+  const secondaryAvailableCount = secondaryNumbers.filter(
+    (item) => item.status === "available"
+  ).length;
+  const secondaryPrizeLabel =
+    secondaryDraw?.product_name ||
+    secondaryDraw?.prize ||
+    secondaryDraw?.title ||
+    secondaryDraw?.name ||
+    "-";
+  const secondaryBannerTitle =
+    secondaryDraw?.product_name ||
+    secondaryDraw?.promo_phrase ||
+    secondaryDraw?.title ||
+    secondaryDraw?.name ||
+    "SORTEIO SECUNDÁRIO";
+  const secondaryQuotaLabel = formatSecondaryMoney(secondaryPriceCents);
+  const secondaryStatusLabel = secondaryDraw?.status || "aberto";
+  const secondaryAvailableLabel = secondaryDraw ? String(secondaryAvailableCount) : "-";
+  const secondaryTotalCents =
+    selectedSecondaryNumbers.length *
+    (Number.isFinite(secondaryPriceCents) ? secondaryPriceCents : 0);
+  const secondaryTotalLabel = formatSecondaryMoney(secondaryTotalCents);
+  const secondaryReservationId = getSecondaryReservationId(secondaryReservation);
+  const secondaryReservationNumbers =
+    secondaryReservation?.numbers ||
+    secondaryReservation?.reserved_numbers ||
+    secondaryReservation?.selected_numbers ||
+    [];
+  const secondaryReservationAmountCents = Number(
+    secondaryReservation?.amount_cents ?? secondaryReservation?.total_cents
+  );
+  const secondaryReservationAmountValue = Number(
+    secondaryReservation?.amount ?? secondaryReservation?.total
+  );
+  const secondaryReservationAmount =
+    Number.isFinite(secondaryReservationAmountCents) &&
+    secondaryReservationAmountCents > 0
+      ? secondaryReservationAmountCents / 100
+      : Number.isFinite(secondaryReservationAmountValue) &&
+        secondaryReservationAmountValue > 0
+      ? secondaryReservationAmountValue
+      : secondaryReservationNumbers.length * (secondaryPriceCents / 100);
+
+  const getSecondaryNumberStatus = (n) =>
+    secondaryNumberByValue.get(n)?.status || "blocked";
+  const isSecondarySelected = (n) => selectedSecondaryNumbers.includes(n);
+
+  const handleSecondaryNumberClick = (n) => {
+    const status = getSecondaryNumberStatus(n);
+    if (status !== "available" && !isSecondarySelected(n)) return;
+    setSecondaryNotice("");
+    setSecondaryError("");
+    setSecondaryPayment(null);
+    setSelectedSecondaryNumbers((prev) =>
+      prev.includes(n) ? prev.filter((item) => item !== n) : [...prev, n]
+    );
+  };
+
+  const getSecondaryCellSx = (n) => {
+    const status = getSecondaryNumberStatus(n);
+    const selected = isSecondarySelected(n);
+
+    if (selected) {
+      return {
+        border: "2px solid",
+        borderColor: "secondary.main",
+        bgcolor: "rgba(255,193,7,0.16)",
+        color: "secondary.main",
+        cursor: "pointer",
+      };
+    }
+    if (status === "available") {
+      return {
+        border: "2px solid rgba(255,255,255,0.08)",
+        bgcolor: "primary.main",
+        color: "#0E0E0E",
+        cursor: "pointer",
+        "&:hover": { filter: "brightness(0.95)" },
+      };
+    }
+    if (status === "reserved") {
+      return {
+        border: "2px solid",
+        borderColor: "secondary.main",
+        bgcolor: "rgba(255,193,7,0.12)",
+        color: "rgba(255,255,255,0.72)",
+        cursor: "not-allowed",
+      };
+    }
+    if (status === "sold") {
+      return {
+        border: "2px solid",
+        borderColor: "error.main",
+        bgcolor: "rgba(211,47,47,0.15)",
+        color: "rgba(255,255,255,0.55)",
+        cursor: "not-allowed",
+      };
+    }
+    return {
+      border: "2px solid",
+      borderColor: "error.main",
+      bgcolor: "rgba(211,47,47,0.15)",
+      color: "rgba(255,255,255,0.55)",
+      cursor: "not-allowed",
+    };
+  };
+
+  const handleReserveSecondaryNumbers = async () => {
+    if (!secondaryDraw?.id || !selectedSecondaryNumbers.length) return null;
+    setSecondaryReserveLoading(true);
+    setSecondaryError("");
+    setSecondaryNotice("");
+    try {
+      const numbersToReserve = selectedSecondaryNumbers.slice().sort((a, b) => a - b);
+      const res = await fetch(
+        `${API_BASE}/api/secondary-draws/${encodeURIComponent(
+          secondaryDraw.id
+        )}/reserve`,
+        {
+          method: "POST",
+          headers: getSecondaryHeaders(true),
+          credentials: "include",
+          body: JSON.stringify({ numbers: numbersToReserve }),
+        }
+      );
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(payload?.error || payload?.message || "Falha ao reservar números do secundário.");
+      }
+      const reservation = { ...payload, numbers: payload?.numbers || numbersToReserve };
+      setSecondaryReservation(reservation);
+      setSelectedSecondaryNumbers([]);
+      setSecondaryPayment(null);
+      setSecondaryNotice("Números do sorteio secundário reservados.");
+      await reloadSecondaryNumbers(secondaryDraw.id);
+      return reservation;
+    } catch (e) {
+      setSecondaryError(e.message || "Falha ao reservar números do secundário.");
+      return null;
+    } finally {
+      setSecondaryReserveLoading(false);
+    }
+  };
+
+  const handleSecondaryPix = async (reservation = secondaryReservation) => {
+    const reservationId = getSecondaryReservationId(reservation);
+    if (!reservationId) return null;
+    setSecondaryPixLoading(true);
+    setSecondaryError("");
+    try {
+      const res = await fetch(`${API_BASE}/api/secondary-payments/pix`, {
+        method: "POST",
+        headers: getSecondaryHeaders(true),
+        credentials: "include",
+        body: JSON.stringify({ reservation_id: reservationId }),
+      });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(getSecondaryPixErrorMessage(payload?.error || payload?.message));
+        // eslint-disable-next-line no-unreachable
+        throw new Error(payload?.error || payload?.message || "Falha ao gerar PIX do secundário.");
+      }
+      const paymentId = payload?.paymentId ?? payload?.payment_id ?? payload?.id;
+      const payment = {
+        ...payload,
+        paymentId,
+        copy_paste_code:
+          payload?.copy_paste_code ||
+          payload?.copyPaste ||
+          payload?.pix_copy_paste ||
+          payload?.qr_code ||
+          "",
+        qr_code_base64:
+          payload?.qr_code_base64 ||
+          payload?.qrCodeBase64 ||
+          payload?.pix_qr_code_base64 ||
+          "",
+      };
+      setSecondaryPayment(payment);
+      setSecondaryPixOpen(true);
+      return payment;
+    } catch (e) {
+      setSecondaryError(e.message || "Falha ao gerar PIX do secundário.");
+      return null;
+    } finally {
+      setSecondaryPixLoading(false);
+    }
+  };
+
+  const handleContinueSecondary = async () => {
+    const reservation = await handleReserveSecondaryNumbers();
+    if (reservation) await handleSecondaryPix(reservation);
+  };
+
+  const getAdditionalDrawsFromPayload = (payload) => {
+    const raw = Array.isArray(payload)
+      ? payload
+      : payload?.draws ||
+        payload?.items ||
+        (Array.isArray(payload?.data) ? payload.data : null) ||
+        payload?.data?.draws ||
+        payload?.data?.items ||
+        [];
+    return raw
+      .map((draw) => {
+        const id = draw?.id ?? draw?.draw_id ?? draw?.drawId;
+        return id == null ? null : { ...draw, id };
+      })
+      .filter(Boolean);
+  };
+
+  const fetchAdditionalNumbers = React.useCallback(async (drawId) => {
+    let res = await fetch(
+      `${API_BASE}/api/additional-draws/${encodeURIComponent(drawId)}/numbers`,
+      {
+        credentials: "include",
+        cache: "no-store",
+      }
+    );
+    if ([404, 405, 501].includes(res.status)) {
+      res = await fetch(
+        `${API_BASE}/api/secondary-draws/${encodeURIComponent(drawId)}/numbers`,
+        {
+          credentials: "include",
+          cache: "no-store",
+        }
+      );
+    }
+    if (!res.ok) throw new Error(`additional_numbers_${res.status}`);
+    const payload = await res.json().catch(() => ({}));
+    return getSecondaryNumbersFromPayload(payload);
+  }, []);
+
+  const reloadAdditionalNumbers = React.useCallback(
+    async (drawId) => {
+      if (drawId == null) return;
+      setAdditionalLoadingByDrawId((prev) => ({ ...prev, [drawId]: true }));
+      setAdditionalNumbersLoadingByDrawId((prev) => ({ ...prev, [drawId]: true }));
+      try {
+        const nextNumbers = await fetchAdditionalNumbers(drawId);
+        setAdditionalNumbersByDrawId((prev) => ({ ...prev, [drawId]: nextNumbers }));
+      } finally {
+        setAdditionalLoadingByDrawId((prev) => ({ ...prev, [drawId]: false }));
+        setAdditionalNumbersLoadingByDrawId((prev) => ({ ...prev, [drawId]: false }));
+      }
+    },
+    [fetchAdditionalNumbers]
+  );
+
+  React.useEffect(() => {
+    let alive = true;
+    (async () => {
+      setAdditionalLoading(true);
+      try {
+        const res = await fetch(`${API_BASE}/api/additional-draws/open`, {
+          credentials: "include",
+          cache: "no-store",
+        });
+        let draws = [];
+        if (res.ok) {
+          const payload = await res.json().catch(() => ({}));
+          draws = getAdditionalDrawsFromPayload(payload);
+        }
+        if (!draws.length) {
+          const legacyRes = await fetch(`${API_BASE}/api/secondary-draws/current`, {
+            credentials: "include",
+            cache: "no-store",
+          });
+          if (legacyRes.ok) {
+            const legacyPayload = await legacyRes.json().catch(() => ({}));
+            const legacyDraw = getSecondaryDrawFromPayload(legacyPayload);
+            draws = legacyDraw ? [legacyDraw] : [];
+          }
+        }
+        if (!alive) return;
+        setAdditionalDraws(draws);
+        await Promise.all(
+          draws.map(async (draw) => {
+            try {
+              if (alive) {
+                setAdditionalLoadingByDrawId((prev) => ({ ...prev, [draw.id]: true }));
+              }
+              const numbers = await fetchAdditionalNumbers(draw.id);
+              if (alive) {
+                setAdditionalNumbersByDrawId((prev) => ({ ...prev, [draw.id]: numbers }));
+              }
+            } catch (e) {
+              if (alive) {
+                setAdditionalErrorByDrawId((prev) => ({
+                  ...prev,
+                  [draw.id]: "Não foi possível carregar os números deste adicional.",
+                }));
+              }
+            } finally {
+              if (alive) {
+                setAdditionalLoadingByDrawId((prev) => ({ ...prev, [draw.id]: false }));
+              }
+            }
+          })
+        );
+      } catch (e) {
+        if (alive) setAdditionalDraws([]);
+      } finally {
+        if (alive) setAdditionalLoading(false);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [fetchAdditionalNumbers]);
+
+  const getAdditionalNumberStatus = (drawId, n) => {
+    const numbers = additionalNumbersByDrawId[drawId] || [];
+    return numbers.find((item) => item.n === n)?.status || "blocked";
+  };
+
+  const isAdditionalSelected = (drawId, n) =>
+    (selectedAdditionalNumbersByDrawId[drawId] || []).includes(n);
+
+  const handleAdditionalNumberClick = (drawId, n) => {
+    const status = getAdditionalNumberStatus(drawId, n);
+    if (status !== "available" && !isAdditionalSelected(drawId, n)) return;
+    const current = selectedAdditionalNumbersByDrawId[drawId] || [];
+    const alreadySelected = current.includes(n);
+    const draw = additionalDraws.find((item) => String(item.id) === String(drawId));
+    const maxNumbers = Number(draw?.max_numbers_per_selection ?? draw?.max_tickets ?? 0);
+    if (!alreadySelected && Number.isFinite(maxNumbers) && maxNumbers > 0 && current.length >= maxNumbers) {
+      setAdditionalErrorByDrawId((prev) => ({
+        ...prev,
+        [drawId]: `Limite de ${maxNumbers} número(s) neste sorteio adicional.`,
+      }));
+      return;
+    }
+    setAdditionalErrorByDrawId((prev) => ({ ...prev, [drawId]: "" }));
+    setAdditionalNoticeByDrawId((prev) => ({ ...prev, [drawId]: "" }));
+    setAdditionalPaymentByDrawId((prev) => ({ ...prev, [drawId]: null }));
+    setSelectedAdditionalNumbersByDrawId((prev) => {
+      const current = prev[drawId] || [];
+      return {
+        ...prev,
+        [drawId]: current.includes(n)
+          ? current.filter((item) => item !== n)
+          : [...current, n],
+      };
+    });
+  };
+
+  const handleReserveAdditionalNumbers = async (draw) => {
+    const drawId = draw?.id;
+    const selected = selectedAdditionalNumbersByDrawId[drawId] || [];
+    if (!drawId || !selected.length) return null;
+    setAdditionalReserveLoadingByDrawId((prev) => ({ ...prev, [drawId]: true }));
+    setAdditionalErrorByDrawId((prev) => ({ ...prev, [drawId]: "" }));
+    try {
+      const numbersToReserve = selected.slice().sort((a, b) => a - b);
+      let res = await fetch(
+        `${API_BASE}/api/additional-draws/${encodeURIComponent(drawId)}/reserve`,
+        {
+          method: "POST",
+          headers: getSecondaryHeaders(true),
+          credentials: "include",
+          body: JSON.stringify({ numbers: numbersToReserve }),
+        }
+      );
+      if ([404, 405, 501].includes(res.status)) {
+        res = await fetch(
+          `${API_BASE}/api/secondary-draws/${encodeURIComponent(drawId)}/reserve`,
+          {
+            method: "POST",
+            headers: getSecondaryHeaders(true),
+            credentials: "include",
+            body: JSON.stringify({ numbers: numbersToReserve }),
+          }
+        );
+      }
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(payload?.error || payload?.message || "Falha ao reservar números do adicional.");
+      }
+      const reservation = { ...payload, numbers: payload?.numbers || numbersToReserve };
+      setAdditionalReservationsByDrawId((prev) => ({ ...prev, [drawId]: reservation }));
+      setSelectedAdditionalNumbersByDrawId((prev) => ({ ...prev, [drawId]: [] }));
+      setAdditionalNoticeByDrawId((prev) => ({
+        ...prev,
+        [drawId]: "Números do sorteio adicional reservados.",
+      }));
+      await reloadAdditionalNumbers(drawId);
+      return reservation;
+    } catch (e) {
+      setAdditionalErrorByDrawId((prev) => ({
+        ...prev,
+        [drawId]: e.message || "Falha ao reservar números do adicional.",
+      }));
+      return null;
+    } finally {
+      setAdditionalReserveLoadingByDrawId((prev) => ({ ...prev, [drawId]: false }));
+    }
+  };
+
+  const handleAdditionalPix = async (draw, reservation) => {
+    const drawId = draw?.id;
+    const reservationId = getSecondaryReservationId(reservation);
+    if (!drawId || !reservationId) return null;
+    setAdditionalPixLoadingByDrawId((prev) => ({ ...prev, [drawId]: true }));
+    setAdditionalErrorByDrawId((prev) => ({ ...prev, [drawId]: "" }));
+    try {
+      let res = await fetch(`${API_BASE}/api/additional-payments/pix`, {
+        method: "POST",
+        headers: getSecondaryHeaders(true),
+        credentials: "include",
+        body: JSON.stringify({ draw_id: drawId, reservation_id: reservationId }),
+      });
+      if ([404, 405, 501].includes(res.status)) {
+        res = await fetch(`${API_BASE}/api/secondary-payments/pix`, {
+          method: "POST",
+          headers: getSecondaryHeaders(true),
+          credentials: "include",
+          body: JSON.stringify({ reservation_id: reservationId }),
+        });
+      }
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(getSecondaryPixErrorMessage(payload?.error || payload?.message));
+      }
+      const payment = normalizeAdditionalPixPayment(payload);
+      setAdditionalPaymentByDrawId((prev) => ({ ...prev, [drawId]: payment }));
+      setAdditionalPixOpenDrawId(drawId);
+      return payment;
+    } catch (e) {
+      setAdditionalErrorByDrawId((prev) => ({
+        ...prev,
+        [drawId]: e.message || "Falha ao gerar PIX do adicional.",
+      }));
+      return null;
+    } finally {
+      setAdditionalPixLoadingByDrawId((prev) => ({ ...prev, [drawId]: false }));
+    }
+  };
+
+  const handleContinueAdditional = async (draw) => {
+    const reservation = await handleReserveAdditionalNumbers(draw);
+    if (reservation) await handleAdditionalPix(draw, reservation);
+  };
+
   return (
     <ThemeProvider theme={theme}>
       <CssBaseline />
@@ -889,6 +1609,593 @@ Baseado no resultado oficial da Lotomania (Caixa Econômica Federal).
             </Box>
           </Paper>
           {/* === FIM CARTELA === */}
+
+          {additionalLoading && (
+            <Alert severity="info" sx={{ bgcolor: "rgba(2,136,209,0.12)" }}>
+              Carregando sorteios adicionais...
+            </Alert>
+          )}
+
+          {!additionalLoading && additionalDraws.length === 0 && (
+            <Alert severity="info" sx={{ bgcolor: "rgba(2,136,209,0.12)" }}>
+              Nenhum sorteio adicional aberto no momento.
+            </Alert>
+          )}
+
+          {additionalDraws.map((additionalDraw) => {
+            const drawId = additionalDraw.id;
+            const selectedNumbers = selectedAdditionalNumbersByDrawId[drawId] || [];
+            const loadingNumbers =
+              !!additionalLoadingByDrawId[drawId] ||
+              !!additionalNumbersLoadingByDrawId[drawId];
+            const reserveLoading = !!additionalReserveLoadingByDrawId[drawId];
+            const pixLoading = !!additionalPixLoadingByDrawId[drawId];
+            const banner =
+              additionalDraw.banner_title ||
+              additionalDraw.product_name ||
+              additionalDraw.promo_phrase ||
+              "SORTEIO ADICIONAL";
+            const priceCents = Number(
+              additionalDraw.ticket_price_cents ??
+                additionalDraw.price_cents ??
+                additionalDraw.quota_price_cents ??
+                0
+            );
+            const maxNumbers = Number(
+              additionalDraw.max_numbers_per_selection ??
+                additionalDraw.max_tickets ??
+                0
+            );
+
+            return (
+              <React.Fragment key={drawId}>
+                <Box
+                  sx={{
+                    py: { xs: 1, md: 1.5 },
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 2,
+                  }}
+                >
+                  <Divider sx={{ flex: 1, borderColor: "rgba(255,255,255,0.12)" }} />
+                  <Typography
+                    variant="caption"
+                    sx={{ color: "rgba(255,255,255,0.58)", fontWeight: 800 }}
+                  >
+                    SORTEIO ADICIONAL
+                  </Typography>
+                  <Divider sx={{ flex: 1, borderColor: "rgba(255,255,255,0.12)" }} />
+                </Box>
+
+                <Paper
+                  variant="outlined"
+                  sx={{ p: { xs: 1.5, md: 3 }, bgcolor: "background.paper" }}
+                >
+                  <Stack spacing={2}>
+                    <Box
+                      sx={{
+                        mb: 2,
+                        p: { xs: 1.25, md: 1.5 },
+                        borderRadius: 2,
+                        border: "1px solid rgba(255,255,255,0.12)",
+                        background:
+                          "linear-gradient(90deg, rgba(103,194,58,0.12), rgba(255,193,7,0.10))",
+                      }}
+                    >
+                      <Typography
+                        variant="h4"
+                        sx={{
+                          fontWeight: 900,
+                          textAlign: "center",
+                          letterSpacing: 1,
+                          background: "linear-gradient(90deg, #67C23A, #FFC107)",
+                          WebkitBackgroundClip: "text",
+                          backgroundClip: "text",
+                          WebkitTextFillColor: "transparent",
+                          textShadow: "0 0 12px rgba(103,194,58,0.18)",
+                        }}
+                      >
+                        {banner}
+                      </Typography>
+                    </Box>
+
+                    {additionalErrorByDrawId[drawId] && (
+                      <Alert severity="error" sx={{ bgcolor: "rgba(211,47,47,0.12)" }}>
+                        {additionalErrorByDrawId[drawId]}
+                      </Alert>
+                    )}
+
+                    <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+                      <Chip size="small" label="DISPONÍVEL" sx={{ bgcolor: "primary.main", color: "#0E0E0E", fontWeight: 700 }} />
+                      <Chip size="small" label="RESERVADO" sx={{ bgcolor: "rgba(255,193,7,0.18)", border: "1px solid", borderColor: "secondary.main", color: "secondary.main", fontWeight: 700 }} />
+                      <Chip size="small" label="INDISPONÍVEL" sx={{ bgcolor: "rgba(211,47,47,0.18)", border: "1px solid", borderColor: "error.main", color: "error.main", fontWeight: 700 }} />
+                    </Stack>
+
+                    <Stack
+                      direction={{ xs: "column", md: "row" }}
+                      spacing={1.5}
+                      alignItems="center"
+                      justifyContent="space-between"
+                      sx={{ mb: 2 }}
+                    >
+                      <Typography variant="body2" sx={{ opacity: 0.8 }}>
+                        {selectedNumbers.length
+                          ? `${selectedNumbers.length} selecionado(s) - ${formatSecondaryMoney(selectedNumbers.length * priceCents)}`
+                          : maxNumbers > 0
+                          ? `Até ${maxNumbers} número(s) por seleção`
+                          : " "}
+                      </Typography>
+                      <Stack direction="row" spacing={1.5}>
+                        <Button
+                          variant="outlined"
+                          color="inherit"
+                          disabled={!selectedNumbers.length || reserveLoading || pixLoading}
+                          onClick={() =>
+                            setSelectedAdditionalNumbersByDrawId((prev) => ({
+                              ...prev,
+                              [drawId]: [],
+                            }))
+                          }
+                        >
+                          LIMPAR SELEÇÃO
+                        </Button>
+                        <Button
+                          variant="contained"
+                          color="success"
+                          disabled={!selectedNumbers.length || reserveLoading || pixLoading}
+                          onClick={() => handleContinueAdditional(additionalDraw)}
+                        >
+                          CONTINUAR
+                        </Button>
+                      </Stack>
+                    </Stack>
+
+                    <Box
+                      sx={{
+                        width: "100%",
+                        display: "flex",
+                        justifyContent: "center",
+                        alignItems: "center",
+                        opacity: loadingNumbers ? 0.72 : 1,
+                      }}
+                    >
+                      <Box
+                        sx={{
+                          display: "grid",
+                          gridTemplateColumns: {
+                            xs: "repeat(5, 56px)",
+                            sm: "repeat(10, 56px)",
+                            md: "repeat(10, 64px)",
+                          },
+                          gap: { xs: "10px", sm: "12px" },
+                          justifyContent: "center",
+                          alignItems: "center",
+                          width: "fit-content",
+                          maxWidth: "100%",
+                          mx: "auto",
+                          boxSizing: "border-box",
+                        }}
+                      >
+                        {secondaryPreviewNumbers.map((number) => {
+                          const status = getAdditionalNumberStatus(drawId, number);
+                          const selected = isAdditionalSelected(drawId, number);
+                          return (
+                            <Box
+                              component="button"
+                              type="button"
+                              key={number}
+                              disabled={status !== "available" && !selected}
+                              aria-pressed={selected ? "true" : "false"}
+                              onClick={() => handleAdditionalNumberClick(drawId, number)}
+                              sx={{
+                                ...getSecondaryCellSx(number),
+                                ...(selected ? {
+                                  border: "2px solid",
+                                  borderColor: "secondary.main",
+                                  bgcolor: "rgba(255,193,7,0.16)",
+                                  color: "secondary.main",
+                                  cursor: "pointer",
+                                } : status === "available" ? {
+                                  border: "2px solid rgba(255,255,255,0.08)",
+                                  bgcolor: "primary.main",
+                                  color: "#0E0E0E",
+                                  cursor: "pointer",
+                                  "&:hover": { filter: "brightness(0.95)" },
+                                } : status === "reserved" ? {
+                                  border: "2px solid",
+                                  borderColor: "secondary.main",
+                                  bgcolor: "rgba(255,193,7,0.12)",
+                                  color: "rgba(255,255,255,0.72)",
+                                  cursor: "not-allowed",
+                                } : status === "sold" ? {
+                                  border: "2px solid",
+                                  borderColor: "error.main",
+                                  bgcolor: "rgba(211,47,47,0.15)",
+                                  color: "rgba(255,255,255,0.55)",
+                                  cursor: "not-allowed",
+                                } : {}),
+                                borderRadius: 1.2,
+                                aspectRatio: "1 / 1",
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "center",
+                                fontWeight: 800,
+                                fontVariantNumeric: "tabular-nums",
+                                fontSize: { xs: 12, sm: 14, md: 16 },
+                                p: 0,
+                                userSelect: "none",
+                              }}
+                            >
+                              {pad2(number)}
+                            </Box>
+                          );
+                        })}
+                      </Box>
+                    </Box>
+
+                    {additionalNoticeByDrawId[drawId] && (
+                      <Alert severity="warning" sx={{ bgcolor: "rgba(255,193,7,0.10)" }}>
+                        {additionalNoticeByDrawId[drawId]}
+                      </Alert>
+                    )}
+                  </Stack>
+                </Paper>
+              </React.Fragment>
+            );
+          })}
+
+          <Box
+            sx={{
+              py: { xs: 1, md: 1.5 },
+              display: "none",
+              alignItems: "center",
+              gap: 2,
+            }}
+          >
+            <Divider sx={{ flex: 1, borderColor: "rgba(255,255,255,0.12)" }} />
+            <Typography
+              variant="caption"
+              sx={{ color: "rgba(255,255,255,0.58)", fontWeight: 800 }}
+            >
+              RODADA EXTRA
+            </Typography>
+            <Divider sx={{ flex: 1, borderColor: "rgba(255,255,255,0.12)" }} />
+          </Box>
+
+          <Paper
+            variant="outlined"
+            sx={{
+              display: "none",
+              p: { xs: 1.5, md: 3 },
+              bgcolor: "background.paper",
+            }}
+          >
+            <Stack spacing={2}>
+              <Box
+                sx={{
+                  mb: 2,
+                  p: { xs: 1.25, md: 1.5 },
+                  borderRadius: 2,
+                  border: "1px solid rgba(255,255,255,0.12)",
+                  background:
+                    "linear-gradient(90deg, rgba(103,194,58,0.12), rgba(255,193,7,0.10))",
+                }}
+              >
+                <Typography
+                  variant="h4"
+                  sx={{
+                    fontWeight: 900,
+                    textAlign: "center",
+                    letterSpacing: 1,
+                    background: "linear-gradient(90deg, #67C23A, #FFC107)",
+                    WebkitBackgroundClip: "text",
+                    backgroundClip: "text",
+                    WebkitTextFillColor: "transparent",
+                    textShadow: "0 0 12px rgba(103,194,58,0.18)",
+                  }}
+                >
+                  {secondaryBannerTitle}
+                </Typography>
+                <Stack spacing={0.8} sx={{ display: "none" }}>
+                  <Typography
+                    variant="h4"
+                    sx={{
+                      fontWeight: 900,
+                      textAlign: "center",
+                      letterSpacing: 1,
+                      background: "linear-gradient(90deg, #67C23A, #FFC107)",
+                      WebkitBackgroundClip: "text",
+                      backgroundClip: "text",
+                      WebkitTextFillColor: "transparent",
+                      textShadow: "0 0 12px rgba(103,194,58,0.18)",
+                    }}
+                  >
+                    SORTEIO SECUNDÁRIO
+                  </Typography>
+                  <Typography
+                    variant="subtitle1"
+                    sx={{
+                      color: "rgba(255,255,255,0.78)",
+                      textAlign: { xs: "left", md: "center" },
+                    }}
+                  >
+                    Selecione uma cota da rodada extra sem alterar o sorteio principal.
+                  </Typography>
+                </Stack>
+              </Box>
+
+              {secondaryLoading && (
+                <Alert severity="info" sx={{ bgcolor: "rgba(2,136,209,0.12)" }}>
+                  Carregando sorteio secundário...
+                </Alert>
+              )}
+
+              {!secondaryLoading && !secondaryDraw && !secondaryError && (
+                <Alert severity="info" sx={{ bgcolor: "rgba(2,136,209,0.12)" }}>
+                  Sorteio secundário em preparação.
+                </Alert>
+              )}
+
+              {secondaryError && (
+                <Alert severity="error" sx={{ bgcolor: "rgba(211,47,47,0.12)" }}>
+                  {secondaryError}
+                </Alert>
+              )}
+
+              <Paper
+                variant="outlined"
+                sx={{
+                  display: "none",
+                  p: { xs: 1.5, md: 2 },
+                  bgcolor: "rgba(255,255,255,0.035)",
+                  borderColor: "rgba(255,255,255,0.10)",
+                }}
+              >
+                <Stack
+                  direction={{ xs: "column", sm: "row" }}
+                  spacing={1.2}
+                  sx={{ justifyContent: "space-between" }}
+                >
+                  <Typography variant="body1">
+                    <strong>Prêmio:</strong> {secondaryPrizeLabel}
+                  </Typography>
+                  <Typography variant="body1">
+                    <strong>Valor da cota:</strong> {secondaryQuotaLabel}
+                  </Typography>
+                  <Typography variant="body1">
+                    <strong>Status:</strong> {secondaryStatusLabel}
+                  </Typography>
+                  <Typography variant="body1">
+                    <strong>Números disponíveis:</strong> {secondaryAvailableLabel}
+                  </Typography>
+                </Stack>
+              </Paper>
+
+              <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+                <Chip
+                  size="small"
+                  label="DISPONÍVEL"
+                  sx={{ bgcolor: "primary.main", color: "#0E0E0E", fontWeight: 700 }}
+                />
+                <Chip
+                  size="small"
+                  label="RESERVADO"
+                  sx={{
+                    bgcolor: "rgba(255,193,7,0.18)",
+                    border: "1px solid",
+                    borderColor: "secondary.main",
+                    color: "secondary.main",
+                    fontWeight: 700,
+                  }}
+                />
+                <Chip
+                  size="small"
+                  label="INDISPONÍVEL"
+                  sx={{
+                    bgcolor: "rgba(211,47,47,0.18)",
+                    border: "1px solid",
+                    borderColor: "error.main",
+                    color: "error.main",
+                    fontWeight: 700,
+                  }}
+                />
+                <Chip
+                  size="small"
+                  label="BLOQUEADO"
+                  sx={{
+                    display: "none",
+                    bgcolor: "rgba(255,255,255,0.06)",
+                    border: "1px solid rgba(255,255,255,0.16)",
+                    color: "rgba(255,255,255,0.58)",
+                    fontWeight: 700,
+                  }}
+                />
+              </Stack>
+
+              <Stack
+                direction={{ xs: "column", md: "row" }}
+                spacing={1.5}
+                alignItems="center"
+                justifyContent="space-between"
+                sx={{ mb: 2 }}
+              >
+                <Typography variant="body2" sx={{ opacity: 0.8 }}>
+                  {!!selectedSecondaryNumbers.length
+                    ? `${selectedSecondaryNumbers.length} selecionado(s)`
+                    : " "}
+                </Typography>
+                <Stack direction="row" spacing={1.5}>
+                  <Button
+                    variant="outlined"
+                    color="inherit"
+                    disabled={!selectedSecondaryNumbers.length || secondaryReserveLoading || secondaryPixLoading}
+                    onClick={() => setSelectedSecondaryNumbers([])}
+                  >
+                    LIMPAR SELEÇÃO
+                  </Button>
+                  <Button
+                    variant="contained"
+                    color="success"
+                    disabled={
+                      !secondaryDraw ||
+                      !selectedSecondaryNumbers.length ||
+                      secondaryReserveLoading ||
+                      secondaryPixLoading
+                    }
+                    onClick={handleContinueSecondary}
+                  >
+                    CONTINUAR
+                  </Button>
+                </Stack>
+              </Stack>
+
+              <Box
+                sx={{
+                  width: "100%",
+                  mx: "auto",
+                  display: "flex",
+                  justifyContent: "center",
+                  alignItems: "center",
+                  opacity: secondaryNumbersLoading ? 0.72 : 1,
+                }}
+              >
+                <Box
+                  sx={{
+                    display: "grid",
+                    gridTemplateColumns: {
+                      xs: "repeat(5, 56px)",
+                      sm: "repeat(10, 56px)",
+                      md: "repeat(10, 64px)",
+                    },
+                    gap: {
+                      xs: "10px",
+                      sm: "12px",
+                    },
+                    justifyContent: "center",
+                    alignItems: "center",
+                    width: "fit-content",
+                    maxWidth: "100%",
+                    mx: "auto",
+                    boxSizing: "border-box",
+                  }}
+                >
+                  {secondaryPreviewNumbers.map((secondaryNumber) => {
+                    const status = getSecondaryNumberStatus(secondaryNumber);
+                    const selected = isSecondarySelected(secondaryNumber);
+                    return (
+                      <Box
+                        component="button"
+                        type="button"
+                        key={secondaryNumber}
+                        disabled={status !== "available" && !selected}
+                        aria-pressed={selected ? "true" : "false"}
+                        onClick={() => handleSecondaryNumberClick(secondaryNumber)}
+                        sx={{
+                          ...getSecondaryCellSx(secondaryNumber),
+                          borderRadius: 1.2,
+                          aspectRatio: "1 / 1",
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          fontWeight: 800,
+                          fontVariantNumeric: "tabular-nums",
+                          fontSize: { xs: 12, sm: 14, md: 16 },
+                          p: 0,
+                          userSelect: "none",
+                          transition: "filter 120ms ease, border-color 120ms ease",
+                          "&:disabled": {
+                            pointerEvents: "none",
+                          },
+                        }}
+                      >
+                        {pad2(secondaryNumber)}
+                      </Box>
+                    );
+                  })}
+                </Box>
+              </Box>
+
+              <Paper
+                variant="outlined"
+                sx={{
+                  display: "none",
+                  p: { xs: 1.5, md: 2 },
+                  bgcolor: "rgba(255,255,255,0.035)",
+                  borderColor: "rgba(255,255,255,0.10)",
+                }}
+              >
+                <Stack spacing={1.5}>
+                  <Stack
+                    direction={{ xs: "column", md: "row" }}
+                    spacing={1.5}
+                    alignItems={{ xs: "stretch", md: "center" }}
+                    justifyContent="space-between"
+                  >
+                    <Box>
+                      <Typography variant="body1" sx={{ fontWeight: 800 }}>
+                        {selectedSecondaryNumbers.length} número(s) selecionado(s)
+                      </Typography>
+                      <Typography variant="body2" sx={{ opacity: 0.78 }}>
+                        Total secundário: <strong>{secondaryTotalLabel}</strong>
+                      </Typography>
+                    </Box>
+                    <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
+                      <Button
+                        variant="outlined"
+                        color="inherit"
+                        disabled={!selectedSecondaryNumbers.length || secondaryReserveLoading}
+                        onClick={() => setSelectedSecondaryNumbers([])}
+                      >
+                        Limpar secundário
+                      </Button>
+                      <Button
+                        variant="contained"
+                        color="success"
+                        disabled={
+                          !secondaryDraw ||
+                          !selectedSecondaryNumbers.length ||
+                          secondaryReserveLoading
+                        }
+                        onClick={handleReserveSecondaryNumbers}
+                      >
+                        {secondaryReserveLoading
+                          ? "Reservando..."
+                          : "Reservar números do sorteio secundário"}
+                      </Button>
+                    </Stack>
+                  </Stack>
+
+                  {secondaryReservationId && (
+                    <Stack
+                      direction={{ xs: "column", md: "row" }}
+                      spacing={1.5}
+                      alignItems={{ xs: "stretch", md: "center" }}
+                      justifyContent="space-between"
+                    >
+                      <Typography variant="body2" sx={{ opacity: 0.82 }}>
+                        Reserva secundária pronta para pagamento.
+                      </Typography>
+                      <Button
+                        variant="contained"
+                        color="secondary"
+                        startIcon={<PixIcon />}
+                        disabled={secondaryPixLoading}
+                        onClick={handleSecondaryPix}
+                      >
+                        {secondaryPixLoading ? "Gerando PIX..." : "Gerar PIX do secundário"}
+                      </Button>
+                    </Stack>
+                  )}
+                </Stack>
+              </Paper>
+
+              {secondaryNotice && (
+                <Alert severity="warning" sx={{ bgcolor: "rgba(255,193,7,0.10)" }}>
+                  {secondaryNotice}
+                </Alert>
+              )}
+            </Stack>
+          </Paper>
 
           {/* Demais seções */}
           <Paper variant="outlined" sx={{ p: { xs: 2, md: 3 } }}>
@@ -1357,6 +2664,66 @@ Baseado no resultado oficial da Lotomania (Caixa Econômica Federal).
           } catch {
             alert("Não foi possível consultar o status agora.");
           }
+        }}
+      />
+
+      <PixModal
+        open={additionalPixOpenDrawId != null}
+        onClose={() => setAdditionalPixOpenDrawId(null)}
+        loading={
+          additionalPixOpenDrawId != null
+            ? !!additionalPixLoadingByDrawId[additionalPixOpenDrawId]
+            : false
+        }
+        data={
+          additionalPixOpenDrawId != null
+            ? additionalPaymentByDrawId[additionalPixOpenDrawId]
+            : null
+        }
+        amount={(() => {
+          const payment = additionalPaymentByDrawId[additionalPixOpenDrawId] || {};
+          const paymentAmountCents = Number(payment.amount_cents);
+          if (Number.isFinite(paymentAmountCents) && paymentAmountCents > 0) {
+            return paymentAmountCents / 100;
+          }
+          const paymentAmount = Number(payment.amount);
+          if (Number.isFinite(paymentAmount) && paymentAmount > 0) {
+            return paymentAmount;
+          }
+          const draw = additionalDraws.find((item) => item.id === additionalPixOpenDrawId);
+          const reservation = additionalReservationsByDrawId[additionalPixOpenDrawId] || {};
+          const numbers = reservation.numbers || reservation.reserved_numbers || [];
+          const cents = Number(draw?.ticket_price_cents ?? draw?.price_cents ?? 0);
+          return numbers.length * (cents / 100);
+        })()}
+        inlineMessage="PIX do sorteio adicional."
+        onCopy={() => {
+          const payment = additionalPaymentByDrawId[additionalPixOpenDrawId];
+          if (payment) {
+            navigator.clipboard.writeText(payment.copy_paste_code || payment.qr_code || "");
+          }
+        }}
+        onRefresh={() => {
+          alert("A confirmação do PIX adicional será processada pelo backend.");
+        }}
+      />
+
+      <PixModal
+        open={secondaryPixOpen}
+        onClose={() => setSecondaryPixOpen(false)}
+        loading={secondaryPixLoading}
+        data={secondaryPayment}
+        amount={secondaryReservationAmount}
+        inlineMessage="PIX do sorteio secundário."
+        onCopy={() => {
+          if (secondaryPayment) {
+            navigator.clipboard.writeText(
+              secondaryPayment.copy_paste_code || secondaryPayment.qr_code || ""
+            );
+          }
+        }}
+        onRefresh={() => {
+          alert("A confirmação do PIX secundário será processada pelo backend.");
         }}
       />
 

@@ -1,169 +1,290 @@
-import { getJSON, postJSON, putJSON } from "../lib/api";
+import { api } from "./api";
+
+function withCode(error) {
+  if (error?.code) return error;
+  const text = String(error?.message || error || "push_request_failed");
+  const codeOnly = text.includes(":") ? text.split(":")[0] : text;
+  const jsonStart = text.indexOf("{");
+  if (jsonStart >= 0) {
+    try {
+      const parsed = JSON.parse(text.slice(jsonStart));
+      error.code = parsed?.error || parsed?.code || "push_request_failed";
+      error.payload = parsed;
+      return error;
+    } catch (_) {}
+  }
+  error.code = codeOnly;
+  return error;
+}
+
+export function parsePushError(error) {
+  const normalized = withCode(error || new Error("push_request_failed"));
+  const code = normalized?.code || normalized?.message || "push_request_failed";
+  if (code === "push_test_subscription_id_missing") {
+    return "PUSH_TEST_SUBSCRIPTION_ID/PUSH_TEST_SUBSCRIPTION_IDS ainda não foi configurado.";
+  }
+  if (code === "push_production_send_blocked") {
+    return "Envio Push bloqueado em produção pelo modo de segurança.";
+  }
+  if (code === "push_test_subscription_not_found_or_inactive") {
+    return "Subscription de teste não encontrada ou inativa.";
+  }
+  if (code === "push_test_too_many_subscriptions_configured") {
+    return "Há mais subscriptions configuradas que o limite permitido para teste.";
+  }
+  if (code === "push_provider_forbidden_or_vapid_mismatch") {
+    return "Provider bloqueou o envio. Recrie a subscription após conferir as chaves VAPID.";
+  }
+  return String(code);
+}
+
+async function pushApi(path, options) {
+  try {
+    return await api(path, options);
+  } catch (error) {
+    throw withCode(error);
+  }
+}
 
 export function isPushSupported() {
-  return (
-    typeof navigator !== "undefined" &&
+  return typeof window !== "undefined" &&
+    "Notification" in window &&
     "serviceWorker" in navigator &&
-    "PushManager" in window &&
-    "Notification" in window
-  );
+    "PushManager" in window;
 }
 
 export function getNotificationPermission() {
-  if (!("Notification" in window)) return "unsupported";
-  return Notification.permission;
+  return typeof Notification === "undefined" ? "unsupported" : Notification.permission;
 }
 
 export async function requestPushPermission() {
-  if (!("Notification" in window)) {
-    throw new Error("push_not_supported");
-  }
-  return Notification.requestPermission();
+  if (!isPushSupported()) throw new Error("push_not_supported");
+  const permission = await Notification.requestPermission();
+  if (permission !== "granted") throw new Error("push_permission_not_granted");
+  return permission;
 }
-
-let swRegistrationPromise = null;
 
 export async function registerPushServiceWorker() {
-  if (!isPushSupported()) throw new Error("push_not_supported");
-  if (!swRegistrationPromise) {
-    swRegistrationPromise = navigator.serviceWorker.register("/push-sw.js");
+  if (!("serviceWorker" in navigator)) throw new Error("service_worker_not_supported");
+  try {
+    return await navigator.serviceWorker.register("/push-sw.js");
+  } catch {
+    throw new Error("push_service_worker_failed");
   }
-  return swRegistrationPromise;
 }
 
-export async function getPushConfig() {
-  return getJSON("/push/config");
+export async function getPushAccess() {
+  try {
+    return await pushApi("/api/push/access");
+  } catch (error) {
+    if (error?.code === "push_hidden_for_user" || String(error?.message || "").startsWith("404")) {
+      return { ok: false, visible: false, error: "push_hidden_for_user" };
+    }
+    throw error;
+  }
 }
 
-export async function getPushPreferences() {
-  return getJSON("/push/preferences");
+export function getVapidPublicKey() {
+  return pushApi("/api/push/vapid-public-key");
 }
 
-export async function updatePushPreferences({ push_operational_opt_in, push_marketing_opt_in }) {
-  return putJSON("/push/preferences", {
-    push_operational_opt_in,
-    push_marketing_opt_in,
-  });
+export function getPushDebugConfig() {
+  return pushApi("/api/push/debug-config");
 }
 
 export function urlBase64ToUint8Array(base64String) {
   const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
   const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
   const rawData = window.atob(base64);
-  const outputArray = new Uint8Array(rawData.length);
-  for (let i = 0; i < rawData.length; ++i) {
-    outputArray[i] = rawData.charCodeAt(i);
-  }
-  return outputArray;
+  return Uint8Array.from([...rawData].map((char) => char.charCodeAt(0)));
 }
 
-function subscriptionPayload(subscription) {
-  const json = subscription.toJSON();
-  return {
-    endpoint: json.endpoint,
-    keys: json.keys,
-    expirationTime: json.expirationTime ?? null,
-  };
+export function arrayBufferToBase64Url(buffer) {
+  const bytes = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer || []);
+  let binary = "";
+  bytes.forEach((byte) => {
+    binary += String.fromCharCode(byte);
+  });
+  return window.btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
 }
 
-export async function subscribeToPush({ deviceLabel } = {}) {
+export function normalizeBase64Url(value) {
+  return String(value || "").trim().replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
+
+export function isSameApplicationServerKey(existingKey, expectedKey) {
+  if (!existingKey || !expectedKey) return false;
+  const existing = typeof existingKey === "string"
+    ? normalizeBase64Url(existingKey)
+    : arrayBufferToBase64Url(existingKey);
+  return existing === normalizeBase64Url(expectedKey);
+}
+
+export async function subscribeToPush({ deviceLabel, setupCode } = {}) {
   if (!isPushSupported()) throw new Error("push_not_supported");
+  const cleanSetupCode = String(setupCode || "").trim();
 
-  const config = await getPushConfig();
-  const enabled = config?.enabled ?? config?.push_enabled;
-  const publicKey = config?.publicKey ?? config?.public_key ?? config?.vapid_public_key;
+  const permission =
+    Notification.permission === "granted"
+      ? "granted"
+      : await Notification.requestPermission();
+  if (process.env.NODE_ENV !== "production") {
+    console.log("[push.front] permission", permission);
+  }
+  if (permission !== "granted") throw new Error("push_permission_not_granted");
 
-  if (!enabled || !publicKey) {
-    throw new Error("push_disabled");
+  await registerPushServiceWorker();
+  if (process.env.NODE_ENV !== "production") {
+    console.log("[push.front] service-worker:registered");
+  }
+  const readyRegistration = await navigator.serviceWorker.ready.catch(() => null);
+  if (!readyRegistration) throw new Error("push_service_worker_not_ready");
+  if (process.env.NODE_ENV !== "production") {
+    console.log("[push.front] service-worker:ready");
   }
 
-  const registration = await registerPushServiceWorker();
-  const permission = await requestPushPermission();
-
-  if (permission !== "granted") {
-    throw new Error("push_permission_not_granted");
-  }
-
-  let subscription = await registration.pushManager.getSubscription();
-
-  if (!subscription) {
-    subscription = await registration.pushManager.subscribe({
-      userVisibleOnly: true,
-      applicationServerKey: urlBase64ToUint8Array(publicKey),
+  const vapid = await getVapidPublicKey();
+  if (vapid?.error) throw new Error(vapid.error);
+  const { publicKey, enabled } = vapid;
+  if (process.env.NODE_ENV !== "production") {
+    console.log("[push.front] vapid:loaded", {
+      enabled: Boolean(enabled),
+      hasPublicKey: Boolean(publicKey),
     });
   }
+  if (!enabled || !publicKey) throw new Error("push_disabled");
 
-  await postJSON("/push/subscribe", {
-    subscription: subscriptionPayload(subscription),
-    deviceLabel: deviceLabel || defaultDeviceLabel(),
-  });
+  const applicationServerKey = urlBase64ToUint8Array(publicKey);
+  let subscription = await readyRegistration.pushManager.getSubscription();
+  let createdNow = false;
+  if (subscription) {
+    const sameKey = isSameApplicationServerKey(
+      subscription.options?.applicationServerKey,
+      publicKey
+    );
+    if (process.env.NODE_ENV !== "production") {
+      console.log("[push.front] vapid:compare", {
+        hasExistingKey: Boolean(subscription.options?.applicationServerKey),
+        sameKey,
+      });
+    }
+    if (!sameKey) {
+      if (process.env.NODE_ENV !== "production") {
+        console.log("[push.front] browser-subscription:vapid-mismatch");
+      }
+      await subscription.unsubscribe().catch(() => {});
+      if (process.env.NODE_ENV !== "production") {
+        console.log("[push.front] browser-subscription:unsubscribed");
+      }
+      subscription = null;
+    }
+  }
+  if (!subscription) {
+    try {
+      subscription = await readyRegistration.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey,
+      });
+      createdNow = true;
+      if (process.env.NODE_ENV !== "production") {
+        console.log("[push.front] browser-subscription:created");
+      }
+    } catch {
+      throw new Error("push_subscription_failed");
+    }
+  }
+  if (process.env.NODE_ENV !== "production") {
+    console.log("[push.front] browser-subscription:ready", {
+      hasEndpoint: Boolean(subscription?.endpoint),
+    });
+    console.log("[push.front] api-subscribe:payload", {
+      hasSubscription: Boolean(subscription),
+      hasSetupCode: Boolean(cleanSetupCode),
+      setupCodeLength: cleanSetupCode.length,
+      hasDeviceLabel: Boolean(deviceLabel || navigator.userAgent),
+    });
+    console.log("[push.front] api-subscribe:start");
+  }
 
-  return subscription;
+  try {
+    const result = await pushApi("/api/push/subscribe", {
+      method: "POST",
+      body: {
+        subscription: subscription.toJSON ? subscription.toJSON() : subscription,
+        deviceLabel: deviceLabel || navigator.userAgent,
+        setupCode: cleanSetupCode,
+      },
+    });
+    if (process.env.NODE_ENV !== "production") {
+      console.log("[push.front] api-subscribe:done", {
+        ok: result?.ok,
+        hasSubscriptionId: Boolean(result?.subscription_id),
+      });
+    }
+    return result;
+  } catch (error) {
+    if (createdNow) await subscription.unsubscribe().catch(() => {});
+    if (error?.code) throw error;
+    throw new Error("push_subscribe_api_failed");
+  }
+}
+
+export async function recreatePushSubscription({ deviceLabel, setupCode } = {}) {
+  await unsubscribeFromPush().catch(() => ({ ok: true }));
+  return subscribeToPush({ deviceLabel, setupCode });
 }
 
 export async function unsubscribeFromPush() {
   if (!isPushSupported()) throw new Error("push_not_supported");
-
-  const registration = await registerPushServiceWorker();
-  const subscription = await registration.pushManager.getSubscription();
-
-  if (!subscription) return null;
-
+  await registerPushServiceWorker();
+  const registration = await navigator.serviceWorker.ready.catch(() => null);
+  const subscription = await registration?.pushManager?.getSubscription();
+  if (!subscription) return { ok: true, deactivated: false };
   const endpoint = subscription.endpoint;
-  if (endpoint) {
-    await postJSON("/push/unsubscribe", { endpoint });
-  }
-
   await subscription.unsubscribe();
-  return true;
+  const result = await pushApi("/api/push/unsubscribe", {
+    method: "POST",
+    body: { endpoint },
+  });
+  return result;
 }
 
-export async function sendSelfTestPush() {
-  return postJSON("/push/test", {});
+export function sendTestPush({ title = "New Store", body = "Teste controlado de Push.", url = "/me" } = {}) {
+  return pushApi("/api/push/test", { method: "POST", body: { title, body, url } });
 }
 
-export async function sendAdminTestPush({ user_id, title, body, url, category }) {
-  return postJSON("/admin/notifications/push/test", {
-    user_id,
-    title,
-    body,
-    url,
-    category,
+export function sendSingleDeviceTestPush({ title = "New Store", body = "Teste controlado de Push.", url = "/me" } = {}) {
+  return pushApi("/api/push/test-single-device", { method: "POST", body: { title, body, url } });
+}
+
+export function sendAdminSingleDeviceTestPush({ title, body, url = "/me" }) {
+  return pushApi("/api/admin/notifications/push/test-single-device", {
+    method: "POST",
+    body: { title, body, url },
   });
 }
 
-export async function getAdminPushTestStatus() {
-  return getJSON("/admin/notifications/push/test-status");
+export function getAdminPushTestStatus() {
+  return getPushDebugConfig();
 }
 
-export async function getLocalPushSubscription() {
-  if (!isPushSupported()) return null;
-  try {
-    const registration = await registerPushServiceWorker();
-    return await registration.pushManager.getSubscription();
-  } catch {
-    return null;
-  }
+export function sendAdminTestPush({ title, body, url = "/me" } = {}) {
+  return sendAdminSingleDeviceTestPush({ title, body, url });
 }
 
-function defaultDeviceLabel() {
-  const ua = String(navigator.userAgent || "");
-  if (/iPhone|iPad/i.test(ua)) return "iOS";
-  if (/Android/i.test(ua)) return "Android";
-  if (/Windows/i.test(ua)) return "Windows";
-  if (/Mac/i.test(ua)) return "Mac";
-  return "Browser";
+export function getPushPreferences() {
+  return pushApi("/api/push/preferences");
 }
 
-export function parsePushError(err) {
-  const raw = String(err?.message || err || "");
-  const code = raw.split(":")[0];
-  const messages = {
-    push_not_supported: "Este navegador não suporta notificações push.",
-    push_disabled: "Notificações push estão desabilitadas no servidor.",
-    push_permission_not_granted: "Permissão de notificação não concedida.",
-    push_not_allowed_user: "Usuário não permitido para testes de push.",
-    push_test_mode_blocked: "Envio bloqueado: modo teste ativo.",
-  };
-  return messages[code] || raw || "Erro desconhecido.";
+export function updatePushPreferences({ push_operational_opt_in, push_marketing_opt_in }) {
+  return pushApi("/api/push/preferences", {
+    method: "PUT",
+    body: { push_operational_opt_in, push_marketing_opt_in },
+  });
+}
+
+export async function hasActiveBrowserSubscription() {
+  if (!isPushSupported()) return false;
+  const registration = await navigator.serviceWorker.getRegistration();
+  return Boolean(await registration?.pushManager?.getSubscription());
 }

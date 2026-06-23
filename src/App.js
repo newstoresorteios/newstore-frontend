@@ -23,6 +23,7 @@ import AdminOpenDrawBuyers from "./AdminOpenDrawBuyers";
 import AdminAnalytics from './AdminAnalytics';
 import AdminNotificationsPage from "./AdminNotificationsPage";
 import AdminHistoricoSaldo from "./AdminHistoricoSaldo";
+import AutorizacaoCativoPage from "./AutorizacaoCativoPage";
 import AdminPushTest from "./pages/admin/AdminPushTest";
 
 export default function App() {
@@ -46,6 +47,7 @@ export default function App() {
 
             <Route path="/cadastro" element={<RegisterPage />} />
             <Route path="/login" element={<LoginPage />} />
+            <Route path="/autorizacao-cativo" element={<AutorizacaoCativoPage />} />
 
             {/* CONTA: autenticado e não-admin */}
             <Route
@@ -55,6 +57,14 @@ export default function App() {
                   <NonAdminRoute>
                     <AccountPage />
                   </NonAdminRoute>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/me"
+              element={
+                <ProtectedRoute>
+                  <AccountPage />
                 </ProtectedRoute>
               }
             />
