@@ -825,6 +825,9 @@ export default function AdminNotificationsPage() {
             <ArrowBackIosNewRoundedIcon />
           </IconButton>
           <Typography sx={{ fontWeight: 900, ml: 1, flex: 1 }}>Central de Comunicação</Typography>
+          <Button color="inherit" size="small" onClick={() => nav("/admin/push-test")} sx={{ mr: 1 }}>
+            Teste de Push
+          </Button>
           <IconButton color="inherit" onClick={loadAll} disabled={loading} aria-label="Recarregar">
             <RefreshRoundedIcon />
           </IconButton>
