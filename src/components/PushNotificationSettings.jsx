@@ -13,9 +13,11 @@ import {
 import {
   getNotificationPermission,
   getPushAccess,
+  getPushDebugConfig,
   getPushPreferences,
   hasActiveBrowserSubscription,
   isPushSupported,
+  recreatePushSubscription,
   sendSingleDeviceTestPush,
   subscribeToPush,
   unsubscribeFromPush,
@@ -31,9 +33,16 @@ function friendlyError(code) {
   }
   if (code === "push_production_send_blocked") return "Envio Push bloqueado em produção pelo modo de segurança.";
   if (code === "push_permission_not_granted") return "A permissão de notificações não foi concedida.";
+  if (code === "push_service_worker_failed") return "Falha ao registrar o service worker de Push.";
+  if (code === "push_service_worker_not_ready") return "O service worker de Push ainda não ficou pronto.";
+  if (code === "push_subscription_failed") return "Falha ao criar ou recuperar a subscription do navegador.";
+  if (code === "push_subscribe_api_failed") return "Falha ao salvar a subscription no backend.";
+  if (code === "push_vapid_not_configured") return "Push indispon?vel porque a VAPID n?o est? configurada no backend local.";
+  if (code === "push_provider_forbidden_or_vapid_mismatch") return "Provider recusou o Push. Recrie a subscription deste dispositivo e atualize o ID no backend.";
+  if (code === "push_test_device_limit_reached") return "Limite de dois dispositivos de teste atingido.";
   if (code === "push_test_subscription_not_found_or_inactive") return "A subscription configurada não existe ou está inativa.";
   if (code === "push_not_supported") return "Este navegador não oferece suporte a notificações Push.";
-  return "Push bloqueado pelo modo de teste.";
+  return code ? String(code) : "Erro desconhecido no Push.";
 }
 
 export default function PushNotificationSettings() {
@@ -42,8 +51,12 @@ export default function PushNotificationSettings() {
   const [active, setActive] = React.useState(false);
   const [setupCode, setSetupCode] = React.useState("");
   const [subscriptionId, setSubscriptionId] = React.useState("");
+  const [deviceLabel, setDeviceLabel] = React.useState(
+    typeof navigator !== "undefined" ? navigator.userAgent : ""
+  );
   const [operational, setOperational] = React.useState(true);
   const [marketing, setMarketing] = React.useState(false);
+  const [debugConfig, setDebugConfig] = React.useState(null);
   const [busy, setBusy] = React.useState(false);
   const [notice, setNotice] = React.useState(null);
 
@@ -52,6 +65,13 @@ export default function PushNotificationSettings() {
     getPushAccess()
       .then(async (result) => {
         if (!mounted) return;
+        if (process.env.NODE_ENV !== "production") {
+          console.log("[push.access] frontend", {
+            visible: Boolean(result?.visible),
+            mode: result?.mode || null,
+            test_label: result?.test_label || null,
+          });
+        }
         setAccess(result);
         if (!result?.visible) return;
         setPermission(getNotificationPermission());
@@ -62,28 +82,60 @@ export default function PushNotificationSettings() {
           setOperational(preferences.push_operational_opt_in !== false);
           setMarketing(preferences.push_marketing_opt_in === true);
         } catch (_) {}
+        if (process.env.NODE_ENV !== "production") {
+          try {
+            const debug = await getPushDebugConfig();
+            if (!mounted) return;
+            setDebugConfig(debug);
+          } catch (_) {}
+        }
       })
       .catch(() => mounted && setAccess({ visible: false }));
-    return () => { mounted = false; };
+    return () => {
+      mounted = false;
+    };
   }, []);
 
   if (!access?.visible) return null;
 
   const supported = isPushSupported();
   const testLabel = access.test_label || LABEL;
+  const showDebug =
+    process.env.NODE_ENV !== "production" &&
+    typeof window !== "undefined" &&
+    ["localhost", "127.0.0.1"].includes(window.location.hostname);
 
   async function activate() {
     setBusy(true);
     setNotice(null);
     try {
-      const result = await subscribeToPush({ setupCode, deviceLabel: navigator.userAgent });
+      const cleanSetupCode = String(setupCode || "").trim();
+      if (!cleanSetupCode) {
+        throw new Error("push_test_setup_code_required");
+      }
+      if (process.env.NODE_ENV !== "production") {
+        console.log("[push.front] activate:start");
+      }
+      const result = await subscribeToPush({
+        setupCode: cleanSetupCode,
+        deviceLabel: deviceLabel || navigator.userAgent,
+      });
+      if (process.env.NODE_ENV !== "production") {
+        console.log("[push.front] api-subscribe:done", {
+          ok: result?.ok,
+          hasSubscriptionId: Boolean(result?.subscription_id),
+        });
+      }
       setSubscriptionId(result.subscription_id || "");
       setSetupCode("");
       setPermission(getNotificationPermission());
       setActive(true);
       setOperational(true);
       setMarketing(false);
-      setNotice({ severity: "success", text: "Subscription salva. Copie o subscription_id antes de sair desta tela." });
+      setNotice({
+        severity: "success",
+        text: "Subscription salva. Copie este ID. Para testar em dois dispositivos, configure PUSH_TEST_SUBSCRIPTION_IDS com o ID do notebook e do celular.",
+      });
     } catch (error) {
       setPermission(getNotificationPermission());
       setNotice({ severity: "error", text: friendlyError(error?.code || error?.message) });
@@ -124,6 +176,34 @@ export default function PushNotificationSettings() {
       setSubscriptionId("");
       setNotice({ severity: "success", text: "Push desativado neste dispositivo." });
     } catch (error) {
+      setNotice({ severity: "error", text: friendlyError(error?.code || error?.message) });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function recreate() {
+    setBusy(true);
+    setNotice(null);
+    try {
+      const cleanSetupCode = String(setupCode || "").trim();
+      if (!cleanSetupCode) {
+        throw new Error("push_test_setup_code_required");
+      }
+      const result = await recreatePushSubscription({
+        setupCode: cleanSetupCode,
+        deviceLabel: deviceLabel || navigator.userAgent,
+      });
+      setSubscriptionId(result.subscription_id || "");
+      setSetupCode("");
+      setPermission(getNotificationPermission());
+      setActive(true);
+      setNotice({
+        severity: "success",
+        text: "Subscription recriada. Atualize PUSH_TEST_SUBSCRIPTION_IDS com este novo ID antes de enviar teste.",
+      });
+    } catch (error) {
+      setPermission(getNotificationPermission());
       setNotice({ severity: "error", text: friendlyError(error?.code || error?.message) });
     } finally {
       setBusy(false);
@@ -175,6 +255,11 @@ export default function PushNotificationSettings() {
           {permission === "default" && <Alert severity="info">Permissão ainda não solicitada.</Alert>}
           {permission === "granted" && <Alert severity="success">Permissão concedida.{active ? " Push ativo neste dispositivo." : ""}</Alert>}
           {notice && <Alert severity={notice.severity}>{notice.text}</Alert>}
+          {showDebug && debugConfig?.vapid && (
+            <Alert severity="info">
+              VAPID dev: fingerprint {debugConfig.vapid.publicKeyFingerprint || "indisponivel"}; publicKey {String(Boolean(debugConfig.vapid.hasPublicKey))}; privateKey {String(Boolean(debugConfig.vapid.hasPrivateKey))}; subject {debugConfig.vapid.subjectValueSafe || "indisponivel"}; subscriptions liberadas {debugConfig.allowedSubscriptionIdsCount ?? 0}.
+            </Alert>
+          )}
 
           {subscriptionId && (
             <TextField
@@ -184,6 +269,14 @@ export default function PushNotificationSettings() {
               InputProps={{ readOnly: true }}
             />
           )}
+
+          <TextField
+            label="Apelido do dispositivo"
+            value={deviceLabel}
+            onChange={(event) => setDeviceLabel(event.target.value)}
+            helperText="Opcional. Exemplo: Notebook ou Celular."
+            disabled={busy || !supported || permission === "denied"}
+          />
 
           <TextField
             label="Código de teste"
@@ -227,6 +320,11 @@ export default function PushNotificationSettings() {
             <Button variant="outlined" color="warning" onClick={deactivate} disabled={busy || !active}>
               Desativar neste dispositivo
             </Button>
+            {showDebug && (
+              <Button variant="outlined" onClick={recreate} disabled={busy || !supported || permission === "denied" || !setupCode}>
+                Recriar subscription deste dispositivo
+              </Button>
+            )}
             <Button variant="text" onClick={savePreferences} disabled={busy || !active}>
               Salvar preferências
             </Button>
