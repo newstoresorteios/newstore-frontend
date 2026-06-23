@@ -239,8 +239,7 @@ export default function AdminPushTest() {
                   <strong>Total de subscriptions ativas:</strong> {activeSubscriptions}
                 </Typography>
                 <Typography variant="body2">
-                  <strong>Usuários permitidos para teste:</strong>{"
-                  "}
+                  <strong>Usuários permitidos para teste:</strong>{" "}
                   {allowedUsers.length
                     ? allowedUsers.join(", ")
                     : status?.allowed_test_user_ids != null
