@@ -17,6 +17,27 @@ function withCode(error) {
   return error;
 }
 
+export function parsePushError(error) {
+  const normalized = withCode(error || new Error("push_request_failed"));
+  const code = normalized?.code || normalized?.message || "push_request_failed";
+  if (code === "push_test_subscription_id_missing") {
+    return "PUSH_TEST_SUBSCRIPTION_ID/PUSH_TEST_SUBSCRIPTION_IDS ainda não foi configurado.";
+  }
+  if (code === "push_production_send_blocked") {
+    return "Envio Push bloqueado em produção pelo modo de segurança.";
+  }
+  if (code === "push_test_subscription_not_found_or_inactive") {
+    return "Subscription de teste não encontrada ou inativa.";
+  }
+  if (code === "push_test_too_many_subscriptions_configured") {
+    return "Há mais subscriptions configuradas que o limite permitido para teste.";
+  }
+  if (code === "push_provider_forbidden_or_vapid_mismatch") {
+    return "Provider bloqueou o envio. Recrie a subscription após conferir as chaves VAPID.";
+  }
+  return String(code);
+}
+
 async function pushApi(path, options) {
   try {
     return await api(path, options);
@@ -241,6 +262,14 @@ export function sendAdminSingleDeviceTestPush({ title, body, url = "/me" }) {
     method: "POST",
     body: { title, body, url },
   });
+}
+
+export function getAdminPushTestStatus() {
+  return getPushDebugConfig();
+}
+
+export function sendAdminTestPush({ title, body, url = "/me" } = {}) {
+  return sendAdminSingleDeviceTestPush({ title, body, url });
 }
 
 export function getPushPreferences() {

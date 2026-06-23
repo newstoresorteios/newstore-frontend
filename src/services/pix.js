@@ -7,9 +7,11 @@ const API_BASE =
     'https://newstore-backend.onrender.com'
   ).replace(/\/+$/, '');
 
+const isProduction = process.env.NODE_ENV === 'production';
 const USE_BACKEND =
-  String(process.env.REACT_APP_USE_BACKEND || (process.env.REACT_APP_AUTH_PROVIDER === 'backend'))
-    .toLowerCase() === 'true';
+  isProduction ||
+  String(process.env.REACT_APP_USE_BACKEND || '').toLowerCase() === 'true' ||
+  String(process.env.REACT_APP_AUTH_PROVIDER || '').toLowerCase() === 'backend';
 
 /* -------------------- Auth helpers -------------------- */
 function sanitizeToken(t) {

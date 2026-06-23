@@ -774,7 +774,34 @@ export default function AccountPage() {
             {headingName}
           </Typography>
 
-          <PushNotificationSettings />
+          <Paper variant="outlined" sx={{ p: { xs: 2, md: 2.5 } }}>
+            <Stack spacing={1.5}>
+              <Typography variant="subtitle1" fontWeight={900}>
+                Receba avisos sem depender do WhatsApp
+              </Typography>
+              <Typography variant="body2" sx={{ opacity: 0.85 }}>
+                Ative notificações no navegador para acompanhar atualizações importantes da sua conta.
+              </Typography>
+              <Button
+                variant="outlined"
+                color="success"
+                onClick={() => {
+                  const el = document.getElementById("push-notification-settings");
+                  if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+                }}
+                sx={{ alignSelf: "flex-start" }}
+              >
+                Configurar notificações
+              </Button>
+            </Stack>
+          </Paper>
+
+          <Paper id="push-notification-settings" variant="outlined" sx={{ p: { xs: 2, md: 3 } }}>
+            <Typography variant="h6" fontWeight={900} sx={{ mb: 2 }}>
+              Preferências de comunicação
+            </Typography>
+            <PushNotificationSettings />
+          </Paper>
 
           {/* Configurações do sorteio (apenas admin) */}
           {isAdminUser && (
