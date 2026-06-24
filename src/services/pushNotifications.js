@@ -257,6 +257,19 @@ export function sendSingleDeviceTestPush({ title = "New Store", body = "Teste co
   return pushApi("/api/push/test-single-device", { method: "POST", body: { title, body, url } });
 }
 
+export async function sendCurrentDeviceTestPush() {
+  if (!isPushSupported()) throw new Error("push_not_supported");
+  const registration = await navigator.serviceWorker.ready.catch(() => null);
+  const subscription = await registration?.pushManager?.getSubscription();
+  if (!subscription) throw new Error("push_current_device_subscription_required");
+  return pushApi("/api/push/test-current-device", {
+    method: "POST",
+    body: {
+      subscription: subscription.toJSON ? subscription.toJSON() : subscription,
+    },
+  });
+}
+
 export function getPushPreferences() {
   return pushApi("/api/push/preferences");
 }
