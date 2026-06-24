@@ -24,7 +24,6 @@ import AdminAnalytics from './AdminAnalytics';
 import AdminNotificationsPage from "./AdminNotificationsPage";
 import AdminHistoricoSaldo from "./AdminHistoricoSaldo";
 import AutorizacaoCativoPage from "./AutorizacaoCativoPage";
-import AdminPushTest from "./pages/admin/AdminPushTest";
 
 export default function App() {
   const [selecionados, setSelecionados] = React.useState([]);
@@ -147,14 +146,6 @@ export default function App() {
               element={
                 <AdminRoute>
                   <AdminNotificationsPage />
-                </AdminRoute>
-              }
-            />
-            <Route
-              path="/admin/push-test"
-              element={
-                <AdminRoute>
-                  <AdminPushTest />
                 </AdminRoute>
               }
             />

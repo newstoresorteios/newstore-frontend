@@ -752,10 +752,6 @@ export default function AdminDashboard() {
               NOTIFICAÇÕES
             </BigCard>
             <br />
-            <BigCard color="warning.dark" onClick={() => navigate("/admin/push-test")}>
-              TESTE DE PUSH
-            </BigCard>
-            <br />
             <BigCard outlined onClick={() => navigate("/admin/sorteios")}>
               LISTA DE SORTEIOS
               <br /> REALIZADOS
