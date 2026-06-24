@@ -107,6 +107,7 @@ export default function PushNotificationSettings() {
 
   const supported = isPushSupported();
   const testLabel = access.test_label || LABEL;
+  const requiresSetupCode = access?.requires_setup_code === true;
   const showDebug =
     process.env.NODE_ENV !== "production" &&
     typeof window !== "undefined" &&
@@ -117,7 +118,7 @@ export default function PushNotificationSettings() {
     setNotice(null);
     try {
       const cleanSetupCode = String(setupCode || "").trim();
-      if (!cleanSetupCode) {
+      if (requiresSetupCode && !cleanSetupCode) {
         throw new Error("push_test_setup_code_required");
       }
       if (process.env.NODE_ENV !== "production") {
@@ -141,7 +142,7 @@ export default function PushNotificationSettings() {
       setMarketing(false);
       setNotice({
         severity: "success",
-        text: "Subscription salva. Copie este ID. Para testar em dois dispositivos, configure PUSH_TEST_SUBSCRIPTION_IDS com o ID do notebook e do celular.",
+        text: "Notificações ativadas neste dispositivo.",
       });
     } catch (error) {
       setPermission(getNotificationPermission());
@@ -194,7 +195,7 @@ export default function PushNotificationSettings() {
     setNotice(null);
     try {
       const cleanSetupCode = String(setupCode || "").trim();
-      if (!cleanSetupCode) {
+      if (requiresSetupCode && !cleanSetupCode) {
         throw new Error("push_test_setup_code_required");
       }
       const result = await recreatePushSubscription({
@@ -207,7 +208,7 @@ export default function PushNotificationSettings() {
       setActive(true);
       setNotice({
         severity: "success",
-        text: "Subscription recriada. Atualize PUSH_TEST_SUBSCRIPTION_IDS com este novo ID antes de enviar teste.",
+        text: "Subscription recriada para este dispositivo.",
       });
     } catch (error) {
       setPermission(getNotificationPermission());
@@ -285,15 +286,17 @@ export default function PushNotificationSettings() {
             disabled={busy || !supported || permission === "denied"}
           />
 
-          <TextField
-            label="Código de teste"
-            type="password"
-            value={setupCode}
-            onChange={(event) => setSetupCode(event.target.value)}
-            autoComplete="off"
-            helperText="Digite manualmente. O código não é salvo no navegador."
-            disabled={busy || !supported || permission === "denied"}
-          />
+          {requiresSetupCode && (
+            <TextField
+              label="Código de teste"
+              type="password"
+              value={setupCode}
+              onChange={(event) => setSetupCode(event.target.value)}
+              autoComplete="off"
+              helperText="Digite manualmente. O código não é salvo no navegador."
+              disabled={busy || !supported || permission === "denied"}
+            />
+          )}
 
           <Box>
             <FormControlLabel
@@ -315,8 +318,8 @@ export default function PushNotificationSettings() {
           </Box>
 
           <Stack direction={{ xs: "column", sm: "row" }} spacing={1} flexWrap="wrap">
-            <Button variant="contained" color="success" onClick={activate} disabled={busy || !supported || permission === "denied" || !setupCode}>
-              Ativar Push neste dispositivo
+            <Button variant="contained" color="success" onClick={activate} disabled={busy || !supported || permission === "denied" || (requiresSetupCode && !setupCode)}>
+              Permitir notificações
             </Button>
             <Button variant="outlined" onClick={copySubscriptionId} disabled={busy || !subscriptionId}>
               Copiar subscription_id
@@ -328,7 +331,7 @@ export default function PushNotificationSettings() {
               Desativar neste dispositivo
             </Button>
             {showDebug && (
-              <Button variant="outlined" onClick={recreate} disabled={busy || !supported || permission === "denied" || !setupCode}>
+              <Button variant="outlined" onClick={recreate} disabled={busy || !supported || permission === "denied" || (requiresSetupCode && !setupCode)}>
                 Recriar subscription deste dispositivo
               </Button>
             )}
