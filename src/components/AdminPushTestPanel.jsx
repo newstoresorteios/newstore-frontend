@@ -15,8 +15,7 @@ export default function AdminPushTestPanel() {
     getPushAccess()
       .then((access) => mounted && setVisible(
         access?.ok === true &&
-        access?.visible === true &&
-        access?.allowed === true &&
+        (access?.visible === true || access?.allowed === true) &&
         access?.mode === "single_device_test"
       ))
       .catch(() => mounted && setVisible(false));
