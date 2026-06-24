@@ -18,7 +18,7 @@ import {
   hasActiveBrowserSubscription,
   isPushSupported,
   recreatePushSubscription,
-  sendSingleDeviceTestPush,
+  sendCurrentDeviceTestPush,
   subscribeToPush,
   unsubscribeFromPush,
   updatePushPreferences,
@@ -41,6 +41,8 @@ function friendlyError(code) {
   if (code === "push_provider_forbidden_or_vapid_mismatch") return "Provider recusou o Push. Recrie a subscription deste dispositivo e atualize o ID no backend.";
   if (code === "push_test_device_limit_reached") return "Limite de dois dispositivos de teste atingido.";
   if (code === "push_test_subscription_not_found_or_inactive") return "A subscription configurada não existe ou está inativa.";
+  if (code === "push_current_device_subscription_required") return "Ative o Push neste dispositivo antes de enviar teste.";
+  if (code === "push_current_device_subscription_not_found") return "Subscription deste dispositivo não encontrada no backend. Ative o Push novamente neste dispositivo.";
   if (code === "push_not_supported") return "Este navegador não oferece suporte a notificações Push.";
   return code ? String(code) : "Erro desconhecido no Push.";
 }
@@ -163,8 +165,8 @@ export default function PushNotificationSettings() {
     setBusy(true);
     setNotice(null);
     try {
-      await sendSingleDeviceTestPush();
-      setNotice({ severity: "success", text: "Push enviado para a subscription de teste configurada." });
+      await sendCurrentDeviceTestPush();
+      setNotice({ severity: "success", text: "Teste enviado para este dispositivo." });
     } catch (error) {
       setNotice({ severity: "warning", text: friendlyError(error?.code || error?.message) });
     } finally {
