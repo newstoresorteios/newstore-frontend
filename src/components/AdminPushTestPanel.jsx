@@ -13,7 +13,12 @@ export default function AdminPushTestPanel() {
   React.useEffect(() => {
     let mounted = true;
     getPushAccess()
-      .then((access) => mounted && setVisible(access?.visible === true))
+      .then((access) => mounted && setVisible(
+        access?.ok === true &&
+        access?.visible === true &&
+        access?.allowed === true &&
+        access?.mode === "single_device_test"
+      ))
       .catch(() => mounted && setVisible(false));
     return () => { mounted = false; };
   }, []);
@@ -21,6 +26,7 @@ export default function AdminPushTestPanel() {
   if (!visible) return null;
 
   async function send() {
+    if (!visible) return;
     setBusy(true);
     setNotice(null);
     try {
