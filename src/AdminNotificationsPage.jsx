@@ -58,7 +58,6 @@ import {
   syncDispatchDeliveryStatus,
   updateNotificationTemplate,
 } from "./services/adminNotifications";
-import AdminPushTestPanel from "./components/AdminPushTestPanel";
 
 const theme = createTheme({
   palette: {
@@ -826,9 +825,6 @@ export default function AdminNotificationsPage() {
             <ArrowBackIosNewRoundedIcon />
           </IconButton>
           <Typography sx={{ fontWeight: 900, ml: 1, flex: 1 }}>Central de Comunicação</Typography>
-          <Button color="inherit" size="small" onClick={() => nav("/admin/push-test")} sx={{ mr: 1 }}>
-            Teste de Push
-          </Button>
           <IconButton color="inherit" onClick={loadAll} disabled={loading} aria-label="Recarregar">
             <RefreshRoundedIcon />
           </IconButton>
@@ -843,8 +839,6 @@ export default function AdminNotificationsPage() {
           Envie mensagens controladas, gerencie templates locais, acompanhe disparos e monitore entregas. O backend
           pode redirecionar envios em modo teste conforme configuração.
         </Typography>
-
-        <AdminPushTestPanel />
 
         {error && (
           <Alert severity="error" sx={{ mb: 2 }}>

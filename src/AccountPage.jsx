@@ -225,14 +225,20 @@ export default function AccountPage() {
   React.useEffect(() => { loadClaims(); }, []);
   React.useEffect(() => {
     let alive = true;
+    if (process.env.NODE_ENV !== "production") {
+      console.log("[push.account] access:start");
+    }
     getPushAccess()
       .then((result) => {
         if (!alive) return;
-        setCanShowPushCard(
+        const visible =
           result?.ok === true &&
           (result?.visible === true || result?.allowed === true) &&
-          result?.mode === "single_device_test"
-        );
+          result?.mode === "single_device_test";
+        if (process.env.NODE_ENV !== "production") {
+          console.log("[push.account] access:visible", Boolean(visible));
+        }
+        setCanShowPushCard(visible);
       })
       .catch(() => {
         if (alive) setCanShowPushCard(false);
@@ -241,6 +247,11 @@ export default function AccountPage() {
       alive = false;
     };
   }, []);
+  React.useEffect(() => {
+    if (canShowPushCard && process.env.NODE_ENV !== "production") {
+      console.log("[push.account] component:mounted");
+    }
+  }, [canShowPushCard]);
 
   // NOVO: busca a ÚLTIMA reserva ATIVA do sorteio, priorizando os números informados
   async function findLatestActiveReservation(drawId, numbersHint) {
@@ -794,39 +805,6 @@ export default function AccountPage() {
             {headingName}
           </Typography>
 
-          {canShowPushCard && (
-            <>
-              <Paper variant="outlined" sx={{ p: { xs: 2, md: 2.5 } }}>
-                <Stack spacing={1.5}>
-                  <Typography variant="subtitle1" fontWeight={900}>
-                    Receba avisos sem depender do WhatsApp
-                  </Typography>
-                  <Typography variant="body2" sx={{ opacity: 0.85 }}>
-                    Ative notificações no navegador para acompanhar atualizações importantes da sua conta.
-                  </Typography>
-                  <Button
-                    variant="outlined"
-                    color="success"
-                    onClick={() => {
-                      const el = document.getElementById("push-notification-settings");
-                      if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
-                    }}
-                    sx={{ alignSelf: "flex-start" }}
-                  >
-                    Configurar notificações
-                  </Button>
-                </Stack>
-              </Paper>
-
-              <Paper id="push-notification-settings" variant="outlined" sx={{ p: { xs: 2, md: 3 } }}>
-                <Typography variant="h6" fontWeight={900} sx={{ mb: 2 }}>
-                  Preferências de comunicação
-                </Typography>
-                <PushNotificationSettings />
-              </Paper>
-            </>
-          )}
-
           {/* Configurações do sorteio (apenas admin) */}
           {isAdminUser && (
             <Paper variant="outlined" sx={{ p: { xs: 2, md: 3 } }}>
@@ -989,6 +967,15 @@ export default function AccountPage() {
               </Stack>
             </Paper>
           </Box>
+
+          {canShowPushCard && (
+            <Paper id="push-notification-settings" variant="outlined" sx={{ p: { xs: 2, md: 3 } }}>
+              <Typography variant="h6" fontWeight={900} sx={{ mb: 2 }}>
+                Preferências de comunicação
+              </Typography>
+              <PushNotificationSettings />
+            </Paper>
+          )}
 
           {/* ====== Números cativos ====== */}
           <Paper variant="outlined" sx={{ p: { xs: 2, md: 3 } }}>

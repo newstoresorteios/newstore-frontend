@@ -257,21 +257,6 @@ export function sendSingleDeviceTestPush({ title = "New Store", body = "Teste co
   return pushApi("/api/push/test-single-device", { method: "POST", body: { title, body, url } });
 }
 
-export function sendAdminSingleDeviceTestPush({ title, body, url = "/me" }) {
-  return pushApi("/api/admin/notifications/push/test-single-device", {
-    method: "POST",
-    body: { title, body, url },
-  });
-}
-
-export function getAdminPushTestStatus() {
-  return getPushDebugConfig();
-}
-
-export function sendAdminTestPush({ title, body, url = "/me" } = {}) {
-  return sendAdminSingleDeviceTestPush({ title, body, url });
-}
-
 export function getPushPreferences() {
   return pushApi("/api/push/preferences");
 }
