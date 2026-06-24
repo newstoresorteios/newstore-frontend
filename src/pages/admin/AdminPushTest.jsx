@@ -27,6 +27,7 @@ import ArrowBackIosNewRoundedIcon from "@mui/icons-material/ArrowBackIosNewRound
 import RefreshRoundedIcon from "@mui/icons-material/RefreshRounded";
 import {
   getAdminPushTestStatus,
+  getPushAccess,
   parsePushError,
   sendAdminTestPush,
 } from "../../services/pushNotifications";
@@ -64,6 +65,7 @@ export default function AdminPushTest() {
   const [status, setStatus] = React.useState(null);
   const [loading, setLoading] = React.useState(true);
   const [sending, setSending] = React.useState(false);
+  const [canUsePushTest, setCanUsePushTest] = React.useState(false);
   const [loadError, setLoadError] = React.useState(null);
   const [sendError, setSendError] = React.useState(null);
   const [sendResult, setSendResult] = React.useState(null);
@@ -75,12 +77,27 @@ export default function AdminPushTest() {
   const loadStatus = React.useCallback(async () => {
     setLoading(true);
     setLoadError(null);
+    setCanUsePushTest(false);
     try {
-      const data = await getAdminPushTestStatus();
-      setStatus(data);
-    } catch (err) {
-      setLoadError(parsePushError(err));
+      const access = await getPushAccess();
+      const allowed =
+        access?.ok === true &&
+        access?.visible === true &&
+        access?.allowed === true &&
+        access?.mode === "single_device_test";
+      if (!allowed) throw new Error("push_hidden_for_user");
+      setCanUsePushTest(true);
+      try {
+        const data = await getAdminPushTestStatus();
+        setStatus(data);
+      } catch (err) {
+        setLoadError(parsePushError(err));
+        setStatus(null);
+      }
+    } catch (_err) {
+      setLoadError("Não autorizado");
       setStatus(null);
+      setCanUsePushTest(false);
     } finally {
       setLoading(false);
     }
@@ -121,6 +138,11 @@ export default function AdminPushTest() {
   const handleSend = async () => {
     setSendError(null);
     setSendResult(null);
+
+    if (!canUsePushTest) {
+      setSendError("Não autorizado");
+      return;
+    }
 
     if (!title.trim()) {
       setSendError("O título é obrigatório.");
@@ -167,7 +189,7 @@ export default function AdminPushTest() {
           <IconButton edge="start" color="inherit" onClick={() => nav("/admin")} aria-label="Voltar">
             <ArrowBackIosNewRoundedIcon />
           </IconButton>
-          <Typography sx={{ fontWeight: 900, ml: 1, flex: 1 }}>Teste de Push</Typography>
+          <Typography sx={{ fontWeight: 900, ml: 1, flex: 1 }}>{canUsePushTest ? "Teste de Push" : ""}</Typography>
           <IconButton color="inherit" onClick={loadStatus} disabled={loading} aria-label="Recarregar">
             <RefreshRoundedIcon />
           </IconButton>
@@ -175,7 +197,12 @@ export default function AdminPushTest() {
       </AppBar>
 
       <Container maxWidth="md" sx={{ py: 3 }}>
-        <Stack spacing={3}>
+        {loading && !canUsePushTest ? (
+          <Typography sx={{ opacity: 0.7 }}>Carregando...</Typography>
+        ) : !canUsePushTest ? (
+          <Alert severity="warning">Não autorizado</Alert>
+        ) : (
+          <Stack spacing={3}>
           <Box>
             <Stack direction="row" flexWrap="wrap" gap={1} alignItems="center" sx={{ mb: 1 }}>
               <Typography variant="h5" sx={{ fontWeight: 900 }}>
@@ -353,7 +380,8 @@ export default function AdminPushTest() {
               </Table>
             </TableContainer>
           </Paper>
-        </Stack>
+          </Stack>
+        )}
       </Container>
     </ThemeProvider>
   );

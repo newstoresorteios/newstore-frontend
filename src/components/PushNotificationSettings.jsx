@@ -96,7 +96,13 @@ export default function PushNotificationSettings() {
     };
   }, []);
 
-  if (!access?.visible) return null;
+  const canUsePushSettings =
+    access?.ok === true &&
+    access?.visible === true &&
+    access?.allowed === true &&
+    access?.mode === "single_device_test";
+
+  if (!canUsePushSettings) return null;
 
   const supported = isPushSupported();
   const testLabel = access.test_label || LABEL;
