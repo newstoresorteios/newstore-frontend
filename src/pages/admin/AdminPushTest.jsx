@@ -82,8 +82,7 @@ export default function AdminPushTest() {
       const access = await getPushAccess();
       const allowed =
         access?.ok === true &&
-        access?.visible === true &&
-        access?.allowed === true &&
+        (access?.visible === true || access?.allowed === true) &&
         access?.mode === "single_device_test";
       if (!allowed) throw new Error("push_hidden_for_user");
       setCanUsePushTest(true);

@@ -230,8 +230,7 @@ export default function AccountPage() {
         if (!alive) return;
         setCanShowPushCard(
           result?.ok === true &&
-          result?.visible === true &&
-          result?.allowed === true &&
+          (result?.visible === true || result?.allowed === true) &&
           result?.mode === "single_device_test"
         );
       })
