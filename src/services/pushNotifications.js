@@ -77,8 +77,12 @@ export async function getPushAccess() {
   try {
     return await pushApi("/api/push/access");
   } catch (error) {
-    if (error?.code === "push_hidden_for_user" || String(error?.message || "").startsWith("404")) {
-      return { ok: false, visible: false, error: "push_hidden_for_user" };
+    const message = String(error?.message || "");
+    const hidden =
+      error?.code === "push_hidden_for_user" ||
+      ["401", "403", "404"].some((status) => message.startsWith(status));
+    if (hidden) {
+      return { ok: false, visible: false, can_subscribe: false, error: "push_access_unavailable" };
     }
     throw error;
   }
