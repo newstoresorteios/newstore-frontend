@@ -234,8 +234,7 @@ export default function AccountPage() {
         const visible =
           result?.ok === true &&
           (result?.visible === true || result?.allowed === true) &&
-          result?.can_subscribe === true &&
-          result?.mode === "single_device_test";
+          result?.can_subscribe === true;
         if (process.env.NODE_ENV !== "production") {
           console.log("[push.account] access:visible", Boolean(visible));
         }
