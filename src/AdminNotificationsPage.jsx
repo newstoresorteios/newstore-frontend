@@ -48,9 +48,11 @@ import {
   exportNotificationDispatchesCsv,
   getBrevoWhatsAppEvents,
   getNotificationHealth,
+  getPushSummary,
   listInboundMessages,
   listNotificationDispatches,
   listNotificationTemplates,
+  listPushLogs,
   manualSendNotification,
   manualSendSelectedNotification,
   searchNotificationRecipients,
@@ -73,7 +75,7 @@ const theme = createTheme({
   typography: { fontFamily: ["Inter", "system-ui", "Segoe UI", "Roboto", "Arial"].join(",") },
 });
 
-const TAB_LABELS = ["Enviar mensagem", "Disparos", "Mensagens recebidas", "Templates", "Audiência futura"];
+const TAB_LABELS = ["Enviar mensagem", "Disparos", "Mensagens recebidas", "Templates", "Audiência futura", "Push"];
 
 const DEFAULT_ADVANCED_PARAMS = {
   customer_name: "",
@@ -127,6 +129,14 @@ function dispatchStatusLabel(row) {
   if (status === "rejected") return "Rejeitado";
   if (status === "skipped") return "Ignorado";
   return row?.status ?? "—";
+}
+
+function pushStatusLabel(status) {
+  const s = String(status || "").toLowerCase();
+  if (s === "sent") return "Enviado";
+  if (s === "failed") return "Falhou";
+  if (s === "pending") return "Pendente";
+  return status || "â€”";
 }
 
 function deliveryStatusLabel(value) {
@@ -354,6 +364,20 @@ export default function AdminNotificationsPage() {
   const [brevoEventsError, setBrevoEventsError] = React.useState("");
   const [expandedBrevoEvent, setExpandedBrevoEvent] = React.useState(null);
 
+  const [pushLogs, setPushLogs] = React.useState([]);
+  const [pushSummary, setPushSummary] = React.useState(null);
+  const [pushLoading, setPushLoading] = React.useState(false);
+  const [pushError, setPushError] = React.useState("");
+  const [pushFilters, setPushFilters] = React.useState({
+    q: "",
+    status: "",
+    event_key: "",
+    user_id: "",
+    page: 1,
+    pageSize: 20,
+  });
+  const [pushTotal, setPushTotal] = React.useState(0);
+
   const buildDispatchFilters = React.useCallback(() => {
     const params = { limit: 50 };
     if (dispatchStatus) params.status = dispatchStatus;
@@ -419,6 +443,28 @@ export default function AdminNotificationsPage() {
     }
   }, []);
 
+  const loadPushData = React.useCallback(async (overrides = {}) => {
+    setPushLoading(true);
+    setPushError("");
+    const nextFilters = { ...pushFilters, ...overrides };
+    try {
+      const [logsResult, summaryResult] = await Promise.all([
+        listPushLogs(nextFilters),
+        getPushSummary(),
+      ]);
+      setPushFilters(nextFilters);
+      setPushLogs(Array.isArray(logsResult?.items) ? logsResult.items : []);
+      setPushTotal(Number(logsResult?.total || 0));
+      setPushSummary(summaryResult || null);
+    } catch (err) {
+      setPushLogs([]);
+      setPushTotal(0);
+      setPushError(parseNotificationsError(err));
+    } finally {
+      setPushLoading(false);
+    }
+  }, [pushFilters]);
+
   const loadAll = React.useCallback(async () => {
     setLoading(true);
     setError("");
@@ -447,6 +493,14 @@ export default function AdminNotificationsPage() {
   React.useEffect(() => {
     loadAll();
   }, [loadAll]);
+
+  React.useEffect(() => {
+    if (tab === 5 && !pushSummary && !pushLoading) {
+      loadPushData();
+    }
+    // Carrega somente ao abrir a aba Push pela primeira vez.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab]);
 
   const testMode = Boolean(health?.testMode);
   const allowReal = Boolean(health?.allowRealRecipients);
@@ -1879,6 +1933,179 @@ export default function AdminNotificationsPage() {
                 )}
               </Paper>
             )}
+          </Paper>
+        )}
+
+        {tab === 5 && (
+          <Paper variant="outlined" sx={{ p: { xs: 2, md: 3 }, borderRadius: 4 }}>
+            <Stack direction={{ xs: "column", md: "row" }} justifyContent="space-between" spacing={2} sx={{ mb: 2 }}>
+              <Box>
+                <Typography variant="subtitle1" sx={{ fontWeight: 800 }}>
+                  Histórico de Push
+                </Typography>
+                <Typography variant="body2" sx={{ opacity: 0.72 }}>
+                  Visualização somente leitura dos Push registrados pelo backend/engine.
+                </Typography>
+              </Box>
+              <Button
+                variant="outlined"
+                startIcon={<RefreshRoundedIcon />}
+                disabled={pushLoading}
+                onClick={() => loadPushData()}
+              >
+                {pushLoading ? "Atualizando…" : "Atualizar"}
+              </Button>
+            </Stack>
+
+            <Stack direction="row" flexWrap="wrap" gap={2} sx={{ mb: 2 }}>
+              <StatusCard label="Total" value={pushSummary?.total_dispatches ?? "—"} />
+              <StatusCard label="Enviados" value={pushSummary?.sent ?? "—"} ok />
+              <StatusCard label="Falhas" value={pushSummary?.failed ?? "—"} ok={Number(pushSummary?.failed || 0) === 0} />
+              <StatusCard label="Pendentes" value={pushSummary?.pending ?? "—"} />
+              <StatusCard label="Dispositivos ativos" value={pushSummary?.active_devices ?? "—"} />
+              <StatusCard label="Usuários com Push ativo" value={pushSummary?.active_subscribers ?? "—"} />
+            </Stack>
+
+            <Stack direction={{ xs: "column", md: "row" }} spacing={2} sx={{ mb: 2 }}>
+              <TextField
+                size="small"
+                label="Buscar"
+                value={pushFilters.q}
+                onChange={(e) => setPushFilters((f) => ({ ...f, q: e.target.value }))}
+                placeholder="Nome, e-mail, ID, evento ou título"
+                sx={{ minWidth: 260 }}
+              />
+              <FormControl size="small" sx={{ minWidth: 140 }}>
+                <InputLabel>Status</InputLabel>
+                <Select
+                  label="Status"
+                  value={pushFilters.status}
+                  onChange={(e) => setPushFilters((f) => ({ ...f, status: e.target.value }))}
+                >
+                  <MenuItem value="">Todos</MenuItem>
+                  <MenuItem value="sent">sent</MenuItem>
+                  <MenuItem value="failed">failed</MenuItem>
+                  <MenuItem value="pending">pending</MenuItem>
+                </Select>
+              </FormControl>
+              <TextField
+                size="small"
+                label="event_key"
+                value={pushFilters.event_key}
+                onChange={(e) => setPushFilters((f) => ({ ...f, event_key: e.target.value }))}
+              />
+              <TextField
+                size="small"
+                label="user_id"
+                value={pushFilters.user_id}
+                onChange={(e) => setPushFilters((f) => ({ ...f, user_id: e.target.value }))}
+                sx={{ width: 120 }}
+              />
+              <Button
+                variant="contained"
+                disabled={pushLoading}
+                onClick={() => loadPushData({ page: 1 })}
+              >
+                Filtrar
+              </Button>
+            </Stack>
+
+            {pushError && (
+              <Alert severity="error" sx={{ mb: 2 }}>
+                {pushError}
+              </Alert>
+            )}
+            {!pushError && pushLogs.length === 0 && !pushLoading && (
+              <Alert severity="info" sx={{ mb: 2 }}>
+                Nenhum registro de Push encontrado para os filtros atuais.
+              </Alert>
+            )}
+            <Typography variant="body2" sx={{ mb: 1, opacity: 0.75 }}>
+              Total: {pushTotal} | Página {pushFilters.page} | Exibindo: {pushLogs.length}
+            </Typography>
+
+            <TableContainer>
+              <Table size="small">
+                <TableHead>
+                  <TableRow>
+                    <TableCell>Data</TableCell>
+                    <TableCell>Usuário</TableCell>
+                    <TableCell>Email</TableCell>
+                    <TableCell>Evento</TableCell>
+                    <TableCell>Título</TableCell>
+                    <TableCell>Mensagem</TableCell>
+                    <TableCell>Status</TableCell>
+                    <TableCell>Dispositivo</TableCell>
+                    <TableCell>Erro</TableCell>
+                    <TableCell>Enviado em</TableCell>
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {pushLogs.map((row, idx) => (
+                    <TableRow key={row.id ?? idx} hover>
+                      <TableCell>{fmtDate(row.created_at)}</TableCell>
+                      <TableCell>
+                        {row.user_id ?? "—"}
+                        {row.user_name ? ` · ${row.user_name}` : ""}
+                      </TableCell>
+                      <TableCell>{row.user_email ?? "—"}</TableCell>
+                      <TableCell>
+                        <Typography variant="body2" sx={{ fontFamily: "ui-monospace, Menlo, Consolas, monospace" }}>
+                          {row.event_key ?? "—"}
+                        </Typography>
+                        {row.category && (
+                          <Typography variant="caption" sx={{ opacity: 0.7 }}>
+                            {row.category}
+                          </Typography>
+                        )}
+                      </TableCell>
+                      <TableCell sx={{ maxWidth: 180 }}>{row.title ?? "—"}</TableCell>
+                      <TableCell sx={{ maxWidth: 260, whiteSpace: "normal" }}>{row.body ?? "—"}</TableCell>
+                      <TableCell>
+                        <Chip size="small" label={pushStatusLabel(row.status)} color={statusChipColor(row.status)} />
+                      </TableCell>
+                      <TableCell sx={{ maxWidth: 180 }}>
+                        <Typography variant="body2">{row.device_label || row.subscription_id || "—"}</Typography>
+                        <Typography variant="caption" sx={{ opacity: 0.7 }}>
+                          ativo: {boolLabel(row.subscription_active)}
+                        </Typography>
+                      </TableCell>
+                      <TableCell sx={{ maxWidth: 240, overflow: "hidden", textOverflow: "ellipsis" }}>
+                        {row.error_message ?? "—"}
+                      </TableCell>
+                      <TableCell>{fmtDate(row.sent_at)}</TableCell>
+                    </TableRow>
+                  ))}
+                  {pushLogs.length === 0 && (
+                    <TableRow>
+                      <TableCell colSpan={10} align="center" sx={{ opacity: 0.6, py: 3 }}>
+                        {pushLoading ? "Carregando histórico de Push…" : "Sem registros."}
+                      </TableCell>
+                    </TableRow>
+                  )}
+                </TableBody>
+              </Table>
+            </TableContainer>
+
+            <Stack direction="row" spacing={1} alignItems="center" justifyContent="flex-end" sx={{ mt: 2 }}>
+              <Button
+                variant="outlined"
+                disabled={pushLoading || pushFilters.page <= 1}
+                onClick={() => loadPushData({ page: Math.max(1, Number(pushFilters.page || 1) - 1) })}
+              >
+                Anterior
+              </Button>
+              <Button
+                variant="outlined"
+                disabled={
+                  pushLoading ||
+                  Number(pushFilters.page || 1) * Number(pushFilters.pageSize || 20) >= Number(pushTotal || 0)
+                }
+                onClick={() => loadPushData({ page: Number(pushFilters.page || 1) + 1 })}
+              >
+                Próxima
+              </Button>
+            </Stack>
           </Paper>
         )}
 
