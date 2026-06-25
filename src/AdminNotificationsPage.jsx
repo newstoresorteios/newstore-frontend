@@ -120,6 +120,7 @@ function statusChipColor(status) {
   if (s === "failed" || s === "rejected") return "error";
   if (s === "skipped") return "warning";
   if (s === "dry_run") return "info";
+  if (s === "deduped") return "default";
   if (s === "pending") return "info";
   return "default";
 }
@@ -140,6 +141,7 @@ function pushStatusLabel(status) {
   const s = String(status || "").toLowerCase();
   if (s === "dry_run") return "Dry-run";
   if (s === "skipped") return "Ignorado";
+  if (s === "deduped") return "Deduplicado";
   if (s === "sent") return "Enviado";
   if (s === "failed") return "Falhou";
   if (s === "pending") return "Pendente";
@@ -2124,6 +2126,7 @@ export default function AdminNotificationsPage() {
                   <MenuItem value="pending">pending</MenuItem>
                   <MenuItem value="dry_run">dry_run</MenuItem>
                   <MenuItem value="skipped">skipped</MenuItem>
+                  <MenuItem value="deduped">deduped</MenuItem>
                 </Select>
               </FormControl>
               <TextField
@@ -2170,6 +2173,7 @@ export default function AdminNotificationsPage() {
                     <TableCell>Usuário</TableCell>
                     <TableCell>Email</TableCell>
                     <TableCell>Evento</TableCell>
+                    <TableCell>Referência</TableCell>
                     <TableCell>Título</TableCell>
                     <TableCell>Mensagem</TableCell>
                     <TableCell>Status</TableCell>
@@ -2197,6 +2201,16 @@ export default function AdminNotificationsPage() {
                           </Typography>
                         )}
                       </TableCell>
+                      <TableCell>
+                        <Typography variant="body2" sx={{ fontFamily: "ui-monospace, Menlo, Consolas, monospace" }}>
+                          {row.reference_key || "—"}
+                        </Typography>
+                        {row.reference_type && (
+                          <Typography variant="caption" sx={{ opacity: 0.7 }}>
+                            {row.reference_type}
+                          </Typography>
+                        )}
+                      </TableCell>
                       <TableCell sx={{ maxWidth: 180 }}>{row.title ?? "—"}</TableCell>
                       <TableCell sx={{ maxWidth: 260, whiteSpace: "normal" }}>{row.body ?? "—"}</TableCell>
                       <TableCell>
@@ -2216,7 +2230,7 @@ export default function AdminNotificationsPage() {
                   ))}
                   {pushLogs.length === 0 && (
                     <TableRow>
-                      <TableCell colSpan={10} align="center" sx={{ opacity: 0.6, py: 3 }}>
+                      <TableCell colSpan={11} align="center" sx={{ opacity: 0.6, py: 3 }}>
                         {pushLoading ? "Carregando histórico de Push…" : "Sem registros."}
                       </TableCell>
                     </TableRow>
