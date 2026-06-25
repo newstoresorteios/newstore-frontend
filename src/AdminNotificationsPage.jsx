@@ -44,6 +44,7 @@ import RefreshRoundedIcon from "@mui/icons-material/RefreshRounded";
 import ExpandMoreRoundedIcon from "@mui/icons-material/ExpandMoreRounded";
 import ExpandLessRoundedIcon from "@mui/icons-material/ExpandLessRounded";
 import {
+  createPushRule,
   estimateAudience,
   exportNotificationDispatchesCsv,
   getBrevoWhatsAppEvents,
@@ -53,11 +54,14 @@ import {
   listNotificationDispatches,
   listNotificationTemplates,
   listPushLogs,
+  listPushRules,
   manualSendNotification,
   manualSendSelectedNotification,
   searchNotificationRecipients,
+  seedDefaultPushRules,
   syncBrevoWhatsAppTemplates,
   syncDispatchDeliveryStatus,
+  updatePushRule,
   updateNotificationTemplate,
 } from "./services/adminNotifications";
 
@@ -368,6 +372,7 @@ export default function AdminNotificationsPage() {
   const [pushSummary, setPushSummary] = React.useState(null);
   const [pushLoading, setPushLoading] = React.useState(false);
   const [pushError, setPushError] = React.useState("");
+  const [pushPanel, setPushPanel] = React.useState("history");
   const [pushFilters, setPushFilters] = React.useState({
     q: "",
     status: "",
@@ -377,6 +382,24 @@ export default function AdminNotificationsPage() {
     pageSize: 20,
   });
   const [pushTotal, setPushTotal] = React.useState(0);
+  const [pushRules, setPushRules] = React.useState([]);
+  const [pushRuleEvents, setPushRuleEvents] = React.useState([]);
+  const [pushRulesLoading, setPushRulesLoading] = React.useState(false);
+  const [pushRulesError, setPushRulesError] = React.useState("");
+  const [pushRulesMessage, setPushRulesMessage] = React.useState("");
+  const [editingPushRule, setEditingPushRule] = React.useState(null);
+  const [pushRuleForm, setPushRuleForm] = React.useState({
+    event_key: "",
+    name: "",
+    description: "",
+    title_template: "",
+    body_template: "",
+    url_template: "/",
+    category: "operational",
+    is_active: false,
+    threshold_value: "",
+    cooldown_minutes: 1440,
+  });
 
   const buildDispatchFilters = React.useCallback(() => {
     const params = { limit: 50 };
@@ -465,6 +488,21 @@ export default function AdminNotificationsPage() {
     }
   }, [pushFilters]);
 
+  const loadPushRules = React.useCallback(async () => {
+    setPushRulesLoading(true);
+    setPushRulesError("");
+    try {
+      const data = await listPushRules();
+      setPushRules(Array.isArray(data?.items) ? data.items : []);
+      setPushRuleEvents(Array.isArray(data?.allowed_events) ? data.allowed_events : []);
+    } catch (err) {
+      setPushRules([]);
+      setPushRulesError(parseNotificationsError(err));
+    } finally {
+      setPushRulesLoading(false);
+    }
+  }, []);
+
   const loadAll = React.useCallback(async () => {
     setLoading(true);
     setError("");
@@ -497,6 +535,9 @@ export default function AdminNotificationsPage() {
   React.useEffect(() => {
     if (tab === 5 && !pushSummary && !pushLoading) {
       loadPushData();
+    }
+    if (tab === 5 && !pushRules.length && !pushRulesLoading) {
+      loadPushRules();
     }
     // Carrega somente ao abrir a aba Push pela primeira vez.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -861,6 +902,85 @@ export default function AdminNotificationsPage() {
       setBrevoEventsLoading(false);
     }
   };
+
+  function resetPushRuleForm() {
+    setEditingPushRule(null);
+    setPushRuleForm({
+      event_key: "",
+      name: "",
+      description: "",
+      title_template: "",
+      body_template: "",
+      url_template: "/",
+      category: "operational",
+      is_active: false,
+      threshold_value: "",
+      cooldown_minutes: 1440,
+    });
+  }
+
+  function openPushRuleEditor(row) {
+    setEditingPushRule(row || null);
+    setPushRulesMessage("");
+    setPushRulesError("");
+    setPushRuleForm({
+      event_key: row?.event_key || "",
+      name: row?.name || "",
+      description: row?.description || "",
+      title_template: row?.title_template || "",
+      body_template: row?.body_template || "",
+      url_template: row?.url_template || "/",
+      category: row?.category || "operational",
+      is_active: row?.is_active === true,
+      threshold_value: row?.threshold_value ?? "",
+      cooldown_minutes: row?.cooldown_minutes ?? 1440,
+    });
+  }
+
+  function updatePushRuleField(field, value) {
+    setPushRuleForm((form) => ({ ...form, [field]: value }));
+  }
+
+  async function onSavePushRule() {
+    setPushRulesLoading(true);
+    setPushRulesError("");
+    setPushRulesMessage("");
+    const payload = {
+      ...pushRuleForm,
+      threshold_value: pushRuleForm.threshold_value === "" ? null : Number(pushRuleForm.threshold_value),
+      cooldown_minutes: pushRuleForm.cooldown_minutes === "" ? null : Number(pushRuleForm.cooldown_minutes),
+    };
+    try {
+      if (editingPushRule?.id) {
+        await updatePushRule(editingPushRule.id, payload);
+        setPushRulesMessage("Regra de Push atualizada.");
+      } else {
+        await createPushRule(payload);
+        setPushRulesMessage("Regra de Push criada.");
+      }
+      resetPushRuleForm();
+      await loadPushRules();
+    } catch (err) {
+      setPushRulesError(parseNotificationsError(err));
+    } finally {
+      setPushRulesLoading(false);
+    }
+  }
+
+  async function onSeedPushRules() {
+    setPushRulesLoading(true);
+    setPushRulesError("");
+    setPushRulesMessage("");
+    try {
+      const res = await seedDefaultPushRules();
+      setPushRulesMessage(`Regras padrão criadas: ${res?.created_count ?? 0}.`);
+      await loadPushRules();
+    } catch (err) {
+      setPushRulesError(parseNotificationsError(err));
+    } finally {
+      setPushRulesLoading(false);
+    }
+  }
 
   const sendSummary = sendResult?.summary ?? sendResult;
   const sendCampaign = sendResult?.campaign ?? sendSummary?.campaign;
@@ -1938,6 +2058,19 @@ export default function AdminNotificationsPage() {
 
         {tab === 5 && (
           <Paper variant="outlined" sx={{ p: { xs: 2, md: 3 }, borderRadius: 4 }}>
+            <Tabs
+              value={pushPanel}
+              onChange={(_, value) => setPushPanel(value)}
+              sx={{ mb: 2 }}
+              variant="scrollable"
+              scrollButtons="auto"
+            >
+              <Tab value="history" label="Histórico de Push" />
+              <Tab value="rules" label="Regras automáticas" />
+            </Tabs>
+
+            {pushPanel === "history" && (
+              <>
             <Stack direction={{ xs: "column", md: "row" }} justifyContent="space-between" spacing={2} sx={{ mb: 2 }}>
               <Box>
                 <Typography variant="subtitle1" sx={{ fontWeight: 800 }}>
@@ -2106,6 +2239,149 @@ export default function AdminNotificationsPage() {
                 Próxima
               </Button>
             </Stack>
+              </>
+            )}
+
+            {pushPanel === "rules" && (
+              <Stack spacing={2}>
+                <Stack direction={{ xs: "column", md: "row" }} justifyContent="space-between" spacing={2}>
+                  <Box>
+                    <Typography variant="subtitle1" sx={{ fontWeight: 800 }}>
+                      Regras automáticas de Push
+                    </Typography>
+                    <Typography variant="body2" sx={{ opacity: 0.72 }}>
+                      Configure mensagens que o backend/engine poderá usar futuramente. Salvar não dispara Push.
+                    </Typography>
+                  </Box>
+                  <Stack direction="row" spacing={1} flexWrap="wrap">
+                    <Button variant="outlined" disabled={pushRulesLoading} onClick={() => loadPushRules()}>
+                      {pushRulesLoading ? "Atualizando…" : "Atualizar"}
+                    </Button>
+                    <Button variant="outlined" disabled={pushRulesLoading} onClick={onSeedPushRules}>
+                      Criar regras padrão
+                    </Button>
+                    <Button variant="contained" disabled={pushRulesLoading} onClick={() => openPushRuleEditor(null)}>
+                      Adicionar regra
+                    </Button>
+                  </Stack>
+                </Stack>
+
+                {pushRulesError && <Alert severity="error">{pushRulesError}</Alert>}
+                {pushRulesMessage && <Alert severity="success">{pushRulesMessage}</Alert>}
+
+                <Paper variant="outlined" sx={{ p: 2, borderRadius: 3 }}>
+                  <Typography variant="subtitle2" sx={{ fontWeight: 800, mb: 2 }}>
+                    {editingPushRule?.id ? "Editar regra" : "Nova regra"}
+                  </Typography>
+                  <Grid container spacing={2}>
+                    <Grid item xs={12} md={6}>
+                      <FormControl fullWidth size="small" disabled={Boolean(editingPushRule?.id)}>
+                        <InputLabel>Evento</InputLabel>
+                        <Select
+                          label="Evento"
+                          value={pushRuleForm.event_key}
+                          onChange={(e) => updatePushRuleField("event_key", e.target.value)}
+                        >
+                          <MenuItem value="">
+                            <em>Selecione</em>
+                          </MenuItem>
+                          {pushRuleEvents.map((eventKey) => (
+                            <MenuItem key={eventKey} value={eventKey}>
+                              {eventKey}
+                            </MenuItem>
+                          ))}
+                        </Select>
+                      </FormControl>
+                    </Grid>
+                    <Grid item xs={12} md={6}>
+                      <TextField fullWidth size="small" label="Nome" value={pushRuleForm.name} onChange={(e) => updatePushRuleField("name", e.target.value)} />
+                    </Grid>
+                    <Grid item xs={12}>
+                      <TextField fullWidth size="small" label="Descrição" value={pushRuleForm.description} onChange={(e) => updatePushRuleField("description", e.target.value)} />
+                    </Grid>
+                    <Grid item xs={12} md={6}>
+                      <TextField fullWidth size="small" label="Título" value={pushRuleForm.title_template} onChange={(e) => updatePushRuleField("title_template", e.target.value)} helperText={`${String(pushRuleForm.title_template || "").length}/100`} />
+                    </Grid>
+                    <Grid item xs={12} md={6}>
+                      <TextField fullWidth size="small" label="URL" value={pushRuleForm.url_template} onChange={(e) => updatePushRuleField("url_template", e.target.value)} helperText="Use caminhos internos começando com /" />
+                    </Grid>
+                    <Grid item xs={12}>
+                      <TextField fullWidth multiline minRows={3} label="Mensagem" value={pushRuleForm.body_template} onChange={(e) => updatePushRuleField("body_template", e.target.value)} helperText={`${String(pushRuleForm.body_template || "").length}/260`} />
+                    </Grid>
+                    <Grid item xs={12} md={4}>
+                      <FormControl fullWidth size="small">
+                        <InputLabel>Categoria</InputLabel>
+                        <Select label="Categoria" value={pushRuleForm.category} onChange={(e) => updatePushRuleField("category", e.target.value)}>
+                          <MenuItem value="operational">operational</MenuItem>
+                        </Select>
+                      </FormControl>
+                    </Grid>
+                    <Grid item xs={12} md={4}>
+                      <TextField fullWidth size="small" type="number" label="Threshold" value={pushRuleForm.threshold_value} onChange={(e) => updatePushRuleField("threshold_value", e.target.value)} />
+                    </Grid>
+                    <Grid item xs={12} md={4}>
+                      <TextField fullWidth size="small" type="number" label="Cooldown em minutos" value={pushRuleForm.cooldown_minutes} onChange={(e) => updatePushRuleField("cooldown_minutes", e.target.value)} />
+                    </Grid>
+                    <Grid item xs={12}>
+                      <FormControlLabel
+                        control={<Checkbox checked={pushRuleForm.is_active} onChange={(e) => updatePushRuleField("is_active", e.target.checked)} />}
+                        label="Regra ativa"
+                      />
+                    </Grid>
+                  </Grid>
+                  <Stack direction="row" spacing={1} sx={{ mt: 2 }}>
+                    <Button variant="contained" disabled={pushRulesLoading} onClick={onSavePushRule}>
+                      Salvar regra
+                    </Button>
+                    <Button variant="text" disabled={pushRulesLoading} onClick={resetPushRuleForm}>
+                      Limpar formulário
+                    </Button>
+                  </Stack>
+                </Paper>
+
+                <TableContainer>
+                  <Table size="small">
+                    <TableHead>
+                      <TableRow>
+                        <TableCell>Evento</TableCell>
+                        <TableCell>Nome</TableCell>
+                        <TableCell>Título</TableCell>
+                        <TableCell>Mensagem</TableCell>
+                        <TableCell>URL</TableCell>
+                        <TableCell>Status</TableCell>
+                        <TableCell>Threshold</TableCell>
+                        <TableCell>Cooldown</TableCell>
+                        <TableCell>Atualizada em</TableCell>
+                        <TableCell align="right">Ações</TableCell>
+                      </TableRow>
+                    </TableHead>
+                    <TableBody>
+                      {pushRules.map((row) => (
+                        <TableRow key={row.id} hover>
+                          <TableCell sx={{ fontFamily: "ui-monospace, Menlo, Consolas, monospace" }}>{row.event_key}</TableCell>
+                          <TableCell>{row.name}</TableCell>
+                          <TableCell sx={{ maxWidth: 180 }}>{row.title_template}</TableCell>
+                          <TableCell sx={{ maxWidth: 260, whiteSpace: "normal" }}>{row.body_template}</TableCell>
+                          <TableCell>{row.url_template || "—"}</TableCell>
+                          <TableCell><Chip size="small" label={row.is_active ? "Ativa" : "Inativa"} color={row.is_active ? "success" : "default"} /></TableCell>
+                          <TableCell>{row.threshold_value ?? "—"}</TableCell>
+                          <TableCell>{row.cooldown_minutes ?? "—"}</TableCell>
+                          <TableCell>{fmtDate(row.updated_at)}</TableCell>
+                          <TableCell align="right"><Button size="small" variant="outlined" onClick={() => openPushRuleEditor(row)}>Editar</Button></TableCell>
+                        </TableRow>
+                      ))}
+                      {pushRules.length === 0 && (
+                        <TableRow>
+                          <TableCell colSpan={10} align="center" sx={{ opacity: 0.6, py: 3 }}>
+                            Nenhuma regra cadastrada. Use “Criar regras padrão” ou adicione uma regra.
+                          </TableCell>
+                        </TableRow>
+                      )}
+                    </TableBody>
+                  </Table>
+                </TableContainer>
+              </Stack>
+            )}
           </Paper>
         )}
 

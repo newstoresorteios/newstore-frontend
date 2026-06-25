@@ -85,6 +85,22 @@ export async function getPushSummary() {
   return apiGet("/api/admin/push/summary");
 }
 
+export async function listPushRules() {
+  return apiGet("/api/admin/push/rules");
+}
+
+export async function createPushRule(payload) {
+  return postJSON("/admin/push/rules", payload);
+}
+
+export async function updatePushRule(id, payload) {
+  return patchJSON(`/admin/push/rules/${encodeURIComponent(String(id))}`, payload);
+}
+
+export async function seedDefaultPushRules() {
+  return postJSON("/admin/push/rules/seed-defaults", {});
+}
+
 export async function listInboundMessages(params = {}) {
   const data = await apiGet("/api/admin/notifications/inbound", params);
   const list = extractList(data, ["rows", "inbound", "messages", "items"]);
