@@ -101,8 +101,7 @@ export default function PushNotificationSettings() {
   const canUsePushSettings =
     access?.ok === true &&
     (access?.visible === true || access?.allowed === true) &&
-    access?.can_subscribe === true &&
-    access?.mode === "single_device_test";
+    access?.can_subscribe === true;
 
   if (!canUsePushSettings) return null;
 

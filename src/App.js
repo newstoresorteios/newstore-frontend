@@ -24,6 +24,7 @@ import AdminAnalytics from './AdminAnalytics';
 import AdminNotificationsPage from "./AdminNotificationsPage";
 import AdminHistoricoSaldo from "./AdminHistoricoSaldo";
 import AutorizacaoCativoPage from "./AutorizacaoCativoPage";
+import PushPermissionPrompt from "./components/PushPermissionPrompt";
 
 export default function App() {
   const [selecionados, setSelecionados] = React.useState([]);
@@ -150,6 +151,7 @@ export default function App() {
               }
             />
           </Routes>
+          <PushPermissionPrompt />
         </BrowserRouter>
       </SelectionContext.Provider>
     </AuthProvider>
