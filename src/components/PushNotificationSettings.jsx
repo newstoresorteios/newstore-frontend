@@ -84,7 +84,7 @@ export default function PushNotificationSettings() {
           setOperational(preferences.push_operational_opt_in !== false);
           setMarketing(preferences.push_marketing_opt_in === true);
         } catch (_) {}
-        if (process.env.NODE_ENV !== "production") {
+        if (result?.can_send_test === true && process.env.NODE_ENV !== "production") {
           try {
             const debug = await getPushDebugConfig();
             if (!mounted) return;
@@ -101,6 +101,7 @@ export default function PushNotificationSettings() {
   const canUsePushSettings =
     access?.ok === true &&
     (access?.visible === true || access?.allowed === true) &&
+    access?.can_subscribe === true &&
     access?.mode === "single_device_test";
 
   if (!canUsePushSettings) return null;
@@ -108,7 +109,9 @@ export default function PushNotificationSettings() {
   const supported = isPushSupported();
   const testLabel = access.test_label || LABEL;
   const requiresSetupCode = access?.requires_setup_code === true;
+  const canSendTest = access?.can_send_test === true;
   const showDebug =
+    canSendTest &&
     process.env.NODE_ENV !== "production" &&
     typeof window !== "undefined" &&
     ["localhost", "127.0.0.1"].includes(window.location.hostname);
@@ -248,11 +251,17 @@ export default function PushNotificationSettings() {
         <Stack spacing={2}>
           <Box>
             <Typography variant="overline" sx={{ opacity: 0.72 }}>Preferências de comunicação</Typography>
-            <Typography variant="h6" fontWeight={900}>Teste de notificações Push</Typography>
-            <Typography sx={{ opacity: 0.8 }}>Este recurso está em teste restrito nesta conta.</Typography>
-            <Typography sx={{ mt: 1 }}>Número de referência: <strong>{testLabel}</strong></Typography>
+            <Typography variant="h6" fontWeight={900}>Notificações Push</Typography>
+            <Typography sx={{ opacity: 0.8 }}>
+              Ative notificações neste navegador/dispositivo para receber avisos da New Store.
+            </Typography>
+            {canSendTest && (
+              <Typography sx={{ mt: 1 }}>Número de referência: <strong>{testLabel}</strong></Typography>
+            )}
             <Typography variant="body2" sx={{ opacity: 0.72 }}>
-              Este número é apenas uma referência. Push não envia para telefone; envia para este navegador/dispositivo após autorização. Nenhuma mensagem será enviada por WhatsApp ou Brevo.
+              {canSendTest
+                ? "Este número é apenas uma referência. Push não envia para telefone; envia para este navegador/dispositivo após autorização. Nenhuma mensagem será enviada por WhatsApp ou Brevo."
+                : "Push não envia para telefone; envia para este navegador/dispositivo após autorização. Nenhuma mensagem será enviada por WhatsApp ou Brevo."}
             </Typography>
           </Box>
 
@@ -269,7 +278,7 @@ export default function PushNotificationSettings() {
             </Alert>
           )}
 
-          {subscriptionId && (
+          {canSendTest && subscriptionId && (
             <TextField
               label="subscription_id"
               value={subscriptionId}
@@ -321,12 +330,16 @@ export default function PushNotificationSettings() {
             <Button variant="contained" color="success" onClick={activate} disabled={busy || !supported || permission === "denied" || (requiresSetupCode && !setupCode)}>
               Permitir notificações
             </Button>
-            <Button variant="outlined" onClick={copySubscriptionId} disabled={busy || !subscriptionId}>
-              Copiar subscription_id
-            </Button>
-            <Button variant="outlined" onClick={sendTest} disabled={busy || !active}>
-              Enviar teste controlado
-            </Button>
+            {canSendTest && (
+              <Button variant="outlined" onClick={copySubscriptionId} disabled={busy || !subscriptionId}>
+                Copiar subscription_id
+              </Button>
+            )}
+            {canSendTest && (
+              <Button variant="outlined" onClick={sendTest} disabled={busy || !active}>
+                Enviar teste controlado
+              </Button>
+            )}
             <Button variant="outlined" color="warning" onClick={deactivate} disabled={busy || !active}>
               Desativar neste dispositivo
             </Button>
