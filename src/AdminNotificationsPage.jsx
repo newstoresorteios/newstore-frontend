@@ -119,6 +119,7 @@ function statusChipColor(status) {
   if (s === "read") return "info";
   if (s === "failed" || s === "rejected") return "error";
   if (s === "skipped") return "warning";
+  if (s === "dry_run") return "info";
   if (s === "pending") return "info";
   return "default";
 }
@@ -137,6 +138,8 @@ function dispatchStatusLabel(row) {
 
 function pushStatusLabel(status) {
   const s = String(status || "").toLowerCase();
+  if (s === "dry_run") return "Dry-run";
+  if (s === "skipped") return "Ignorado";
   if (s === "sent") return "Enviado";
   if (s === "failed") return "Falhou";
   if (s === "pending") return "Pendente";
@@ -2119,6 +2122,8 @@ export default function AdminNotificationsPage() {
                   <MenuItem value="sent">sent</MenuItem>
                   <MenuItem value="failed">failed</MenuItem>
                   <MenuItem value="pending">pending</MenuItem>
+                  <MenuItem value="dry_run">dry_run</MenuItem>
+                  <MenuItem value="skipped">skipped</MenuItem>
                 </Select>
               </FormControl>
               <TextField
