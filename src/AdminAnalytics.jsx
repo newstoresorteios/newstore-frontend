@@ -4,7 +4,7 @@ import { useNavigate } from "react-router-dom";
 import {
   Alert, AppBar, Box, Button, Chip, CircularProgress, Container, CssBaseline, IconButton,
   LinearProgress, Paper, Stack,
-  Tab, Tabs, ThemeProvider, Toolbar, Typography, createTheme, Table, TableBody, TableCell,
+  Tab, Tabs, ThemeProvider, Toolbar, Typography, Table, TableBody, TableCell,
   TableContainer, TableHead, TableRow, TableSortLabel
 } from "@mui/material";
 import ArrowBackIosNewRoundedIcon from "@mui/icons-material/ArrowBackIosNewRounded";
@@ -15,13 +15,10 @@ import {
   XAxis, YAxis, CartesianGrid, Tooltip as RTooltip, Legend
 } from "recharts";
 import { getJSON } from "./lib/api";
+import { adminPanelPaperSx, adminTabsPaperSx, createNewStoreAdminTheme } from "./adminTheme";
 
 /* ============================== TEMA ============================== */
-const theme = createTheme({
-  palette: { mode: "dark", primary: { main: "#2E7D32" }, background: { default: "#0E0E0E", paper: "#121212" } },
-  shape: { borderRadius: 16 },
-  typography: { fontFamily: ["Inter", "system-ui", "Segoe UI", "Roboto", "Arial"].join(",") }
-});
+const theme = createNewStoreAdminTheme();
 
 const BRL = (c) => (Number(c || 0) / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 const pct = (n) => `${(Number(n || 0) * 100).toFixed(0)}%`;
@@ -112,7 +109,7 @@ function KpiCard({ label, value, hint, loading = false, error = false, accent = 
 
 function Section({ title, subtitle, right, children, sx }) {
   return (
-    <Paper variant="outlined" sx={{ p: { xs: 2, md: 3 }, borderRadius: 4, minWidth: 0, ...sx }}>
+    <Paper variant="outlined" sx={{ p: { xs: 2, md: 3 }, borderRadius: 4, minWidth: 0, ...adminPanelPaperSx, ...sx }}>
       <Stack
         direction={{ xs: "column", sm: "row" }}
         alignItems={{ xs: "flex-start", sm: "center" }}
@@ -621,7 +618,7 @@ export default function AdminAnalytics() {
       </AppBar>
 
       <Container maxWidth="xl" sx={{ py: { xs: 2, md: 4 } }}>
-        <Paper sx={{ mb: 2, borderRadius: 4 }} variant="outlined">
+        <Paper sx={adminTabsPaperSx} variant="outlined">
           <Tabs
             value={tab}
             onChange={(_, v) => setTab(v)}

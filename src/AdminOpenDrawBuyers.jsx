@@ -3,7 +3,7 @@ import * as React from "react";
 import { useNavigate, Link as RouterLink } from "react-router-dom";
 import {
   Alert, AppBar, Box, Button, Chip, Container, CssBaseline, Divider, IconButton,
-  Paper, Stack, Tab, Tabs, TextField, ThemeProvider, Toolbar, Typography, createTheme,
+  Paper, Stack, Tab, Tabs, TextField, ThemeProvider, Toolbar, Typography,
   Table, TableBody, TableCell, TableContainer, TableHead, TableRow
 } from "@mui/material";
 import ArrowBackIosNewRoundedIcon from "@mui/icons-material/ArrowBackIosNewRounded";
@@ -12,13 +12,10 @@ import DownloadRoundedIcon from "@mui/icons-material/DownloadRounded";
 import JSZip from "jszip";
 import logoNewStore from "./Logo-branca-sem-fundo-768x132.png";
 import { useAuth } from "./authContext";
+import { adminPanelPaperSx, createNewStoreAdminTheme } from "./adminTheme";
 
 /* ---------- tema ---------- */
-const theme = createTheme({
-  palette: { mode: "dark", primary: { main: "#2E7D32" }, background: { default: "#0E0E0E", paper: "#121212" } },
-  shape: { borderRadius: 16 },
-  typography: { fontFamily: ["Inter", "system-ui", "Segoe UI", "Roboto", "Arial"].join(",") },
-});
+const theme = createNewStoreAdminTheme();
 
 /* ---------- helpers de API (iguais ao AdminDashboard) ---------- */
 const RAW_BASE =
@@ -1002,7 +999,7 @@ export default function AdminOpenDrawBuyers() {
           {loadError && <Alert severity="error">{loadError}</Alert>}
 
           {!emptyMessage && !loadError && (
-          <Paper variant="outlined" sx={{ p: { xs: 2, md: 3 }, borderRadius: 4 }}>
+          <Paper variant="outlined" sx={{ p: { xs: 2, md: 3 }, borderRadius: 4, ...adminPanelPaperSx }}>
             <Stack direction="row" spacing={1.5} alignItems="center" flexWrap="wrap">
               <Stack sx={{ mr: 3 }}>
                 <Typography sx={{ opacity: .7, fontWeight: 700 }}>Nº Sorteio</Typography>
@@ -1062,7 +1059,7 @@ export default function AdminOpenDrawBuyers() {
 
             <Divider sx={{ my: 2.5 }} />
 
-            <Tabs value={tab} onChange={(_, v) => setTab(v)} textColor="primary" indicatorColor="primary">
+            <Tabs value={tab} onChange={(_, v) => setTab(v)} textColor="primary" indicatorColor="primary" sx={{ mb: 2 }}>
               <Tab label="Por comprador" />
               <Tab label="Por número (00–99)" />
             </Tabs>
