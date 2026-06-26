@@ -133,7 +133,12 @@ const additionalFormFromItem = (item) => ({
 });
 
 /* ---------- Card grande clicável (as 3 listas) ---------- */
-function BigCard({ children, color, outlined = false, onClick }) {
+const ADMIN_NEWSTORE_GREEN = "#047514";
+const ADMIN_NEWSTORE_GREEN_HOVER = "#058a18";
+const ADMIN_NEWSTORE_GREEN_BORDER = "#0bbf2a";
+const ADMIN_NEWSTORE_GREEN_SHADOW = "rgba(5, 138, 24, 0.25)";
+
+function BigCard({ children, onClick }) {
   return (
     <ButtonBase onClick={onClick} sx={{ width: "100%" }}>
       <Paper
@@ -142,14 +147,19 @@ function BigCard({ children, color, outlined = false, onClick }) {
           width: "100%",
           p: { xs: 3, md: 4 },
           borderRadius: 4,
-          bgcolor: outlined ? "transparent" : color,
-          border: outlined ? "1px solid rgba(255,255,255,0.16)" : "none",
+          bgcolor: ADMIN_NEWSTORE_GREEN,
+          border: `1px solid ${ADMIN_NEWSTORE_GREEN_BORDER}`,
+          boxShadow: `0 14px 28px ${ADMIN_NEWSTORE_GREEN_SHADOW}`,
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
           minHeight: { xs: 120, md: 140 },
-          transition: "transform 120ms ease, filter 120ms ease",
-          "&:hover": { transform: "translateY(-2px)", filter: "brightness(1.02)" },
+          transition: "transform 120ms ease, background-color 120ms ease, box-shadow 120ms ease",
+          "&:hover": {
+            transform: "translateY(-2px)",
+            bgcolor: ADMIN_NEWSTORE_GREEN_HOVER,
+            boxShadow: `0 16px 32px ${ADMIN_NEWSTORE_GREEN_SHADOW}`,
+          },
           textAlign: "center",
         }}
       >
@@ -159,7 +169,7 @@ function BigCard({ children, color, outlined = false, onClick }) {
             letterSpacing: 2,
             fontSize: { xs: 18, md: 28 },
             lineHeight: 1.25,
-            color: outlined ? "rgba(255,255,255,0.85)" : "#fff",
+            color: "#fff",
             textTransform: "uppercase",
             fontFamily:
               'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
