@@ -37,7 +37,6 @@ import {
   ThemeProvider,
   Toolbar,
   Typography,
-  createTheme,
 } from "@mui/material";
 import ArrowBackIosNewRoundedIcon from "@mui/icons-material/ArrowBackIosNewRounded";
 import RefreshRoundedIcon from "@mui/icons-material/RefreshRounded";
@@ -64,20 +63,9 @@ import {
   updatePushRule,
   updateNotificationTemplate,
 } from "./services/adminNotifications";
+import { adminPanelPaperSx, adminTabsPaperSx, createNewStoreAdminTheme } from "./adminTheme";
 
-const theme = createTheme({
-  palette: {
-    mode: "dark",
-    primary: { main: "#2E7D32" },
-    background: { default: "#0E0E0E", paper: "#121212" },
-    warning: { main: "#B58900" },
-    success: { main: "#67C23A" },
-    error: { main: "#E57373" },
-    info: { main: "#64B5F6" },
-  },
-  shape: { borderRadius: 16 },
-  typography: { fontFamily: ["Inter", "system-ui", "Segoe UI", "Roboto", "Arial"].join(",") },
-});
+const theme = createNewStoreAdminTheme();
 
 const TAB_LABELS = ["Enviar mensagem", "Disparos", "Mensagens recebidas", "Templates", "Audiência futura", "Push"];
 
@@ -1183,7 +1171,7 @@ export default function AdminNotificationsPage() {
           </>
         )}
 
-        <Paper variant="outlined" sx={{ borderRadius: 4, mb: 2 }}>
+        <Paper variant="outlined" sx={adminTabsPaperSx}>
           <Tabs value={tab} onChange={(_, v) => setTab(v)} variant="scrollable" scrollButtons="auto">
             {TAB_LABELS.map((label) => (
               <Tab key={label} label={label} />
@@ -1192,7 +1180,7 @@ export default function AdminNotificationsPage() {
         </Paper>
 
         {tab === 0 && (
-          <Paper variant="outlined" sx={{ p: { xs: 2, md: 3 }, borderRadius: 4 }}>
+          <Paper variant="outlined" sx={{ p: { xs: 2, md: 3 }, borderRadius: 4, ...adminPanelPaperSx }}>
             <Typography variant="subtitle1" sx={{ fontWeight: 800, mb: 0.5 }}>
               Enviar mensagem
             </Typography>
@@ -1522,7 +1510,7 @@ export default function AdminNotificationsPage() {
         )}
 
         {tab === 1 && (
-          <Paper variant="outlined" sx={{ p: { xs: 2, md: 3 }, borderRadius: 4 }}>
+          <Paper variant="outlined" sx={{ p: { xs: 2, md: 3 }, borderRadius: 4, ...adminPanelPaperSx }}>
             <Stack direction={{ xs: "column", md: "row" }} spacing={2} alignItems="center" sx={{ mb: 2 }}>
               <FormControl size="small" sx={{ minWidth: 140 }}>
                 <InputLabel>Status</InputLabel>
@@ -1871,7 +1859,7 @@ export default function AdminNotificationsPage() {
         )}
 
         {tab === 2 && (
-          <Paper variant="outlined" sx={{ p: { xs: 2, md: 3 }, borderRadius: 4 }}>
+          <Paper variant="outlined" sx={{ p: { xs: 2, md: 3 }, borderRadius: 4, ...adminPanelPaperSx }}>
             <Alert severity="info" sx={{ mb: 2 }}>
               Esta aba apenas monitora mensagens recebidas via webhook. Respostas automáticas serão implementadas em uma
               fase futura.
@@ -1961,7 +1949,7 @@ export default function AdminNotificationsPage() {
         )}
 
         {tab === 3 && (
-          <Paper variant="outlined" sx={{ p: { xs: 2, md: 3 }, borderRadius: 4 }}>
+          <Paper variant="outlined" sx={{ p: { xs: 2, md: 3 }, borderRadius: 4, ...adminPanelPaperSx }}>
             <Alert severity="info" sx={{ mb: 2 }}>
               Sincronize os modelos WhatsApp da Brevo para atualizar provider_template_id. Edite aqui o modelo local
               usado pelo sistema — alterações não substituem o template aprovado na Brevo.
@@ -2069,7 +2057,7 @@ export default function AdminNotificationsPage() {
         )}
 
         {tab === 4 && (
-          <Paper variant="outlined" sx={{ p: { xs: 2, md: 3 }, borderRadius: 4 }}>
+          <Paper variant="outlined" sx={{ p: { xs: 2, md: 3 }, borderRadius: 4, ...adminPanelPaperSx }}>
             <Typography variant="subtitle1" sx={{ fontWeight: 800, mb: 2 }}>
               Simular audiência (sem envio real para clientes)
             </Typography>
@@ -2188,7 +2176,7 @@ export default function AdminNotificationsPage() {
         )}
 
         {tab === 5 && (
-          <Paper variant="outlined" sx={{ p: { xs: 2, md: 3 }, borderRadius: 4 }}>
+          <Paper variant="outlined" sx={{ p: { xs: 2, md: 3 }, borderRadius: 4, ...adminPanelPaperSx }}>
             <Tabs
               value={pushPanel}
               onChange={(_, value) => setPushPanel(value)}
