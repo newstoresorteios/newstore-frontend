@@ -175,8 +175,18 @@ export default function PushPermissionPrompt() {
     }
 
     check();
+    function handlePromptRecheck() {
+      syncAttemptedRef.current = false;
+      check();
+    }
+    if (typeof window !== "undefined") {
+      window.addEventListener("push-permission-prompt:recheck", handlePromptRecheck);
+    }
     return () => {
       mounted = false;
+      if (typeof window !== "undefined") {
+        window.removeEventListener("push-permission-prompt:recheck", handlePromptRecheck);
+      }
     };
   }, [loading]);
 
