@@ -171,6 +171,19 @@ async function postIncrementCoupon({ addCents, lastPaymentSyncAt }) {
   );
 }
 
+function phoneDigits(value) {
+  return String(value || "").replace(/\D/g, "");
+}
+
+function isValidCustomerPhone(value) {
+  const digits = phoneDigits(value);
+  if (digits.length === 10 || digits.length === 11) return true;
+  return (digits.length === 12 || digits.length === 13) && digits.startsWith("55");
+}
+
+function getUserPhone(user) {
+  return String(user?.phone || user?.telefone || user?.phone_number || "").trim();
+}
 export default function AccountPage() {
   const navigate = useNavigate();
   React.useContext(SelectionContext);
@@ -180,6 +193,14 @@ export default function AccountPage() {
   const [loading, setLoading] = React.useState(true);
   const [user, setUser] = React.useState(ctxUser || null);
   const [rows, setRows] = React.useState([]);
+  const [phoneEditing, setPhoneEditing] = React.useState(false);
+  const [phoneInput, setPhoneInput] = React.useState("");
+  const [phoneSaving, setPhoneSaving] = React.useState(false);
+  const [phoneStatus, setPhoneStatus] = React.useState(null);
+
+  React.useEffect(() => {
+    if (!phoneEditing) setPhoneInput(getUserPhone(user));
+  }, [phoneEditing, user]);
 
   // ► saldo composto
   const [, setBaseCents] = React.useState(0); // pode incluir safeUi p/ nunca regredir visualmente
@@ -698,7 +719,51 @@ export default function AccountPage() {
     u.name || u.fullName || u.nome || u.displayName || u.username || u.email || "NOME DO CLIENTE";
   const couponCode = u?.coupon_code || cupom || "CUPOMAQUI";
   const isAdminUser = !!(u?.is_admin || u?.role === "admin" || (u?.email && u.email.toLowerCase() === ADMIN_EMAIL));
+  const accountName = u.name || u.fullName || u.nome || u.displayName || u.username || "Não informado";
+  const accountEmail = u.email || "Não informado";
+  const accountPhone = getUserPhone(u);
+  const accountPhoneText = accountPhone || "Não informado";
 
+  async function handleSavePhone() {
+    const phone = phoneDigits(phoneInput);
+    setPhoneStatus(null);
+
+    if (!isValidCustomerPhone(phone)) {
+      setPhoneStatus({ type: "error", message: "Informe um telefone válido." });
+      return;
+    }
+
+    try {
+      setPhoneSaving(true);
+      const r = await fetch(apiJoin("/me/phone"), {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", ...authHeaders() },
+        credentials: "include",
+        body: JSON.stringify({ phone }),
+      });
+      const data = await r.json().catch(() => ({}));
+
+      if (!r.ok || data?.ok === false) {
+        setPhoneStatus({ type: "error", message: "Informe um telefone válido." });
+        return;
+      }
+
+      const nextUser = { ...(user || {}), ...(data?.user || {}), phone: data?.user?.phone || phone };
+      setUser(nextUser);
+      setPhoneInput(getUserPhone(nextUser));
+      setPhoneEditing(false);
+      setPhoneStatus({ type: "success", message: "Telefone atualizado com sucesso." });
+      try { localStorage.setItem("me", JSON.stringify(nextUser)); } catch {}
+      try { localStorage.removeItem("push_permission_prompt_dismissed_until"); } catch {}
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(new Event("push-permission-prompt:recheck"));
+      }
+    } catch {
+      setPhoneStatus({ type: "error", message: "Não foi possível salvar o telefone. Tente novamente." });
+    } finally {
+      setPhoneSaving(false);
+    }
+  }
   // salvar config
   async function handleSaveConfig() {
     try {
@@ -773,6 +838,71 @@ export default function AccountPage() {
             {headingName}
           </Typography>
 
+          <Paper variant="outlined" sx={{ p: { xs: 2, md: 3 } }}>
+            <Stack spacing={2}>
+              <Typography variant="h6" fontWeight={900}>Meus dados</Typography>
+              <Stack spacing={1}>
+                <Typography variant="body2" sx={{ opacity: 0.75 }}>Nome</Typography>
+                <Typography fontWeight={700}>{accountName}</Typography>
+              </Stack>
+              <Stack spacing={1}>
+                <Typography variant="body2" sx={{ opacity: 0.75 }}>E-mail</Typography>
+                <Typography fontWeight={700} sx={{ wordBreak: "break-word" }}>{accountEmail}</Typography>
+              </Stack>
+              <Stack spacing={1.5}>
+                <Typography variant="body2" sx={{ opacity: 0.75 }}>Telefone</Typography>
+                {phoneEditing ? (
+                  <Stack spacing={1.5} sx={{ maxWidth: 420 }}>
+                    <TextField
+                      label="Telefone"
+                      type="tel"
+                      value={phoneInput}
+                      onChange={(e) => setPhoneInput(e.target.value)}
+                      disabled={phoneSaving}
+                      fullWidth
+                      inputProps={{ inputMode: "tel", maxLength: 20 }}
+                    />
+                    <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
+                      <Button variant="contained" color="success" onClick={handleSavePhone} disabled={phoneSaving}>
+                        {phoneSaving ? "Salvando..." : "Salvar"}
+                      </Button>
+                      <Button
+                        variant="text"
+                        onClick={() => {
+                          setPhoneEditing(false);
+                          setPhoneInput(accountPhone);
+                          setPhoneStatus(null);
+                        }}
+                        disabled={phoneSaving}
+                      >
+                        Cancelar
+                      </Button>
+                    </Stack>
+                  </Stack>
+                ) : (
+                  <Stack direction={{ xs: "column", sm: "row" }} spacing={1.5} alignItems={{ xs: "flex-start", sm: "center" }}>
+                    <Typography fontWeight={700}>{accountPhoneText}</Typography>
+                    <Button
+                      variant="outlined"
+                      size="small"
+                      onClick={() => {
+                        setPhoneInput(accountPhone);
+                        setPhoneStatus(null);
+                        setPhoneEditing(true);
+                      }}
+                    >
+                      {accountPhone ? "Editar telefone" : "Adicionar telefone"}
+                    </Button>
+                  </Stack>
+                )}
+              </Stack>
+              {phoneStatus && (
+                <Alert severity={phoneStatus.type} variant="outlined" sx={{ maxWidth: 520 }}>
+                  {phoneStatus.message}
+                </Alert>
+              )}
+            </Stack>
+          </Paper>
           {/* Configurações do sorteio (apenas admin) */}
           {isAdminUser && (
             <Paper variant="outlined" sx={{ p: { xs: 2, md: 3 } }}>
