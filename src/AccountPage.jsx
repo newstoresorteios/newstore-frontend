@@ -19,8 +19,6 @@ import PixModal from "./PixModal";
 import { checkPixStatus } from "./services/pix";
 // ▲ PIX
 import AutoPaySection from "./AutoPaySection";
-import PushNotificationSettings from "./components/PushNotificationSettings";
-import { getPushAccess } from "./services/pushNotifications";
 
 const theme = createTheme({
   palette: {
@@ -182,7 +180,6 @@ export default function AccountPage() {
   const [loading, setLoading] = React.useState(true);
   const [user, setUser] = React.useState(ctxUser || null);
   const [rows, setRows] = React.useState([]);
-  const [canShowPushCard, setCanShowPushCard] = React.useState(false);
 
   // ► saldo composto
   const [, setBaseCents] = React.useState(0); // pode incluir safeUi p/ nunca regredir visualmente
@@ -223,35 +220,6 @@ export default function AccountPage() {
     } catch {}
   }
   React.useEffect(() => { loadClaims(); }, []);
-  React.useEffect(() => {
-    let alive = true;
-    if (process.env.NODE_ENV !== "production") {
-      console.log("[push.account] access:start");
-    }
-    getPushAccess()
-      .then((result) => {
-        if (!alive) return;
-        const visible =
-          result?.ok === true &&
-          (result?.visible === true || result?.allowed === true) &&
-          result?.can_subscribe === true;
-        if (process.env.NODE_ENV !== "production") {
-          console.log("[push.account] access:visible", Boolean(visible));
-        }
-        setCanShowPushCard(visible);
-      })
-      .catch(() => {
-        if (alive) setCanShowPushCard(false);
-      });
-    return () => {
-      alive = false;
-    };
-  }, []);
-  React.useEffect(() => {
-    if (canShowPushCard && process.env.NODE_ENV !== "production") {
-      console.log("[push.account] component:mounted");
-    }
-  }, [canShowPushCard]);
 
   // NOVO: busca a ÚLTIMA reserva ATIVA do sorteio, priorizando os números informados
   async function findLatestActiveReservation(drawId, numbersHint) {
@@ -967,15 +935,6 @@ export default function AccountPage() {
               </Stack>
             </Paper>
           </Box>
-
-          {canShowPushCard && (
-            <Paper id="push-notification-settings" variant="outlined" sx={{ p: { xs: 2, md: 3 } }}>
-              <Typography variant="h6" fontWeight={900} sx={{ mb: 2 }}>
-                Preferências de comunicação
-              </Typography>
-              <PushNotificationSettings />
-            </Paper>
-          )}
 
           {/* ====== Números cativos ====== */}
           <Paper variant="outlined" sx={{ p: { xs: 2, md: 3 } }}>
