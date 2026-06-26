@@ -1,21 +1,20 @@
-// Centraliza chamadas e injeta Authorization se houver JWT salvo
-const API = (process.env.REACT_APP_API_BASE_URL || '').replace(/\/$/, '');
+import { apiJoin, authHeaders } from "../lib/api";
 
-export async function api(path, { method = 'GET', body, params } = {}) {
-  const token = localStorage.getItem('ns_auth_token') || sessionStorage.getItem('ns_auth_token');
-  const url = API + path + (params ? `?${new URLSearchParams(params).toString()}` : '');
-  const headers = { 'Content-Type': 'application/json' };
-  if (token) headers.Authorization = `Bearer ${token}`;
-
+export async function api(path, { method = "GET", body, params } = {}) {
+  const basePath = params ? `${path}?${new URLSearchParams(params).toString()}` : path;
+  const url = /^https?:\/\//i.test(basePath) ? basePath : apiJoin(basePath);
   const res = await fetch(url, {
     method,
-    headers,
+    headers: {
+      "Content-Type": "application/json",
+      ...authHeaders(),
+    },
     body: body ? JSON.stringify(body) : undefined,
-    credentials: 'include',
+    credentials: "include",
   });
 
   if (res.status === 401) {
-    const t = await res.text().catch(()=>''); 
+    const t = await res.text().catch(() => "");
     throw new Error(`401 Unauthorized: ${t}`);
   }
   if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
