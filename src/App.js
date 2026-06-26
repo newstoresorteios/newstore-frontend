@@ -5,6 +5,7 @@ import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { SelectionContext } from "./selectionContext";
 import NewStorePage from "./NewStorePage";
 import AccountPage from "./AccountPage";
+import AccountDataPage from "./AccountDataPage";
 import LoginPage from "./LoginPage";
 import RegisterPage from "./RegisterPage";
 
@@ -56,6 +57,16 @@ export default function App() {
                 <ProtectedRoute>
                   <NonAdminRoute>
                     <AccountPage />
+                  </NonAdminRoute>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/conta/dados"
+              element={
+                <ProtectedRoute>
+                  <NonAdminRoute>
+                    <AccountDataPage />
                   </NonAdminRoute>
                 </ProtectedRoute>
               }
