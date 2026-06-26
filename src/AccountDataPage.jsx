@@ -3,7 +3,7 @@ import * as React from "react";
 import { Link as RouterLink, useNavigate } from "react-router-dom";
 import logoNewStore from "./Logo-branca-sem-fundo-768x132 - Copia.png";
 import { useAuth } from "./authContext";
-import { apiJoin, authHeaders, getJSON } from "./lib/api";
+import { apiJoin, authHeaders, delJSON, getJSON, postJSON } from "./lib/api";
 import {
   Alert,
   AppBar,
@@ -16,8 +16,10 @@ import {
   Menu,
   MenuItem,
   Divider,
+  FormControlLabel,
   Paper,
   Stack,
+  Switch,
   TextField,
   ThemeProvider,
   Toolbar,
@@ -74,6 +76,10 @@ export default function AccountDataPage() {
   const [phoneInput, setPhoneInput] = React.useState("");
   const [phoneSaving, setPhoneSaving] = React.useState(false);
   const [phoneStatus, setPhoneStatus] = React.useState(null);
+  const [whatsappConsent, setWhatsappConsent] = React.useState(null);
+  const [whatsappLoading, setWhatsappLoading] = React.useState(true);
+  const [whatsappSaving, setWhatsappSaving] = React.useState(false);
+  const [whatsappStatus, setWhatsappStatus] = React.useState(null);
 
   React.useEffect(() => {
     let alive = true;
@@ -92,6 +98,19 @@ export default function AccountDataPage() {
       } finally {
         if (alive) setLoading(false);
       }
+
+      try {
+        const consentData = await getJSON("/me/communication-consents");
+        if (!alive) return;
+        setWhatsappConsent(consentData?.whatsapp || null);
+      } catch {
+        if (alive) {
+          setWhatsappConsent(null);
+          setWhatsappStatus({ type: "error", message: "Não foi possível carregar a autorização do WhatsApp." });
+        }
+      } finally {
+        if (alive) setWhatsappLoading(false);
+      }
     })();
     return () => { alive = false; };
   }, []);
@@ -104,6 +123,7 @@ export default function AccountDataPage() {
   const accountEmail = user?.email || "Não informado";
   const accountPhone = getUserPhone(user);
   const accountPhoneText = accountPhone || "Não informado";
+  const whatsappEnabled = whatsappConsent?.can_send === true;
 
   const doLogout = () => {
     setMenuEl(null);
@@ -149,6 +169,34 @@ export default function AccountDataPage() {
       setPhoneStatus({ type: "error", message: "Não foi possível salvar o telefone. Tente novamente." });
     } finally {
       setPhoneSaving(false);
+    }
+  }
+
+  async function handleWhatsappConsentChange(enabled) {
+    setWhatsappSaving(true);
+    setWhatsappStatus(null);
+    try {
+      const data = enabled
+        ? await postJSON("/me/communication-consents/whatsapp", { category: "all" })
+        : await delJSON("/me/communication-consents/whatsapp");
+      setWhatsappConsent(data?.whatsapp || {
+        can_send: enabled,
+        status: enabled ? "granted" : "revoked",
+        category: "all",
+      });
+      setWhatsappStatus({
+        type: "success",
+        message: enabled
+          ? "Autorização de WhatsApp registrada."
+          : "Autorização de WhatsApp revogada.",
+      });
+    } catch {
+      setWhatsappStatus({
+        type: "error",
+        message: "Não foi possível atualizar sua autorização de WhatsApp.",
+      });
+    } finally {
+      setWhatsappSaving(false);
     }
   }
 
@@ -279,6 +327,42 @@ export default function AccountDataPage() {
                     {phoneStatus.message}
                   </Alert>
                 )}
+
+                <Divider />
+
+                <Stack spacing={1.5}>
+                  <Box>
+                    <Typography variant="h6" fontWeight={900}>Comunicação por WhatsApp</Typography>
+                    <Typography variant="body2" sx={{ opacity: 0.78, mt: 0.5 }}>
+                      Autorizo receber mensagens importantes da New Store pelo WhatsApp.
+                    </Typography>
+                    <Typography variant="body2" sx={{ opacity: 0.78 }}>
+                      Você pode revogar essa autorização quando quiser.
+                    </Typography>
+                  </Box>
+                  {whatsappLoading ? (
+                    <Stack spacing={1} sx={{ maxWidth: 420 }}>
+                      <Typography variant="body2" sx={{ opacity: 0.78 }}>Carregando autorização...</Typography>
+                      <LinearProgress />
+                    </Stack>
+                  ) : (
+                    <FormControlLabel
+                      control={
+                        <Switch
+                          checked={whatsappEnabled}
+                          disabled={whatsappSaving}
+                          onChange={(e) => handleWhatsappConsentChange(e.target.checked)}
+                        />
+                      }
+                      label="Receber mensagens pelo WhatsApp"
+                    />
+                  )}
+                  {whatsappStatus && (
+                    <Alert severity={whatsappStatus.type} variant="outlined" sx={{ maxWidth: 560 }}>
+                      {whatsappStatus.message}
+                    </Alert>
+                  )}
+                </Stack>
               </Stack>
             )}
           </Paper>

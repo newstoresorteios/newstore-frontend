@@ -127,6 +127,7 @@ function statusChipColor(status) {
 
 function dispatchStatusLabel(row) {
   const status = String(row?.status || "").toLowerCase();
+  if (status === "skipped" && isWhatsappConsentBlock(row)) return "Bloqueado por consentimento";
   if (status === "accepted") return "Aceito pela Brevo";
   if (status === "sent") return "Aceito pela Brevo";
   if (status === "delivered") return "Entregue";
@@ -153,6 +154,47 @@ function isPushSafetyBlock(row) {
   const status = String(row?.status || "").toLowerCase();
   const reason = String(row?.error_message || row?.reason || "").trim();
   return status === "skipped" && reason.startsWith("safety_");
+}
+
+const WHATSAPP_CONSENT_REASON_LABELS = {
+  whatsapp_consent_missing: "Bloqueado: sem opt-in WhatsApp",
+  whatsapp_consent_revoked: "Bloqueado: opt-out WhatsApp",
+  whatsapp_consent_unknown: "Bloqueado: consentimento desconhecido",
+  whatsapp_unlinked_phone_blocked: "Bloqueado: telefone sem usuario vinculado",
+};
+
+function whatsappConsentReasonLabel(value) {
+  const code = String(value || "").trim();
+  return WHATSAPP_CONSENT_REASON_LABELS[code] || code || "—";
+}
+
+function whatsappConsentStatusLabel(value, canSend = false) {
+  const status = String(value || "unknown").toLowerCase();
+  if (canSend === true || ["granted", "active", "opt_in", "allowed", "subscribed", "accepted"].includes(status)) {
+    return "WhatsApp autorizado";
+  }
+  if (["revoked", "opt_out", "denied", "blocked", "unsubscribed"].includes(status)) return "Opt-out WhatsApp";
+  if (status === "missing") return "Sem opt-in WhatsApp";
+  return "Consentimento desconhecido";
+}
+
+function whatsappConsentChipColor(value, canSend = false) {
+  const status = String(value || "unknown").toLowerCase();
+  if (canSend === true || ["granted", "active", "opt_in", "allowed", "subscribed", "accepted"].includes(status)) {
+    return "success";
+  }
+  if (["revoked", "opt_out", "denied", "blocked", "unsubscribed"].includes(status)) return "error";
+  if (status === "missing") return "warning";
+  return "default";
+}
+
+function recipientWhatsappCanSend(r) {
+  return r?.whatsapp_can_send === true;
+}
+
+function isWhatsappConsentBlock(row) {
+  const reason = String(row?.error_message || row?.error || row?.last_error || "").trim();
+  return reason.startsWith("whatsapp_consent_") || reason === "whatsapp_unlinked_phone_blocked";
 }
 
 function pushStatusLabel(status, row = null) {
@@ -202,6 +244,7 @@ function canSyncDelivery(row) {
 
 function parseNotificationsError(err) {
   const msg = String(err?.message || err || "");
+  if (WHATSAPP_CONSENT_REASON_LABELS[msg]) return WHATSAPP_CONSENT_REASON_LABELS[msg];
   if (msg.includes("brevo_ip_not_authorized")) {
     return "A Brevo bloqueou o IP do backend. Autorize o IP de saída do Render nas configurações da Brevo.";
   }
@@ -254,12 +297,17 @@ function mapRecipientToApi(r) {
 }
 
 function mapSearchHitToRecipient(hit) {
+  const canSend = hit.whatsapp_can_send === true;
   return {
     type: "user",
     user_id: hit.user_id ?? hit.userId ?? hit.id,
     name: hit.name ?? hit.full_name ?? hit.fullName ?? "Cliente",
     email: hit.email ?? null,
     phone: hit.phone ?? hit.whatsapp ?? hit.mobile ?? null,
+    whatsapp_can_send: canSend,
+    whatsapp_consent_status: hit.whatsapp_consent_status ?? "unknown",
+    whatsapp_consent_category: hit.whatsapp_consent_category ?? null,
+    whatsapp_consent_source: hit.whatsapp_consent_source ?? null,
   };
 }
 
@@ -569,6 +617,7 @@ export default function AdminNotificationsPage() {
 
   const testMode = Boolean(health?.testMode);
   const allowReal = Boolean(health?.allowRealRecipients);
+  const realWhatsappSendMode = allowReal && !testMode;
   const showTestAlert = testMode || !allowReal;
   const customRecipientsEnabled = Boolean(health?.adminTestCustomRecipientsEnabled);
 
@@ -613,6 +662,10 @@ export default function AdminNotificationsPage() {
   const updateSendField = (name, value) => setSendForm((f) => ({ ...f, [name]: value }));
 
   const addRecipient = (recipient) => {
+    if (realWhatsappSendMode && !recipientWhatsappCanSend(recipient)) {
+      setSendError("WhatsApp exige opt-in explicito do usuario. Este destinatario nao pode receber envio real.");
+      return;
+    }
     const key = recipientDedupeKey(recipient);
     setSelectedRecipients((prev) => {
       if (prev.some((r) => recipientDedupeKey(r) === key)) return prev;
@@ -628,6 +681,10 @@ export default function AdminNotificationsPage() {
   const onAddManualPhone = () => {
     const phone = manualPhone.trim();
     if (!phone) return;
+    if (realWhatsappSendMode) {
+      setSendError("Telefone avulso nao possui consentimento auditavel. Use um usuario com opt-in WhatsApp.");
+      return;
+    }
     addRecipient({ type: "manual_phone", user_id: null, name: "Contato avulso", email: null, phone });
     setManualPhone("");
     setShowManualPhone(false);
@@ -652,6 +709,12 @@ export default function AdminNotificationsPage() {
 
     if (!selectedRecipients.length) {
       setSendError("Selecione pelo menos um destinatário.");
+      return;
+    }
+
+    const blockedRecipients = selectedRecipients.filter((r) => !recipientWhatsappCanSend(r));
+    if (realWhatsappSendMode && blockedRecipients.length) {
+      setSendError("WhatsApp exige opt-in explicito. Remova destinatarios sem consentimento antes de enviar.");
       return;
     }
 
@@ -1082,6 +1145,16 @@ export default function AdminNotificationsPage() {
                 value={boolLabel(health.testRecipientConfigured)}
                 ok={health.testRecipientConfigured}
               />
+              <StatusCard
+                label="Consentimento WhatsApp"
+                value={health.whatsappConsentRequired === false ? "Nao exigido" : "Obrigatorio"}
+                ok={health.whatsappConsentRequired !== false}
+              />
+              <StatusCard
+                label="Telefone avulso"
+                value={health.whatsappAllowUnlinkedPhone ? "Liberado" : "Bloqueado"}
+                ok={!health.whatsappAllowUnlinkedPhone}
+              />
             </Stack>
 
             {showTestAlert && (
@@ -1127,6 +1200,10 @@ export default function AdminNotificationsPage() {
               Envie mensagens controladas para clientes selecionados. Em modo teste, o backend pode redirecionar os
               envios conforme configuração.
             </Typography>
+            <Alert severity="warning" sx={{ mb: 2 }}>
+              Para evitar bloqueios no WhatsApp, mensagens so podem ser enviadas para usuarios com opt-in explicito.
+              Telefone cadastrado nao conta como autorizacao.
+            </Alert>
 
             <Typography variant="subtitle2" sx={{ fontWeight: 800, mb: 1 }}>
               Destinatários
@@ -1161,6 +1238,12 @@ export default function AdminNotificationsPage() {
                         Saldo: {opt.balance ?? opt.saldo}
                       </Typography>
                     )}
+                    <Chip
+                      size="small"
+                      sx={{ mt: 0.5 }}
+                      label={whatsappConsentStatusLabel(opt.whatsapp_consent_status, opt.whatsapp_can_send)}
+                      color={whatsappConsentChipColor(opt.whatsapp_consent_status, opt.whatsapp_can_send)}
+                    />
                   </Box>
                 </li>
               )}
@@ -1199,7 +1282,17 @@ export default function AdminNotificationsPage() {
                     r.type === "manual_phone"
                       ? `${r.name}: ${r.phone}`
                       : `${r.name}${r.phone ? ` (${r.phone})` : ""}`;
-                  return <Chip key={key} label={label} onDelete={() => removeRecipient(key)} />;
+                  const consentLabel = r.type === "manual_phone"
+                    ? "Telefone avulso"
+                    : whatsappConsentStatusLabel(r.whatsapp_consent_status, r.whatsapp_can_send);
+                  return (
+                    <Chip
+                      key={key}
+                      label={`${label} · ${consentLabel}`}
+                      color={r.type === "manual_phone" ? "warning" : whatsappConsentChipColor(r.whatsapp_consent_status, r.whatsapp_can_send)}
+                      onDelete={() => removeRecipient(key)}
+                    />
+                  );
                 })}
               </Stack>
             )}
@@ -1569,7 +1662,7 @@ export default function AdminNotificationsPage() {
                           <TableCell>{row.attempts ?? row.attempt_count ?? "—"}</TableCell>
                           <TableCell>{row.provider_message_id ?? row.providerMessageId ?? "—"}</TableCell>
                           <TableCell sx={{ maxWidth: 180, overflow: "hidden", textOverflow: "ellipsis" }}>
-                            {row.error ?? row.last_error ?? "—"}
+                            {whatsappConsentReasonLabel(row.error_message ?? row.error ?? row.last_error)}
                           </TableCell>
                           <TableCell>{fmtDate(row.sent_at ?? row.sentAt)}</TableCell>
                           <TableCell sx={{ minWidth: 140 }}>
@@ -2020,7 +2113,14 @@ export default function AdminNotificationsPage() {
                 <Button variant="contained" disabled={audienceEstimating} onClick={onEstimateAudience}>
                   {audienceEstimating ? "Estimando…" : "Estimar audiência"}
                 </Button>
-                <Button variant="outlined" disabled={manualSending} onClick={onManualSendTest}>
+                <Button
+                  variant="outlined"
+                  disabled={
+                    manualSending ||
+                    (realWhatsappSendMode && Number(audienceEstimate?.allowed_by_whatsapp_consent || 0) <= 0)
+                  }
+                  onClick={onManualSendTest}
+                >
                   {manualSending ? "Enviando…" : "Enviar teste com este filtro"}
                 </Button>
               </Stack>
@@ -2036,6 +2136,13 @@ export default function AdminNotificationsPage() {
                   Estimativa
                 </Typography>
                 <Typography variant="body2">estimated_count: {audienceEstimate.estimated_count ?? "—"}</Typography>
+                <Typography variant="body2">total_candidates: {audienceEstimate.total_candidates ?? "—"}</Typography>
+                <Typography variant="body2">
+                  autorizados_whatsapp: {audienceEstimate.allowed_by_whatsapp_consent ?? "—"}
+                </Typography>
+                <Typography variant="body2">
+                  bloqueados_sem_opt_in_whatsapp: {audienceEstimate.blocked_by_whatsapp_consent ?? "—"}
+                </Typography>
                 <Typography variant="body2">filter: {audienceEstimate.filter ?? audienceFilter}</Typography>
                 <Typography variant="body2">test_mode: {String(audienceEstimate.test_mode ?? testMode)}</Typography>
                 <Typography variant="body2">
