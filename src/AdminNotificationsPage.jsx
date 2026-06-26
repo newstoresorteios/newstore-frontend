@@ -141,7 +141,7 @@ function pushStatusLabel(status) {
   const s = String(status || "").toLowerCase();
   if (s === "dry_run") return "Dry-run";
   if (s === "skipped") return "Ignorado";
-  if (s === "deduped") return "Deduplicado";
+  if (s === "deduped") return "Duplicado";
   if (s === "sent") return "Enviado";
   if (s === "failed") return "Falhou";
   if (s === "pending") return "Pendente";
