@@ -137,8 +137,27 @@ function dispatchStatusLabel(row) {
   return row?.status ?? "—";
 }
 
-function pushStatusLabel(status) {
+const PUSH_SAFETY_REASON_LABELS = {
+  safety_missing_occurred_at: "Bloqueado: data do evento ausente",
+  safety_event_too_old: "Bloqueado: evento antigo",
+  safety_missing_scan_id: "Bloqueado: scan_id ausente",
+  safety_scan_event_limit_exceeded: "Bloqueado: limite por execucao excedido",
+};
+
+function pushSafetyReasonLabel(value) {
+  const code = String(value || "").trim();
+  return PUSH_SAFETY_REASON_LABELS[code] || code || "—";
+}
+
+function isPushSafetyBlock(row) {
+  const status = String(row?.status || "").toLowerCase();
+  const reason = String(row?.error_message || row?.reason || "").trim();
+  return status === "skipped" && reason.startsWith("safety_");
+}
+
+function pushStatusLabel(status, row = null) {
   const s = String(status || "").toLowerCase();
+  if (isPushSafetyBlock(row)) return "Bloqueado por seguranca";
   if (s === "dry_run") return "Dry-run";
   if (s === "skipped") return "Ignorado";
   if (s === "deduped") return "Duplicado";
@@ -2173,6 +2192,9 @@ export default function AdminNotificationsPage() {
                     <TableCell>Usuário</TableCell>
                     <TableCell>Email</TableCell>
                     <TableCell>Evento</TableCell>
+                    <TableCell>Origem</TableCell>
+                    <TableCell>Scan ID</TableCell>
+                    <TableCell>Data do evento</TableCell>
                     <TableCell>Referência</TableCell>
                     <TableCell>Título</TableCell>
                     <TableCell>Mensagem</TableCell>
@@ -2201,6 +2223,13 @@ export default function AdminNotificationsPage() {
                           </Typography>
                         )}
                       </TableCell>
+                      <TableCell>{row.source || "—"}</TableCell>
+                      <TableCell>
+                        <Typography variant="body2" sx={{ fontFamily: "ui-monospace, Menlo, Consolas, monospace" }}>
+                          {row.scan_id || "—"}
+                        </Typography>
+                      </TableCell>
+                      <TableCell>{fmtDate(row.occurred_at)}</TableCell>
                       <TableCell>
                         <Typography variant="body2" sx={{ fontFamily: "ui-monospace, Menlo, Consolas, monospace" }}>
                           {row.reference_key || "—"}
@@ -2214,7 +2243,7 @@ export default function AdminNotificationsPage() {
                       <TableCell sx={{ maxWidth: 180 }}>{row.title ?? "—"}</TableCell>
                       <TableCell sx={{ maxWidth: 260, whiteSpace: "normal" }}>{row.body ?? "—"}</TableCell>
                       <TableCell>
-                        <Chip size="small" label={pushStatusLabel(row.status)} color={statusChipColor(row.status)} />
+                        <Chip size="small" label={pushStatusLabel(row.status, row)} color={statusChipColor(row.status)} />
                       </TableCell>
                       <TableCell sx={{ maxWidth: 180 }}>
                         <Typography variant="body2">{row.device_label || row.subscription_id || "—"}</Typography>
@@ -2223,14 +2252,14 @@ export default function AdminNotificationsPage() {
                         </Typography>
                       </TableCell>
                       <TableCell sx={{ maxWidth: 240, overflow: "hidden", textOverflow: "ellipsis" }}>
-                        {row.error_message ?? "—"}
+                        {pushSafetyReasonLabel(row.error_message)}
                       </TableCell>
                       <TableCell>{fmtDate(row.sent_at)}</TableCell>
                     </TableRow>
                   ))}
                   {pushLogs.length === 0 && (
                     <TableRow>
-                      <TableCell colSpan={11} align="center" sx={{ opacity: 0.6, py: 3 }}>
+                      <TableCell colSpan={14} align="center" sx={{ opacity: 0.6, py: 3 }}>
                         {pushLoading ? "Carregando histórico de Push…" : "Sem registros."}
                       </TableCell>
                     </TableRow>
