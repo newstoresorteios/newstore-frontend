@@ -24,6 +24,7 @@ import AdminOpenDrawBuyers from "./AdminOpenDrawBuyers";
 import AdminAnalytics from './AdminAnalytics';
 import AdminNotificationsPage from "./AdminNotificationsPage";
 import AdminHistoricoSaldo from "./AdminHistoricoSaldo";
+import AdminCaptivesPage from "./AdminCaptivesPage";
 import AutorizacaoCativoPage from "./AutorizacaoCativoPage";
 import PushPermissionPrompt from "./components/PushPermissionPrompt";
 
@@ -158,6 +159,14 @@ export default function App() {
               element={
                 <AdminRoute>
                   <AdminNotificationsPage />
+                </AdminRoute>
+              }
+            />
+            <Route
+              path="/admin/cativos"
+              element={
+                <AdminRoute>
+                  <AdminCaptivesPage />
                 </AdminRoute>
               }
             />
