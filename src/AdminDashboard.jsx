@@ -762,6 +762,10 @@ export default function AdminDashboard() {
               NOTIFICAÇÕES
             </BigCard>
             <br />
+            <BigCard color="primary.main" onClick={() => navigate("/admin/cativos")}>
+              CATIVOS
+            </BigCard>
+            <br />
             <BigCard outlined onClick={() => navigate("/admin/sorteios")}>
               LISTA DE SORTEIOS
               <br /> REALIZADOS
