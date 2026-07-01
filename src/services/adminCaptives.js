@@ -15,3 +15,9 @@ export function updateAdminCaptiveParticipation(id, active) {
     active: active === true,
   });
 }
+
+export function updateAdminCaptiveAuthorizationMode(id, authorizationMode) {
+  return patchJSON(`/admin/captives/${encodeURIComponent(String(id))}/authorization-mode`, {
+    authorization_mode: authorizationMode === true,
+  });
+}

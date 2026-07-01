@@ -10,8 +10,13 @@ import ArrowBackIosNewRoundedIcon from "@mui/icons-material/ArrowBackIosNewRound
 import RefreshRoundedIcon from "@mui/icons-material/RefreshRounded";
 import PauseCircleOutlineRoundedIcon from "@mui/icons-material/PauseCircleOutlineRounded";
 import PlayCircleOutlineRoundedIcon from "@mui/icons-material/PlayCircleOutlineRounded";
+import SwapHorizRoundedIcon from "@mui/icons-material/SwapHorizRounded";
 import { adminPanelPaperSx, createNewStoreAdminTheme, newStoreAdminColors } from "./adminTheme";
-import { listAdminCaptives, updateAdminCaptiveParticipation } from "./services/adminCaptives";
+import {
+  listAdminCaptives,
+  updateAdminCaptiveAuthorizationMode,
+  updateAdminCaptiveParticipation,
+} from "./services/adminCaptives";
 
 const theme = createNewStoreAdminTheme();
 const FILTERS = [
@@ -93,7 +98,7 @@ export default function AdminCaptivesPage() {
   React.useEffect(() => { load(); }, [load]);
 
   async function toggleParticipation(row) {
-    setUpdatingId(row.id);
+    setUpdatingId(`${row.id}:participation`);
     setRowError("");
     try {
       const payload = await updateAdminCaptiveParticipation(row.id, !row.participation_active);
@@ -106,6 +111,26 @@ export default function AdminCaptivesPage() {
       }
     } catch {
       setRowError("Não foi possível atualizar a participação.");
+    } finally {
+      setUpdatingId("");
+    }
+  }
+
+  async function toggleAuthorizationMode(row) {
+    const nextMode = row.authorization_mode !== true;
+    setUpdatingId(`${row.id}:authorization-mode`);
+    setRowError("");
+    try {
+      const payload = await updateAdminCaptiveAuthorizationMode(row.id, nextMode);
+      if (payload?.item?.id) {
+        setItems((current) => current.map((item) => (
+          String(item.id) === String(payload.item.id) ? payload.item : item
+        )));
+      } else {
+        await load();
+      }
+    } catch {
+      setRowError("Não foi possível atualizar o modo de cobrança.");
     } finally {
       setUpdatingId("");
     }
@@ -180,6 +205,7 @@ export default function AdminCaptivesPage() {
                       <TableCell>Telefone</TableCell>
                       <TableCell>Número Cativo</TableCell>
                       <TableCell>Participação</TableCell>
+                      <TableCell>Modo de Cobrança</TableCell>
                       <TableCell>Autopay/Cartão</TableCell>
                       <TableCell>WhatsApp</TableCell>
                       <TableCell>Última tentativa</TableCell>
@@ -188,7 +214,9 @@ export default function AdminCaptivesPage() {
                   </TableHead>
                   <TableBody>
                     {items.map((row) => {
-                      const rowUpdating = String(updatingId) === String(row.id);
+                      const participationUpdating = updatingId === `${row.id}:participation`;
+                      const modeUpdating = updatingId === `${row.id}:authorization-mode`;
+                      const requiresPreauth = row.authorization_mode === true || row.requires_preauth === true;
                       return (
                         <TableRow key={row.id} hover>
                           <TableCell sx={{ fontWeight: 800 }}>{row.user_name || "-"}</TableCell>
@@ -197,6 +225,11 @@ export default function AdminCaptivesPage() {
                           <TableCell sx={{ fontWeight: 900 }}>{row.captive_number_label || row.captive_number}</TableCell>
                           <TableCell>
                             {row.participation_active ? <StatusChip label="Participando" tone="success" /> : <StatusChip label="Pausado" tone="error" />}
+                          </TableCell>
+                          <TableCell>
+                            {requiresPreauth
+                              ? <StatusChip label={row.authorization_mode_label || "Pré-autorização"} tone="warning" />
+                              : <StatusChip label={row.authorization_mode_label || "Automático"} tone="neutral" />}
                           </TableCell>
                           <TableCell>
                             {row.card_status === "configured" ? <StatusChip label="Cartão configurado" tone="success" /> : <StatusChip label="Sem cartão" tone="warning" />}
@@ -211,17 +244,30 @@ export default function AdminCaptivesPage() {
                             </Stack>
                           </TableCell>
                           <TableCell align="right">
-                            <Button
-                              variant={row.participation_active ? "outlined" : "contained"}
-                              color={row.participation_active ? "error" : "primary"}
-                              size="small"
-                              startIcon={rowUpdating ? <CircularProgress color="inherit" size={16} /> : row.participation_active ? <PauseCircleOutlineRoundedIcon /> : <PlayCircleOutlineRoundedIcon />}
-                              disabled={rowUpdating}
-                              onClick={() => toggleParticipation(row)}
-                              sx={{ whiteSpace: "nowrap" }}
-                            >
-                              {row.participation_active ? "Pausar participação" : "Ativar participação"}
-                            </Button>
+                            <Stack direction={{ xs: "column", lg: "row" }} spacing={1} justifyContent="flex-end">
+                              <Button
+                                variant={row.participation_active ? "outlined" : "contained"}
+                                color={row.participation_active ? "error" : "primary"}
+                                size="small"
+                                startIcon={participationUpdating ? <CircularProgress color="inherit" size={16} /> : row.participation_active ? <PauseCircleOutlineRoundedIcon /> : <PlayCircleOutlineRoundedIcon />}
+                                disabled={participationUpdating || modeUpdating}
+                                onClick={() => toggleParticipation(row)}
+                                sx={{ whiteSpace: "nowrap" }}
+                              >
+                                {row.participation_active ? "Pausar participação" : "Ativar participação"}
+                              </Button>
+                              <Button
+                                variant={requiresPreauth ? "outlined" : "contained"}
+                                color={requiresPreauth ? "inherit" : "success"}
+                                size="small"
+                                startIcon={modeUpdating ? <CircularProgress color="inherit" size={16} /> : <SwapHorizRoundedIcon />}
+                                disabled={participationUpdating || modeUpdating}
+                                onClick={() => toggleAuthorizationMode(row)}
+                                sx={{ whiteSpace: "nowrap" }}
+                              >
+                                {requiresPreauth ? "Voltar automático" : "Usar pré-autorização"}
+                              </Button>
+                            </Stack>
                           </TableCell>
                         </TableRow>
                       );
