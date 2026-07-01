@@ -1143,6 +1143,11 @@ export default function AdminNotificationsPage() {
                 value={health.whatsappAllowUnlinkedPhone ? "Liberado" : "Bloqueado"}
                 ok={!health.whatsappAllowUnlinkedPhone}
               />
+              <StatusCard
+                label="Template cativo SIM/NÃO"
+                value={boolLabel(health.captive_preauth_template_configured)}
+                ok={health.captive_preauth_template_configured}
+              />
             </Stack>
 
             {showTestAlert && (
@@ -1166,6 +1171,12 @@ export default function AdminNotificationsPage() {
                 Template de teste não configurado. Preencha o campo Template ID no formulário, configure
                 BREVO_WHATSAPP_GENERIC_TEST_TEMPLATE_ID no Render ou atualize provider_template_id do template
                 GENERIC_TEST no banco.
+              </Alert>
+            )}
+            {health.captive_preauth_template_configured === false && (
+              <Alert severity="warning" sx={{ mb: 2 }}>
+                Template de pré-autorização de cativos não configurado. Configure CAPTIVE_PREAUTH_BREVO_TEMPLATE_ID
+                no backend ou atualize provider_template_id do template CAPTIVE_PREAUTH_REQUEST no banco.
               </Alert>
             )}
           </>
