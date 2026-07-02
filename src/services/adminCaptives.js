@@ -21,3 +21,9 @@ export function updateAdminCaptiveAuthorizationMode(id, authorizationMode) {
     authorization_mode: authorizationMode === true,
   });
 }
+
+export function updateCaptivePreauthNotifications(id, enabled) {
+  return patchJSON(`/admin/captives/${encodeURIComponent(String(id))}/preauth-notifications`, {
+    preauth_notifications_enabled: enabled === true,
+  });
+}
