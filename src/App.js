@@ -26,6 +26,7 @@ import AdminNotificationsPage from "./AdminNotificationsPage";
 import AdminHistoricoSaldo from "./AdminHistoricoSaldo";
 import AdminCaptivesPage from "./AdminCaptivesPage";
 import AutorizacaoCativoPage from "./AutorizacaoCativoPage";
+import CaptiveConfirmationPage from "./CaptiveConfirmationPage";
 import PushPermissionPrompt from "./components/PushPermissionPrompt";
 
 export default function App() {
@@ -50,6 +51,7 @@ export default function App() {
             <Route path="/cadastro" element={<RegisterPage />} />
             <Route path="/login" element={<LoginPage />} />
             <Route path="/autorizacao-cativo" element={<AutorizacaoCativoPage />} />
+            <Route path="/cativo/confirmar" element={<CaptiveConfirmationPage />} />
 
             {/* CONTA: autenticado e não-admin */}
             <Route

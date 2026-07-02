@@ -1148,6 +1148,21 @@ export default function AdminNotificationsPage() {
                 value={boolLabel(health.captive_preauth_template_configured)}
                 ok={health.captive_preauth_template_configured}
               />
+              <StatusCard
+                label="URL confirmação cativo"
+                value={boolLabel(health.captive_confirmation_public_url_configured)}
+                ok={health.captive_confirmation_public_url_configured}
+              />
+              <StatusCard
+                label="Modo template cativo"
+                value={health.captive_preauth_template_mode || "-"}
+                ok={health.captive_preauth_template_mode === "static_link"}
+              />
+              <StatusCard
+                label="Template cativo"
+                value={health.captive_preauth_template_id || "-"}
+                ok={Boolean(health.captive_preauth_template_id)}
+              />
             </Stack>
 
             {showTestAlert && (
@@ -1177,6 +1192,11 @@ export default function AdminNotificationsPage() {
               <Alert severity="warning" sx={{ mb: 2 }}>
                 Template de pré-autorização de cativos não configurado. Configure CAPTIVE_PREAUTH_BREVO_TEMPLATE_ID
                 no backend ou atualize provider_template_id do template CAPTIVE_PREAUTH_REQUEST no banco.
+              </Alert>
+            )}
+            {health.captive_confirmation_public_url_configured === false && (
+              <Alert severity="warning" sx={{ mb: 2 }}>
+                URL de confirmação de cativos não configurada. Configure CAPTIVE_CONFIRMATION_PUBLIC_URL no backend.
               </Alert>
             )}
           </>

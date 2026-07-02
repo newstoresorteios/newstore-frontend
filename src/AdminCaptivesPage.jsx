@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import {
   Alert, AppBar, Box, Button, Chip, CircularProgress, Container, CssBaseline,
   IconButton, MenuItem, Paper, Stack, Table, TableBody, TableCell,
-  TableContainer, TableHead, TableRow, TextField, ThemeProvider, Toolbar,
+  TableContainer, TableHead, TableRow, Tab, Tabs, TextField, ThemeProvider, Toolbar,
   Typography,
 } from "@mui/material";
 import ArrowBackIosNewRoundedIcon from "@mui/icons-material/ArrowBackIosNewRounded";
@@ -16,6 +16,7 @@ import {
   listAdminCaptives,
   updateAdminCaptiveAuthorizationMode,
   updateAdminCaptiveParticipation,
+  updateCaptivePreauthNotifications,
 } from "./services/adminCaptives";
 
 const theme = createNewStoreAdminTheme();
@@ -70,6 +71,7 @@ export default function AdminCaptivesPage() {
   const [error, setError] = React.useState("");
   const [rowError, setRowError] = React.useState("");
   const [updatingId, setUpdatingId] = React.useState("");
+  const [tab, setTab] = React.useState("captives");
 
   React.useEffect(() => {
     const timer = setTimeout(() => {
@@ -136,6 +138,37 @@ export default function AdminCaptivesPage() {
     }
   }
 
+  async function togglePreauthNotifications(row) {
+    const nextEnabled = row.preauth_notifications_enabled !== true;
+    const captiveId = row.autopay_number_id || row.id;
+    setUpdatingId(`${captiveId}:preauth-notifications`);
+    setRowError("");
+    try {
+      const payload = await updateCaptivePreauthNotifications(captiveId, nextEnabled);
+      if (payload?.item?.id) {
+        setItems((current) => current.map((item) => (
+          String(item.id) === String(payload.item.id) ? payload.item : item
+        )));
+      } else if (payload?.ok) {
+        setItems((current) => current.map((item) => {
+          const itemId = item.autopay_number_id || item.id;
+          if (String(itemId) !== String(captiveId)) return item;
+          return {
+            ...item,
+            preauth_notifications_enabled: payload.preauth_notifications_enabled === true,
+            preauth_notifications_label: payload.preauth_notifications_label || (payload.preauth_notifications_enabled ? "Ativas" : "Pausadas"),
+          };
+        }));
+      } else {
+        await load();
+      }
+    } catch {
+      setRowError("Não foi possível atualizar as notificações.");
+    } finally {
+      setUpdatingId("");
+    }
+  }
+
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
   const empty = !loading && !error && items.length === 0;
 
@@ -188,14 +221,27 @@ export default function AdminCaptivesPage() {
           {rowError && <Alert severity="warning">{rowError}</Alert>}
 
           <Paper variant="outlined" sx={{ ...adminPanelPaperSx, overflow: "hidden" }}>
+            <Tabs
+              value={tab}
+              onChange={(_, value) => setTab(value)}
+              variant="scrollable"
+              scrollButtons="auto"
+              sx={{ px: 1 }}
+            >
+              <Tab value="captives" label="Cativos" />
+              <Tab value="notifications" label="Notificações" />
+            </Tabs>
+          </Paper>
+
+          <Paper variant="outlined" sx={{ ...adminPanelPaperSx, overflow: "hidden" }}>
             {loading ? (
               <Stack direction="row" spacing={1.5} alignItems="center" sx={{ p: 3 }}>
                 <CircularProgress size={22} />
                 <Typography sx={{ color: "text.secondary" }}>Carregando</Typography>
               </Stack>
             ) : empty ? (
-              <Typography sx={{ p: 3, color: "text.secondary" }}>Nenhum número cativo encontrado.</Typography>
-            ) : (
+              <Typography sx={{ p: 3, color: "text.secondary" }}>Nenhum cativo encontrado.</Typography>
+            ) : tab === "captives" ? (
               <TableContainer>
                 <Table size="small" sx={{ minWidth: 1180 }}>
                   <TableHead>
@@ -268,6 +314,65 @@ export default function AdminCaptivesPage() {
                                 {requiresPreauth ? "Voltar automático" : "Usar pré-autorização"}
                               </Button>
                             </Stack>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              </TableContainer>
+            ) : (
+              <TableContainer>
+                <Table size="small" sx={{ minWidth: 1080 }}>
+                  <TableHead>
+                    <TableRow>
+                      <TableCell>Nome do cliente</TableCell>
+                      <TableCell>E-mail</TableCell>
+                      <TableCell>Telefone</TableCell>
+                      <TableCell>Número cativo</TableCell>
+                      <TableCell>Participação</TableCell>
+                      <TableCell>Modo de cobrança</TableCell>
+                      <TableCell>Notificações</TableCell>
+                      <TableCell align="right">Ação</TableCell>
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    {items.map((row) => {
+                      const captiveId = row.autopay_number_id || row.id;
+                      const notificationsUpdating = updatingId === `${captiveId}:preauth-notifications`;
+                      const notificationsEnabled = row.preauth_notifications_enabled !== false;
+                      const requiresPreauth = row.authorization_mode === true || row.requires_preauth === true;
+                      return (
+                        <TableRow key={row.id} hover>
+                          <TableCell sx={{ fontWeight: 800 }}>{row.user_name || "-"}</TableCell>
+                          <TableCell>{row.user_email || "-"}</TableCell>
+                          <TableCell>{row.user_phone_masked || "-"}</TableCell>
+                          <TableCell sx={{ fontWeight: 900 }}>{row.captive_number_label || row.captive_number}</TableCell>
+                          <TableCell>
+                            {row.participation_active ? <StatusChip label="Participando" tone="success" /> : <StatusChip label="Pausado" tone="error" />}
+                          </TableCell>
+                          <TableCell>
+                            {requiresPreauth
+                              ? <StatusChip label={row.authorization_mode_label || "Pré-autorização"} tone="warning" />
+                              : <StatusChip label={row.authorization_mode_label || "Automático"} tone="neutral" />}
+                          </TableCell>
+                          <TableCell>
+                            {notificationsEnabled
+                              ? <StatusChip label={row.preauth_notifications_label || "Ativas"} tone="success" />
+                              : <StatusChip label={row.preauth_notifications_label || "Pausadas"} tone="warning" />}
+                          </TableCell>
+                          <TableCell align="right">
+                            <Button
+                              variant={notificationsEnabled ? "outlined" : "contained"}
+                              color={notificationsEnabled ? "warning" : "success"}
+                              size="small"
+                              startIcon={notificationsUpdating ? <CircularProgress color="inherit" size={16} /> : notificationsEnabled ? <PauseCircleOutlineRoundedIcon /> : <PlayCircleOutlineRoundedIcon />}
+                              disabled={notificationsUpdating}
+                              onClick={() => togglePreauthNotifications(row)}
+                              sx={{ whiteSpace: "nowrap" }}
+                            >
+                              {notificationsEnabled ? "Pausar notificações" : "Ativar notificações"}
+                            </Button>
                           </TableCell>
                         </TableRow>
                       );
