@@ -137,8 +137,10 @@ function normalizePhone(value) {
 function statusText(status) {
   if (status === "pending") return "Pendente";
   if (status === "authorized") return "Confirmada";
+  if (status === "charged") return "Confirmada e cobrada";
   if (status === "declined") return "Recusada";
   if (status === "expired") return "Expirada";
+  if (status === "failed") return "Falhou";
   return status || "-";
 }
 
@@ -191,9 +193,26 @@ export default function CaptiveConfirmationPage() {
       setItems((current) => current.map((entry) => (
         entry.id === item.id ? { ...entry, status: nextStatus } : entry
       )));
-      setSuccess(action === "authorize" ? "Participação confirmada com sucesso." : "Participação recusada.");
-    } catch {
-      setError("Não foi possível registrar sua decisão.");
+      if (action === "authorize" && nextStatus === "charged") {
+        setSuccess("Participação confirmada e cobrança aprovada com sucesso.");
+      } else {
+        setSuccess(action === "authorize" ? "Participação confirmada com sucesso." : "Participação recusada.");
+      }
+    } catch (err) {
+      const message = String(err?.message || "");
+      if (message.includes("authorization_expired")) {
+        setItems((current) => current.map((entry) => (
+          entry.id === item.id ? { ...entry, status: "expired" } : entry
+        )));
+        setError("Essa confirmação expirou e o número foi liberado para venda geral.");
+      } else if (message.includes("payment_failed")) {
+        setItems((current) => current.map((entry) => (
+          entry.id === item.id ? { ...entry, status: "failed" } : entry
+        )));
+        setError("Não foi possível concluir a cobrança. Entre em contato com o suporte da New Store.");
+      } else {
+        setError("Não foi possível registrar sua decisão.");
+      }
     } finally {
       setLoading("");
     }
