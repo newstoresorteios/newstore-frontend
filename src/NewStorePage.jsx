@@ -133,28 +133,22 @@ async function reserveNumbers(numbers) {
   return r.json(); // { reservationId, drawId, expiresAt, numbers }
 }
 
-// Checagem do limite no backend (evita preflight; re-tenta com Authorization se 401)
+// Checagem do limite no backend: só chama quando há token.
 async function checkUserPurchaseLimit({ addCount = 0, drawId } = {}) {
+  const token = getAuthToken();
+  if (!token) {
+    return { blocked: false, current: null, max: null, unauthenticated: true };
+  }
+
   const qs = new URLSearchParams();
   qs.set("add", String(addCount));
   if (drawId != null) qs.set("draw_id", String(drawId));
 
-  // 1ª tentativa: sem headers (sem preflight)
   let res = await fetch(`${API_BASE}/api/purchase-limit/check?${qs}`, {
     credentials: "include",
     cache: "no-store",
+    headers: { Authorization: `Bearer ${token}` },
   });
-
-  // 2ª tentativa (se precisar header Authorization)
-  if (res.status === 401) {
-    const token = getAuthToken();
-    const headers = token ? { Authorization: `Bearer ${token}` } : undefined;
-    res = await fetch(`${API_BASE}/api/purchase-limit/check?${qs}`, {
-      credentials: "include",
-      cache: "no-store",
-      headers,
-    });
-  }
 
   if (res.status === 401) throw new Error("unauthorized");
   if (!res.ok) throw new Error(`limit_check_${res.status}`);
@@ -243,6 +237,23 @@ const formatSecondaryMoney = (cents) => {
 
 const getSecondaryReservationId = (reservation) =>
   reservation?.reservation_id ?? reservation?.reservationId ?? reservation?.id;
+
+const ADDITIONAL_LOGIN_REQUIRED_MESSAGE =
+  "Faça login ou crie sua conta para reservar números no sorteio adicional.";
+
+function getAdditionalReserveErrorMessage(error) {
+  const code = String(error || "");
+  const messages = {
+    unauthorized: ADDITIONAL_LOGIN_REQUIRED_MESSAGE,
+    numbers_unavailable: "Alguns números ficaram indisponíveis. Atualize a seleção.",
+    reservation_expired: "Reserva expirada. Selecione os números novamente.",
+    purchase_limit_exceeded: "Limite de compra excedido para este sorteio.",
+    additional_config_not_found: "Configuração do sorteio adicional indisponível.",
+    draw_not_open: "Este sorteio adicional não está aberto.",
+    draw_not_found: "Sorteio adicional não encontrado.",
+  };
+  return messages[code] || "Falha ao reservar números do adicional.";
+}
 
 const getSecondaryPixErrorMessage = (error) => {
   const code = String(error || "");
@@ -1181,6 +1192,14 @@ export default function NewStorePage({
     const drawId = draw?.id;
     const selected = selectedAdditionalNumbersByDrawId[drawId] || [];
     if (!drawId || !selected.length) return null;
+    const authToken = sanitizeToken(token) || getAuthToken();
+    if (!authToken) {
+      setAdditionalErrorByDrawId((prev) => ({
+        ...prev,
+        [drawId]: ADDITIONAL_LOGIN_REQUIRED_MESSAGE,
+      }));
+      return null;
+    }
     setAdditionalReserveLoadingByDrawId((prev) => ({ ...prev, [drawId]: true }));
     setAdditionalErrorByDrawId((prev) => ({ ...prev, [drawId]: "" }));
     try {
@@ -1207,7 +1226,7 @@ export default function NewStorePage({
       }
       const payload = await res.json().catch(() => ({}));
       if (!res.ok) {
-        throw new Error(payload?.error || payload?.message || "Falha ao reservar números do adicional.");
+        throw new Error(getAdditionalReserveErrorMessage(payload?.error || payload?.message));
       }
       const reservation = { ...payload, numbers: payload?.numbers || numbersToReserve };
       setAdditionalReservationsByDrawId((prev) => ({ ...prev, [drawId]: reservation }));
@@ -1221,7 +1240,7 @@ export default function NewStorePage({
     } catch (e) {
       setAdditionalErrorByDrawId((prev) => ({
         ...prev,
-        [drawId]: e.message || "Falha ao reservar números do adicional.",
+        [drawId]: getAdditionalReserveErrorMessage(e.message),
       }));
       return null;
     } finally {
@@ -1701,7 +1720,29 @@ Baseado no resultado oficial da Lotomania (Caixa Econômica Federal).
 
                     {additionalErrorByDrawId[drawId] && (
                       <Alert severity="error" sx={{ bgcolor: "rgba(211,47,47,0.12)" }}>
-                        {additionalErrorByDrawId[drawId]}
+                        <Stack spacing={1}>
+                          <span>{additionalErrorByDrawId[drawId]}</span>
+                          {additionalErrorByDrawId[drawId] === ADDITIONAL_LOGIN_REQUIRED_MESSAGE ? (
+                            <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+                              <Button
+                                size="small"
+                                variant="contained"
+                                color="success"
+                                onClick={() => navigate("/login", { state: { from: "/" } })}
+                              >
+                                Entrar
+                              </Button>
+                              <Button
+                                size="small"
+                                variant="outlined"
+                                color="inherit"
+                                onClick={() => navigate("/cadastro", { state: { from: "/" } })}
+                              >
+                                Criar conta
+                              </Button>
+                            </Stack>
+                          ) : null}
+                        </Stack>
                       </Alert>
                     )}
 
