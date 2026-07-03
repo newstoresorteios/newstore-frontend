@@ -16,6 +16,8 @@ import {
   Paper,
   Stack,
   TextField,
+  Tab,
+  Tabs,
   ThemeProvider,
   Toolbar,
   Typography,
@@ -512,24 +514,17 @@ export default function AdminDashboard() {
 
           {/* Painel (resumo + preço e configs) */}
           <Paper variant="outlined" sx={{ p: { xs: 3, md: 4 }, borderRadius: 4, width: "100%" }}>
-            <Stack direction="row" spacing={1} sx={{ mb: 3, flexWrap: "wrap" }}>
-              <Button
-                variant={!isAdditionalMode ? "contained" : "outlined"}
-                color="primary"
-                onClick={() => setDrawMode("principal")}
-                sx={{ borderRadius: 999, px: 3, fontWeight: 900 }}
+            <Box sx={{ mb: 3, borderBottom: "1px solid rgba(255,255,255,0.12)" }}>
+              <Tabs
+                value={isAdditionalMode ? "adicional" : "principal"}
+                onChange={(_, value) => setDrawMode(value === "adicional" ? "adicionais" : "principal")}
+                textColor="primary"
+                indicatorColor="primary"
               >
-                PRINCIPAL
-              </Button>
-              <Button
-                variant={isAdditionalMode ? "contained" : "outlined"}
-                color="primary"
-                onClick={() => setDrawMode("adicionais")}
-                sx={{ borderRadius: 999, px: 3, fontWeight: 900 }}
-              >
-                ADICIONAIS
-              </Button>
-            </Stack>
+                <Tab value="principal" label="Principal" sx={{ fontWeight: 900 }} />
+                <Tab value="adicional" label="Adicional" sx={{ fontWeight: 900 }} />
+              </Tabs>
+            </Box>
 
             {isAdditionalMode && !additionalLoading && additionalDraws.length === 0 && (
               <Alert severity="info" sx={{ mb: 3, bgcolor: "rgba(2,136,209,0.12)" }}>
@@ -680,62 +675,23 @@ export default function AdminDashboard() {
             >
               {currentSaving ? "Salvando..." : "ATUALIZAR"}
             </Button>
-
             {isAdditionalMode && selectedAdditionalItem && (
-              <>
-                <Divider sx={{ my: 3 }} />
-                <Typography variant="h6" sx={{ fontWeight: 900, mb: 2 }}>
-                  Compradores deste sorteio
-                </Typography>
-
-                {selectedAdditionalItem.buyers.length === 0 ? (
-                  <Typography sx={{ opacity: 0.7 }}>
-                    Nenhum comprador neste sorteio.
+              <Alert severity="info" sx={{ mt: 3, bgcolor: "rgba(2,136,209,0.12)" }}>
+                <Stack direction={{ xs: "column", sm: "row" }} spacing={1.5} alignItems={{ xs: "flex-start", sm: "center" }}>
+                  <Typography sx={{ flex: 1, fontWeight: 700 }}>
+                    Compradores do adicional ficam na aba Sorteio Ativo — Compradores.
                   </Typography>
-                ) : (
-                  <Box sx={{ overflowX: "auto" }}>
-                    <Box sx={{ minWidth: 640 }}>
-                      <Box
-                        sx={{
-                          display: "grid",
-                          gridTemplateColumns: "1.2fr 1.6fr 0.7fr 1.5fr",
-                          gap: 2,
-                          pb: 1,
-                          borderBottom: "1px solid rgba(255,255,255,0.16)",
-                        }}
-                      >
-                        {['Nome', 'Email', 'Quantidade', 'Números'].map((label) => (
-                          <Typography key={label} sx={{ fontWeight: 800, opacity: 0.8 }}>
-                            {label}
-                          </Typography>
-                        ))}
-                      </Box>
-
-                      {selectedAdditionalItem.buyers.map((buyer, index) => {
-                        const numbers = Array.isArray(buyer?.numbers) ? buyer.numbers : [];
-                        const numbersCount = buyer?.numbers_count ?? numbers.length;
-                        return (
-                          <Box
-                            key={buyer?.user_id ?? `${buyer?.email || "buyer"}-${index}`}
-                            sx={{
-                              display: "grid",
-                              gridTemplateColumns: "1.2fr 1.6fr 0.7fr 1.5fr",
-                              gap: 2,
-                              py: 1.25,
-                              borderBottom: "1px solid rgba(255,255,255,0.08)",
-                            }}
-                          >
-                            <Typography>{buyer?.name || "-"}</Typography>
-                            <Typography>{buyer?.email || "-"}</Typography>
-                            <Typography>{numbersCount}</Typography>
-                            <Typography>{numbers.length ? numbers.join(", ") : "-"}</Typography>
-                          </Box>
-                        );
-                      })}
-                    </Box>
-                  </Box>
-                )}
-              </>
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    color="info"
+                    onClick={() => navigate("/admin/sorteiosAtivos")}
+                    sx={{ fontWeight: 800 }}
+                  >
+                    Ver compradores na aba Sorteio Ativo — Compradores
+                  </Button>
+                </Stack>
+              </Alert>
             )}
           </Paper>
 

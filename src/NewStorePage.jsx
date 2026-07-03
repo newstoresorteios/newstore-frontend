@@ -275,6 +275,12 @@ const getSecondaryPixErrorMessage = (error) => {
   return messages[code] || "Falha ao gerar PIX do secundário.";
 };
 
+const ADDITIONAL_PIX_PENDING_MESSAGE = "Aguardando confirmação do pagamento...";
+const ADDITIONAL_PIX_SUCCESS_MESSAGE = "Pagamento confirmado com sucesso!";
+const ADDITIONAL_PIX_FAILED_MESSAGE = "Não foi possível confirmar o pagamento. Tente novamente ou entre em contato com o suporte.";
+const ADDITIONAL_PIX_PAID_STATUSES = new Set(["approved", "paid", "pago"]);
+const ADDITIONAL_PIX_FINAL_ERROR_STATUSES = new Set(["failed", "rejected", "cancelled", "canceled", "expired"]);
+
 const normalizeAdditionalPixPayment = (payload) => {
   const source =
     payload?.payment ||
@@ -367,6 +373,8 @@ export default function NewStorePage({
   const [additionalNumbersLoadingByDrawId, setAdditionalNumbersLoadingByDrawId] = React.useState({});
   const [additionalReserveLoadingByDrawId, setAdditionalReserveLoadingByDrawId] = React.useState({});
   const [additionalPixLoadingByDrawId, setAdditionalPixLoadingByDrawId] = React.useState({});
+  const [additionalPixStatusByDrawId, setAdditionalPixStatusByDrawId] = React.useState({});
+  const [additionalPixMessageByDrawId, setAdditionalPixMessageByDrawId] = React.useState({});
   const [additionalErrorByDrawId, setAdditionalErrorByDrawId] = React.useState({});
   const [additionalNoticeByDrawId, setAdditionalNoticeByDrawId] = React.useState({});
   const [additionalPixOpenDrawId, setAdditionalPixOpenDrawId] = React.useState(null);
@@ -1282,6 +1290,8 @@ export default function NewStorePage({
         throw new Error(getSecondaryPixErrorMessage(payload?.error || payload?.message));
       }
       const payment = normalizeAdditionalPixPayment(payload);
+      setAdditionalPixStatusByDrawId((prev) => ({ ...prev, [drawId]: payment.status || "pending" }));
+      setAdditionalPixMessageByDrawId((prev) => ({ ...prev, [drawId]: ADDITIONAL_PIX_PENDING_MESSAGE }));
       setAdditionalPaymentByDrawId((prev) => ({ ...prev, [drawId]: payment }));
       setAdditionalPixOpenDrawId(drawId);
       return payment;
@@ -1296,6 +1306,102 @@ export default function NewStorePage({
     }
   };
 
+  const checkAdditionalPixStatus = React.useCallback(
+    async (paymentId) => {
+      const res = await fetch(
+        `${API_BASE}/api/additional-payments/${encodeURIComponent(paymentId)}/status`,
+        {
+          method: "GET",
+          headers: getSecondaryHeaders(false),
+          credentials: "include",
+          cache: "no-store",
+        }
+      );
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(payload?.error || payload?.message || `additional_status_${res.status}`);
+      }
+      return payload;
+    },
+    [getSecondaryHeaders]
+  );
+
+  const handleAdditionalPixApproved = React.useCallback(
+    async (drawId) => {
+      if (drawId == null) return;
+      setAdditionalPixStatusByDrawId((prev) => ({ ...prev, [drawId]: "approved" }));
+      setAdditionalPixMessageByDrawId((prev) => ({ ...prev, [drawId]: ADDITIONAL_PIX_SUCCESS_MESSAGE }));
+      setAdditionalNoticeByDrawId((prev) => ({ ...prev, [drawId]: ADDITIONAL_PIX_SUCCESS_MESSAGE }));
+      setAdditionalPixLoadingByDrawId((prev) => ({ ...prev, [drawId]: false }));
+      setAdditionalPaymentByDrawId((prev) => ({
+        ...prev,
+        [drawId]: prev[drawId] ? { ...prev[drawId], status: "approved" } : prev[drawId],
+      }));
+      await reloadAdditionalNumbers(drawId);
+      setSelectedAdditionalNumbersByDrawId((prev) => ({ ...prev, [drawId]: [] }));
+      setAdditionalPixOpenDrawId((current) => (String(current) === String(drawId) ? null : current));
+    },
+    [reloadAdditionalNumbers]
+  );
+
+  React.useEffect(() => {
+    const drawId = additionalPixOpenDrawId;
+    if (drawId == null) return undefined;
+
+    const payment = additionalPaymentByDrawId[drawId];
+    const paymentId = payment?.paymentId ?? payment?.payment_id ?? payment?.id;
+    if (!paymentId) return undefined;
+
+    const currentStatus = String(additionalPixStatusByDrawId[drawId] || payment?.status || "").toLowerCase();
+    if (ADDITIONAL_PIX_PAID_STATUSES.has(currentStatus)) return undefined;
+    if (ADDITIONAL_PIX_FINAL_ERROR_STATUSES.has(currentStatus)) return undefined;
+
+    let stopped = false;
+    let intervalId;
+
+    const poll = async () => {
+      try {
+        const statusPayload = await checkAdditionalPixStatus(paymentId);
+        if (stopped) return;
+
+        const nextStatus = String(statusPayload?.status || "pending").toLowerCase();
+        setAdditionalPixStatusByDrawId((prev) => (prev[drawId] === nextStatus ? prev : { ...prev, [drawId]: nextStatus }));
+
+        if (statusPayload?.paid || ADDITIONAL_PIX_PAID_STATUSES.has(nextStatus)) {
+          if (intervalId) clearInterval(intervalId);
+          await handleAdditionalPixApproved(drawId);
+          return;
+        }
+
+        if (ADDITIONAL_PIX_FINAL_ERROR_STATUSES.has(nextStatus)) {
+          if (intervalId) clearInterval(intervalId);
+          setAdditionalPixMessageByDrawId((prev) => ({ ...prev, [drawId]: ADDITIONAL_PIX_FAILED_MESSAGE }));
+          setAdditionalPixLoadingByDrawId((prev) => ({ ...prev, [drawId]: false }));
+          return;
+        }
+
+        setAdditionalPixMessageByDrawId((prev) => ({ ...prev, [drawId]: ADDITIONAL_PIX_PENDING_MESSAGE }));
+      } catch {
+        if (!stopped) {
+          setAdditionalPixMessageByDrawId((prev) => ({ ...prev, [drawId]: ADDITIONAL_PIX_PENDING_MESSAGE }));
+        }
+      }
+    };
+
+    poll();
+    intervalId = setInterval(poll, 3500);
+
+    return () => {
+      stopped = true;
+      if (intervalId) clearInterval(intervalId);
+    };
+  }, [
+    additionalPaymentByDrawId,
+    additionalPixOpenDrawId,
+    additionalPixStatusByDrawId,
+    checkAdditionalPixStatus,
+    handleAdditionalPixApproved,
+  ]);
   const handleContinueAdditional = async (draw) => {
     const reservation = await handleReserveAdditionalNumbers(draw);
     if (reservation) await handleAdditionalPix(draw, reservation);
@@ -2745,15 +2851,32 @@ Baseado no resultado oficial da Lotomania (Caixa Econômica Federal).
           const cents = Number(draw?.ticket_price_cents ?? draw?.price_cents ?? 0);
           return numbers.length * (cents / 100);
         })()}
-        inlineMessage="PIX do sorteio adicional."
+        inlineMessage={additionalPixOpenDrawId != null ? additionalPixMessageByDrawId[additionalPixOpenDrawId] || ADDITIONAL_PIX_PENDING_MESSAGE : ADDITIONAL_PIX_PENDING_MESSAGE}
         onCopy={() => {
           const payment = additionalPaymentByDrawId[additionalPixOpenDrawId];
           if (payment) {
             navigator.clipboard.writeText(payment.copy_paste_code || payment.qr_code || "");
           }
         }}
-        onRefresh={() => {
-          alert("A confirmação do PIX adicional será processada pelo backend.");
+        onRefresh={async () => {
+          const drawId = additionalPixOpenDrawId;
+          const payment = additionalPaymentByDrawId[drawId];
+          const paymentId = payment?.paymentId ?? payment?.payment_id ?? payment?.id;
+          if (!drawId || !paymentId) return;
+          try {
+            const statusPayload = await checkAdditionalPixStatus(paymentId);
+            const nextStatus = String(statusPayload?.status || "pending").toLowerCase();
+            setAdditionalPixStatusByDrawId((prev) => (prev[drawId] === nextStatus ? prev : { ...prev, [drawId]: nextStatus }));
+            if (statusPayload?.paid || ADDITIONAL_PIX_PAID_STATUSES.has(nextStatus)) {
+              await handleAdditionalPixApproved(drawId);
+            } else if (ADDITIONAL_PIX_FINAL_ERROR_STATUSES.has(nextStatus)) {
+              setAdditionalPixMessageByDrawId((prev) => ({ ...prev, [drawId]: ADDITIONAL_PIX_FAILED_MESSAGE }));
+            } else {
+              setAdditionalPixMessageByDrawId((prev) => ({ ...prev, [drawId]: ADDITIONAL_PIX_PENDING_MESSAGE }));
+            }
+          } catch {
+            setAdditionalPixMessageByDrawId((prev) => ({ ...prev, [drawId]: ADDITIONAL_PIX_FAILED_MESSAGE }));
+          }
         }}
       />
 

@@ -3,7 +3,8 @@ import * as React from "react";
 import {
   AppBar, Toolbar, IconButton, Typography, Container, CssBaseline, Paper, Stack,
   TextField, Button, Table, TableHead, TableBody, TableRow, TableCell, TableContainer,
-  Checkbox, Divider, Snackbar, Alert, CircularProgress, createTheme, ThemeProvider, Box, Chip, MenuItem
+  Checkbox, Divider, Snackbar, Alert, CircularProgress, createTheme, ThemeProvider, Box, Chip, MenuItem,
+  Tab, Tabs
 } from "@mui/material";
 import ArrowBackIosNewRoundedIcon from "@mui/icons-material/ArrowBackIosNewRounded";
 import SearchRoundedIcon from "@mui/icons-material/SearchRounded";
@@ -279,9 +280,13 @@ async function fetchBoard(drawId) {
 async function findOpenSecondaryDrawId() {
   const j = await safeJSON("/admin/additional-draws");
   const list = normalizeAdditionalDrawsPayload(j);
-  const additional =
-    list.find((item) => String(item.status || "open").toLowerCase() === "open") ||
-    list[0];
+  const additional = list
+    .filter((item) => {
+      const type = String(item.draw_type || "adicional").toLowerCase();
+      const status = String(item.status || "").toLowerCase();
+      return status === "open" && (type === "adicional" || type === "secundario");
+    })
+    .sort((a, b) => Number(b.id || 0) - Number(a.id || 0))[0];
   return additional?.id ?? null;
 }
 
@@ -405,11 +410,24 @@ export default function AdminUsersPage() {
     let cancel = false;
     (async () => {
       const payload = await safeJSON("/admin/additional-draws");
-      const list = normalizeAdditionalDrawsPayload(payload);
-      if (!cancel) setAdditionalAssignDraws(list);
+      const list = normalizeAdditionalDrawsPayload(payload)
+        .filter((item) => {
+          const type = String(item.draw_type || "adicional").toLowerCase();
+          const status = String(item.status || "").toLowerCase();
+          return status === "open" && (type === "adicional" || type === "secundario");
+        })
+        .sort((a, b) => Number(b.id || 0) - Number(a.id || 0));
+      if (cancel) return;
+      setAdditionalAssignDraws(list);
+      const stillSelected = list.some((item) => String(item.id) === String(secondaryAssignDrawId));
+      if (list.length && !stillSelected) setSecondaryAssignDrawId(String(list[0].id));
+      if (!list.length) {
+        setSecondaryAssignDrawId("");
+        setSecondaryAssignBoard([]);
+      }
     })();
     return () => { cancel = true; };
-  }, [assignDrawMode]);
+  }, [assignDrawMode, secondaryAssignDrawId]);
 
   const filtered = React.useMemo(() => {
     const s = q.trim().toLowerCase();
@@ -548,7 +566,7 @@ export default function AdminUsersPage() {
         ? {
             user_id: form.id,
             numbers: nums,
-            generate_balance: true,
+            generate_balance: creditCouponOnAssign,
           }
         : {
             user_id: form.id,
@@ -744,24 +762,16 @@ export default function AdminUsersPage() {
                 <Typography variant="caption" sx={{ opacity: 0.75, fontWeight: 800 }}>
                   Tipo de sorteio
                 </Typography>
-                <Stack direction="row" spacing={1}>
-                  <Button
-                    variant={!isSecondaryAssignMode ? "contained" : "outlined"}
-                    color="success"
-                    onClick={() => setAssignDrawMode("principal")}
-                    sx={{ borderRadius: 999, fontWeight: 800 }}
-                  >
-                    Principal
-                  </Button>
-                  <Button
-                    variant={isSecondaryAssignMode ? "contained" : "outlined"}
-                    color="success"
-                    onClick={() => setAssignDrawMode("adicional")}
-                    sx={{ borderRadius: 999, fontWeight: 800 }}
-                  >
-                    Adicional
-                  </Button>
-                </Stack>
+                                <Tabs
+                  value={assignDrawMode}
+                  onChange={(_, value) => setAssignDrawMode(value)}
+                  textColor="primary"
+                  indicatorColor="primary"
+                  sx={{ minHeight: 36 }}
+                >
+                  <Tab value="principal" label="Principal" sx={{ minHeight: 36, fontWeight: 900 }} />
+                  <Tab value="adicional" label="Adicional" sx={{ minHeight: 36, fontWeight: 900 }} />
+                </Tabs>
               </Stack>
               {isSecondaryAssignMode && (
                 <TextField
@@ -777,6 +787,11 @@ export default function AdminUsersPage() {
                     </MenuItem>
                   ))}
                 </TextField>
+              )}
+                            {isSecondaryAssignMode && additionalAssignDraws.length === 0 && (
+                <Alert severity="info" sx={{ minWidth: 240 }}>
+                  Nenhum sorteio adicional aberto.
+                </Alert>
               )}
               <TextField
                 label={isSecondaryAssignMode ? "Sorteio ID" : "Sorteio (ID)"}

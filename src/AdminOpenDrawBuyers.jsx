@@ -4,7 +4,7 @@ import { useNavigate, Link as RouterLink } from "react-router-dom";
 import {
   Alert, AppBar, Box, Button, Chip, Container, CssBaseline, Divider, IconButton,
   Paper, Stack, Tab, Tabs, TextField, ThemeProvider, Toolbar, Typography,
-  Table, TableBody, TableCell, TableContainer, TableHead, TableRow
+  Table, TableBody, TableCell, TableContainer, TableHead, TableRow, MenuItem
 } from "@mui/material";
 import ArrowBackIosNewRoundedIcon from "@mui/icons-material/ArrowBackIosNewRounded";
 import AccountCircleRoundedIcon from "@mui/icons-material/AccountCircleRounded";
@@ -46,7 +46,14 @@ const authHeaders = () => {
 
 async function getJSON(path) {
   const r = await fetch(apiJoin(path), { headers: { "Content-Type": "application/json", ...authHeaders() }, credentials: "omit", cache: "no-store" });
-  if (!r.ok) throw new Error(String(r.status));
+  if (!r.ok) {
+    let message = String(r.status);
+    try {
+      const body = await r.json();
+      message = body?.message || body?.error || message;
+    } catch {}
+    throw new Error(message);
+  }
   return r.json();
 }
 
@@ -153,6 +160,8 @@ export default function AdminOpenDrawBuyers() {
   useAuth();
 
   const [drawMode, setDrawMode] = React.useState("principal");
+  const [additionalDraws, setAdditionalDraws] = React.useState([]);
+  const [selectedAdditionalDrawId, setSelectedAdditionalDrawId] = React.useState("");
   const [tab, setTab] = React.useState(0);
   const [loading, setLoading] = React.useState(true);
   const [drawId, setDrawId] = React.useState(null);
@@ -205,12 +214,20 @@ export default function AdminOpenDrawBuyers() {
           return status === "open" && (type === "adicional" || type === "secundario");
         })
         .sort((a, b) => Number(b?.draw?.id || 0) - Number(a?.draw?.id || 0));
-      const current = openItems[0] || null;
+      const current =
+        openItems.find((item) => String(item?.draw?.id) === String(selectedAdditionalDrawId)) ||
+        openItems[0] ||
+        null;
 
       if (sequence !== loadSequence.current) return;
+      setAdditionalDraws(openItems);
       if (!current?.draw?.id) {
-        setEmptyMessage("Nenhum sorteio adicional aberto encontrado.");
+        setSelectedAdditionalDrawId("");
+        setEmptyMessage("Nenhum sorteio adicional aberto.");
         return;
+      }
+      if (String(current.draw.id) !== String(selectedAdditionalDrawId)) {
+        setSelectedAdditionalDrawId(String(current.draw.id));
       }
 
       const additionalDrawId = Number(current.draw.id);
@@ -260,7 +277,9 @@ export default function AdminOpenDrawBuyers() {
     } catch (error) {
       if (sequence === loadSequence.current) {
         setLoadError(
-          drawMode === "adicional"
+          error?.message && !/^\d+$/.test(String(error.message))
+            ? String(error.message)
+            : drawMode === "adicional"
             ? "Não foi possível carregar os compradores do sorteio adicional."
             : "Não foi possível carregar os compradores do sorteio principal."
         );
@@ -268,14 +287,12 @@ export default function AdminOpenDrawBuyers() {
     } finally {
       if (sequence === loadSequence.current) setLoading(false);
     }
-  }, [drawMode]);
+  }, [drawMode, selectedAdditionalDrawId]);
   React.useEffect(() => { load(); }, [load]);
 
   const isAdditionalMode = drawMode === "adicional";
   const drawTypeSlug = isAdditionalMode ? "adicional" : "principal";
-  const screenTitle = isAdditionalMode
-    ? "Sorteio Adicional — Compradores"
-    : "Sorteio Ativo — Compradores";
+  const screenTitle = "Sorteio Ativo — Compradores";
 
   // Map de user_id -> idx/color
   const idToIdx = React.useMemo(() => {
@@ -974,27 +991,35 @@ export default function AdminOpenDrawBuyers() {
               <Typography variant="caption" sx={{ opacity: 0.72, fontWeight: 800 }}>
                 Tipo de sorteio
               </Typography>
-              <Stack direction="row" spacing={1}>
-                <Button
-                  size="small"
-                  variant={!isAdditionalMode ? "contained" : "outlined"}
-                  onClick={() => setDrawMode("principal")}
-                  sx={{ borderRadius: 999, fontWeight: 800 }}
-                >
-                  Principal
-                </Button>
-                <Button
-                  size="small"
-                  variant={isAdditionalMode ? "contained" : "outlined"}
-                  onClick={() => setDrawMode("adicional")}
-                  sx={{ borderRadius: 999, fontWeight: 800 }}
-                >
-                  Adicional
-                </Button>
-              </Stack>
+              <Tabs
+                value={drawMode}
+                onChange={(_, value) => setDrawMode(value)}
+                textColor="primary"
+                indicatorColor="primary"
+                sx={{ minHeight: 36 }}
+              >
+                <Tab value="principal" label="Principal" sx={{ minHeight: 36, fontWeight: 900 }} />
+                <Tab value="adicional" label="Adicional" sx={{ minHeight: 36, fontWeight: 900 }} />
+              </Tabs>
             </Stack>
           </Stack>
 
+            {isAdditionalMode && additionalDraws.length > 1 && (
+              <TextField
+                select
+                size="small"
+                label="Sorteio adicional"
+                value={selectedAdditionalDrawId}
+                onChange={(event) => setSelectedAdditionalDrawId(event.target.value)}
+                sx={{ minWidth: { xs: "100%", sm: 280 } }}
+              >
+                {additionalDraws.map((item) => (
+                  <MenuItem key={item.draw.id} value={String(item.draw.id)}>
+                    #{item.draw.id} - {item.draw.product_name || item.draw.banner_title || "Sorteio adicional"}
+                  </MenuItem>
+                ))}
+              </TextField>
+            )}
           {emptyMessage && <Alert severity="info">{emptyMessage}</Alert>}
           {loadError && <Alert severity="error">{loadError}</Alert>}
 
@@ -1079,7 +1104,7 @@ export default function AdminOpenDrawBuyers() {
                     </TableHead>
                     <TableBody>
                       {filteredBuyers.length === 0 && (
-                        <TableRow><TableCell colSpan={5} sx={{ color: "#bbb" }}>Nenhum comprador.</TableCell></TableRow>
+                        <TableRow><TableCell colSpan={5} sx={{ color: "#bbb" }}>Não há compradores para este sorteio.</TableCell></TableRow>
                       )}
                       {filteredBuyers.map((b, i) => (
                         <TableRow key={b.user_id || i}>
