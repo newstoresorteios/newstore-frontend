@@ -91,6 +91,7 @@ function sanitizeToken(t) {
   )
     s = s.slice(1, -1);
   if (/^Bearer\s+/i.test(s)) s = s.replace(/^Bearer\s+/i, "").trim();
+  if (!s || /^(null|undefined)$/i.test(s)) return "";
   return s.replace(/\s+/g, "");
 }
 function getAuthToken() {
@@ -243,6 +244,10 @@ const ADDITIONAL_LOGIN_REQUIRED_MESSAGE =
 
 function getAdditionalReserveErrorMessage(error) {
   const code = String(error || "");
+  if (code === "numbers_reserved") return "Esse numero ja esta reservado temporariamente.";
+  if (code === "numbers_unavailable") return "Esse numero nao esta mais disponivel.";
+  if (code === "draw_not_open") return "Esse sorteio adicional nao esta mais disponivel.";
+  if (code && !/^[a-z0-9_:-]+$/i.test(code)) return code;
   const messages = {
     unauthorized: ADDITIONAL_LOGIN_REQUIRED_MESSAGE,
     numbers_unavailable: "Alguns números ficaram indisponíveis. Atualize a seleção.",
@@ -253,6 +258,9 @@ function getAdditionalReserveErrorMessage(error) {
     draw_not_found: "Sorteio adicional não encontrado.",
   };
   return messages[code] || "Falha ao reservar números do adicional.";
+}
+function getRequestAuthToken(contextToken) {
+  return getAuthToken() || sanitizeToken(contextToken);
 }
 
 const getSecondaryPixErrorMessage = (error) => {
@@ -719,7 +727,7 @@ export default function NewStorePage({
   const getSecondaryHeaders = React.useCallback(
     (withJson = false) => {
       const headers = withJson ? { "Content-Type": "application/json" } : {};
-      const authToken = sanitizeToken(token) || getAuthToken();
+      const authToken = getRequestAuthToken(token);
       if (authToken) headers.Authorization = `Bearer ${authToken}`;
       return headers;
     },
@@ -1192,7 +1200,7 @@ export default function NewStorePage({
     const drawId = draw?.id;
     const selected = selectedAdditionalNumbersByDrawId[drawId] || [];
     if (!drawId || !selected.length) return null;
-    const authToken = sanitizeToken(token) || getAuthToken();
+    const authToken = getRequestAuthToken(token);
     if (!authToken) {
       setAdditionalErrorByDrawId((prev) => ({
         ...prev,
@@ -1226,7 +1234,7 @@ export default function NewStorePage({
       }
       const payload = await res.json().catch(() => ({}));
       if (!res.ok) {
-        throw new Error(getAdditionalReserveErrorMessage(payload?.error || payload?.message));
+        throw new Error(getAdditionalReserveErrorMessage(payload?.message || payload?.error));
       }
       const reservation = { ...payload, numbers: payload?.numbers || numbersToReserve };
       setAdditionalReservationsByDrawId((prev) => ({ ...prev, [drawId]: reservation }));
