@@ -198,6 +198,7 @@ export default function AdminDashboard() {
   const [principalLoading, setPrincipalLoading] = React.useState(true);
   const [principalSaving, setPrincipalSaving] = React.useState(false);
   const [principalCreating, setPrincipalCreating] = React.useState(false);
+  const [principalClosing, setPrincipalClosing] = React.useState(false);
   const [drawMode, setDrawMode] = React.useState("principal");
   const [additionalDraws, setAdditionalDraws] = React.useState([]);
   const [selectedAdditionalDrawId, setSelectedAdditionalDrawId] = React.useState("");
@@ -214,7 +215,17 @@ export default function AdminDashboard() {
     try {
       // resumo do dashboard
       const r = await getJSON("/admin/dashboard/summary");
-      setPrincipalDraw(r.draw_id == null ? null : { id: r.draw_id });
+      setPrincipalDraw(
+        r.draw_id == null
+          ? null
+          : {
+              id: r.draw_id,
+              status: r.status || null,
+              draw_type: r.draw_type || "principal",
+              closed_at: r.closed_at || null,
+              realized_at: r.realized_at || null,
+            }
+      );
       setPrincipalStats({ sold: r.sold ?? 0, remaining: r.remaining ?? r.available ?? 0 });
       if (Number.isFinite(Number(r.price_cents))) {
         setPrincipalForm((form) => ({
@@ -449,6 +460,27 @@ export default function AdminDashboard() {
     }
   };
 
+  const onClosePrincipalDraw = async () => {
+    const drawId = principalDraw?.id;
+    if (!drawId) return;
+    const confirmed = window.confirm(
+      "Tem certeza que deseja fechar este sorteio? Ap\u00f3s fechar, novas compras ser\u00e3o bloqueadas e o sorteio ficar\u00e1 aguardando resultado."
+    );
+    if (!confirmed) return;
+
+    try {
+      setPrincipalClosing(true);
+      await postJSON(`/admin/dashboard/draws/${drawId}/close`, {});
+      await loadSummary();
+      alert("Sorteio fechado, aguardando resultado.");
+    } catch (e) {
+      console.error("[AdminDashboard] close principal draw failed:", e);
+      alert("N\u00e3o foi poss\u00edvel fechar o sorteio agora.");
+    } finally {
+      setPrincipalClosing(false);
+    }
+  };
+
   // menu
   const [menuEl, setMenuEl] = React.useState(null);
   const open = Boolean(menuEl);
@@ -472,6 +504,10 @@ export default function AdminDashboard() {
     : principalStats.remaining ?? principalStats.available ?? 0;
   const currentCreating = isAdditionalMode ? additionalCreating : principalCreating;
   const currentSaving = isAdditionalMode ? additionalSaving : principalSaving;
+  const principalStatus = String(principalDraw?.status || "").toLowerCase();
+  const principalRealized = Boolean(principalDraw?.realized_at) || principalStatus === "sorteado";
+  const principalClosed = !principalRealized && principalStatus === "closed";
+  const showClosePrincipal = !isAdditionalMode && principalDraw?.id && principalStatus === "open";
 
   return (
     <ThemeProvider theme={theme}>
@@ -582,16 +618,41 @@ export default function AdminDashboard() {
               </Stack>
 
               <Box sx={{ flex: 1 }} />
+              <Stack direction="row" spacing={1.5} flexWrap="wrap" justifyContent="flex-end">
+                {showClosePrincipal && (
+                  <Button
+                    onClick={onClosePrincipalDraw}
+                    disabled={principalClosing}
+                    variant="outlined"
+                    color="warning"
+                    sx={{ borderRadius: 999, px: 3 }}
+                  >
+                    {principalClosing ? "Fechando..." : "FECHAR SORTEIO"}
+                  </Button>
+                )}
 
-              <Button
-                onClick={onNewDraw}
-                disabled={currentCreating}
-                variant="outlined"
-                sx={{ borderRadius: 999, px: 3 }}
-              >
-                {currentCreating ? "Criando..." : "NOVO SORTEIO"}
-              </Button>
+                <Button
+                  onClick={onNewDraw}
+                  disabled={currentCreating}
+                  variant="outlined"
+                  sx={{ borderRadius: 999, px: 3 }}
+                >
+                  {currentCreating ? "Criando..." : "NOVO SORTEIO"}
+                </Button>
+              </Stack>
             </Stack>
+
+            {!isAdditionalMode && principalClosed && (
+              <Alert severity="info" sx={{ mt: 3, bgcolor: "rgba(2,136,209,0.12)" }}>
+                Sorteio fechado, aguardando resultado.
+              </Alert>
+            )}
+
+            {!isAdditionalMode && principalRealized && (
+              <Alert severity="success" sx={{ mt: 3, bgcolor: "rgba(46,125,50,0.14)" }}>
+                Sorteio realizado.
+              </Alert>
+            )}
 
             <Divider sx={{ my: 3 }} />
 
