@@ -346,6 +346,7 @@ export default function NewStorePage({
 
   // Draw atual (se o backend expuser)
   const [currentDrawId, setCurrentDrawId] = React.useState(null);
+  const [principalOpen, setPrincipalOpen] = React.useState(null);
 
   const [secondaryDraw, setSecondaryDraw] = React.useState(null);
   const [secondaryNumbers, setSecondaryNumbers] = React.useState([]);
@@ -477,6 +478,11 @@ export default function NewStorePage({
       });
       if (!res.ok) return;
       const j = await res.json();
+      const nextDrawId = j?.drawId ?? j?.draw_id ?? null;
+      const hasOpenPrincipal = nextDrawId != null && !j?.error;
+      setPrincipalOpen(hasOpenPrincipal);
+      setCurrentDrawId(hasOpenPrincipal ? nextDrawId : null);
+      if (!hasOpenPrincipal) limparSelecao();
 
       const reserv = [];
       const indis = [];
@@ -504,7 +510,7 @@ export default function NewStorePage({
     } catch {
       /* silencioso */
     }
-  }, []);
+  }, [limparSelecao]);
 
   React.useEffect(() => {
     let alive = true;
@@ -562,7 +568,10 @@ export default function NewStorePage({
 
   // modal (confirmação)
   const [open, setOpen] = React.useState(false);
-  const handleAbrirConfirmacao = () => setOpen(true);
+  const handleAbrirConfirmacao = () => {
+    if (principalOpen !== true) return;
+    setOpen(true);
+  };
   const handleFechar = () => setOpen(false);
 
   // PIX modal
@@ -597,6 +606,11 @@ export default function NewStorePage({
 
   const handleIrPagamento = async () => {
     setOpen(false);
+
+    if (principalOpen !== true) {
+      alert("Rodada encerrada. Em breve abriremos a pr\u00f3xima.");
+      return;
+    }
 
     if (!isAuthenticated) {
       navigate("/login", { replace: false, state: { from: "/", wantPay: true } });
@@ -673,6 +687,7 @@ export default function NewStorePage({
   const isIndisponivel = (n) => indisponiveisAll.includes(n);
   const isSelecionado = (n) => selecionados.includes(n);
   const handleClickNumero = (n) => {
+    if (principalOpen !== true) return;
     if (isIndisponivel(n)) return;
     setSelecionados((prev) => {
       const already = prev.includes(n);
@@ -701,6 +716,16 @@ export default function NewStorePage({
   };
 
   const getCellSx = (n) => {
+    if (principalOpen !== true) {
+      return {
+        border: "2px solid",
+        borderColor: "rgba(255,255,255,0.16)",
+        bgcolor: "rgba(255,255,255,0.06)",
+        color: "rgba(255,255,255,0.45)",
+        cursor: "not-allowed",
+        opacity: 0.72,
+      };
+    }
     if (isIndisponivel(n)) {
       return {
         border: "2px solid",
@@ -727,7 +752,10 @@ export default function NewStorePage({
     };
   };
 
+  const principalClosedForPurchase = principalOpen === false;
+
   const continuarDisabled =
+    principalOpen !== true ||
     !selecionados.length ||
     (Number.isFinite(remainingFromServer) &&
       selecionados.length > Math.max(0, remainingFromServer));
@@ -1591,7 +1619,7 @@ Baseado no resultado oficial da Lotomania (Caixa Econômica Federal).
                 <Button
                   variant="outlined"
                   color="inherit"
-                  disabled={!selecionados.length}
+                  disabled={!selecionados.length || principalOpen !== true}
                   onClick={limparSelecao}
                 >
                   LIMPAR SELEÇÃO
@@ -1599,13 +1627,19 @@ Baseado no resultado oficial da Lotomania (Caixa Econômica Federal).
                 <Button
                   variant="contained"
                   color="success"
-                  disabled={continuarDisabled}
+                  disabled={continuarDisabled || principalOpen !== true}
                   onClick={handleAbrirConfirmacao}
                 >
                   CONTINUAR
                 </Button>
               </Stack>
             </Stack>
+
+            {principalClosedForPurchase && (
+              <Alert severity="info" sx={{ mb: 2, bgcolor: "rgba(2,136,209,0.12)" }}>
+                Rodada encerrada. Em breve abriremos a pr\u00f3xima.
+              </Alert>
+            )}
 
             {/* Grid 10x10 */}
             <Box
@@ -1634,11 +1668,12 @@ Baseado no resultado oficial da Lotomania (Caixa Econômica Federal).
                     <Box
                       key={idx}
                       onClick={() => handleClickNumero(idx)}
+                      aria-disabled={principalOpen !== true ? "true" : undefined}
                       sx={{
                         ...getCellSx(idx),
                         borderRadius: 1.2,
                         userSelect: "none",
-                        cursor: sold ? "not-allowed" : "pointer",
+                        cursor: principalOpen !== true ? "not-allowed" : sold ? "not-allowed" : "pointer",
                         aspectRatio: "1 / 1",
                         display: "flex",
                         alignItems: "center",
@@ -2779,7 +2814,7 @@ Baseado no resultado oficial da Lotomania (Caixa Econômica Federal).
             variant="contained"
             color="success"
             onClick={handleIrPagamento}
-            disabled={continuarDisabled}
+            disabled={continuarDisabled || principalOpen !== true}
             sx={{ py: 1.2, fontWeight: 700 }}
           >
             IR PARA PAGAMENTO
