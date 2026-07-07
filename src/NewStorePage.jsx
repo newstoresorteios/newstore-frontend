@@ -536,11 +536,11 @@ export default function NewStorePage({
       for (const it of j?.numbers || []) {
         const st = String(it.status || "").toLowerCase();
         const num = Number(it.n);
+        const soldInitial = getPrincipalSoldInitials(it);
+        if (soldInitial) initials[num] = soldInitial;
         if (st === "reserved") reserv.push(num);
         if (isPrincipalUnavailableStatus(st)) {
           indis.push(num);
-          const soldInitial = getPrincipalSoldInitials(it);
-          if (soldInitial) initials[num] = soldInitial;
         }
       }
 
@@ -1704,6 +1704,8 @@ Baseado no resultado oficial da Lotomania (Caixa Econômica Federal).
                 {Array.from({ length: 100 }).map((_, idx) => {
                   const sold = isIndisponivel(idx);
                   const initials = soldInitials[idx];
+                  const closedInitials = principalOpen !== true && initials;
+                  const showSoldOverlay = sold && !closedInitials;
                   return (
                     <Box
                       key={idx}
@@ -1727,14 +1729,14 @@ Baseado no resultado oficial da Lotomania (Caixa Econômica Federal).
                       <Box
                         component="span"
                         sx={{
-                          display: { xs: sold ? "none" : "inline", md: "inline" },
+                          display: { xs: showSoldOverlay ? "none" : "inline", md: "inline" },
                         }}
                       >
-                        {pad2(idx)}
+                        {closedInitials || pad2(idx)}
                       </Box>
 
                       {/* >>> MOBILE (xs): NÚMERO EM CIMA + INICIAIS EMBAIXO, centralizados */}
-                      {sold && (
+                      {showSoldOverlay && (
                         <Box
                           sx={{
                             display: { xs: "flex", md: "none" },
@@ -1772,7 +1774,7 @@ Baseado no resultado oficial da Lotomania (Caixa Econômica Federal).
                       )}
 
                       {/* >>> DESKTOP (md+): iniciais no canto inferior direito quando vendido */}
-                      {sold && initials && (
+                      {showSoldOverlay && initials && (
                         <Box
                           sx={{
                             display: { xs: "none", md: "block" },
