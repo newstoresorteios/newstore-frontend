@@ -718,12 +718,11 @@ export default function NewStorePage({
   const getCellSx = (n) => {
     if (principalOpen !== true) {
       return {
-        border: "2px solid",
-        borderColor: "error.main",
-        bgcolor: "rgba(211,47,47,0.15)",
-        color: "grey.300",
+        border: "2px solid rgba(255,255,255,0.08)",
+        bgcolor: "primary.main",
+        color: "#0E0E0E",
         cursor: "not-allowed",
-        opacity: 0.85,
+        transition: "filter 120ms ease",
       };
     }
     if (isIndisponivel(n)) {
