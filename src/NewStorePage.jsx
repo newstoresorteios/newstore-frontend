@@ -70,6 +70,51 @@ const theme = createTheme({
 // Helpers
 const pad2 = (n) => n.toString().padStart(2, "0");
 
+const normalizeStatusToken = (status) =>
+  String(status || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+
+const isPrincipalUnavailableStatus = (status) =>
+  ["taken", "sold", "unavailable", "indisponivel", "blocked", "closed"].includes(
+    normalizeStatusToken(status)
+  );
+
+const getInitialsFromName = (name) =>
+  String(name || "")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0])
+    .join("")
+    .toUpperCase();
+
+const getPrincipalSoldInitials = (item) => {
+  const rawInitials =
+    item?.initials ||
+    item?.buyer_initials ||
+    item?.buyerInitials ||
+    item?.owner_initials ||
+    item?.ownerInitials ||
+    item?.oi;
+  if (rawInitials) return String(rawInitials).slice(0, 3).toUpperCase();
+
+  const rawName =
+    item?.buyer_name ||
+    item?.user_name ||
+    item?.customer_name ||
+    item?.comprador ||
+    item?.reserved_by ||
+    item?.user?.name ||
+    item?.customer?.name ||
+    (typeof item?.owner === "string" ? item.owner : item?.owner?.name) ||
+    item?.name;
+
+  return getInitialsFromName(rawName).slice(0, 3);
+};
+
 // Mocks
 const MOCK_RESERVADOS = [];
 const MOCK_INDISPONIVEIS = [];
@@ -492,15 +537,10 @@ export default function NewStorePage({
         const st = String(it.status || "").toLowerCase();
         const num = Number(it.n);
         if (st === "reserved") reserv.push(num);
-        if (st === "taken" || st === "sold") {
+        if (isPrincipalUnavailableStatus(st)) {
           indis.push(num);
-          const rawInit =
-            it.initials ||
-            it.owner_initials ||
-            it.ownerInitials ||
-            it.owner ||
-            it.oi;
-          if (rawInit) initials[num] = String(rawInit).slice(0, 3).toUpperCase();
+          const soldInitial = getPrincipalSoldInitials(it);
+          if (soldInitial) initials[num] = soldInitial;
         }
       }
 
@@ -718,11 +758,12 @@ export default function NewStorePage({
   const getCellSx = (n) => {
     if (principalOpen !== true) {
       return {
-        border: "2px solid rgba(255,255,255,0.08)",
-        bgcolor: "primary.main",
-        color: "#0E0E0E",
+        border: "2px solid",
+        borderColor: "error.main",
+        bgcolor: "rgba(211,47,47,0.15)",
+        color: "grey.300",
         cursor: "not-allowed",
-        transition: "filter 120ms ease",
+        opacity: 0.95,
       };
     }
     if (isIndisponivel(n)) {
