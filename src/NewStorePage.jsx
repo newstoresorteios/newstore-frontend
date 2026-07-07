@@ -529,11 +529,21 @@ export default function NewStorePage({
       setCurrentDrawId(hasOpenPrincipal ? nextDrawId : null);
       if (!hasOpenPrincipal) limparSelecao();
 
+      const numbersFromApi = Array.isArray(j?.numbers) ? j.numbers : [];
+      if (!numbersFromApi.length) {
+        if (hasOpenPrincipal) {
+          setSrvReservados([]);
+          setSrvIndisponiveis([]);
+          setSoldInitials({});
+        }
+        return;
+      }
+
       const reserv = [];
       const indis = [];
       const initials = {};
 
-      for (const it of j?.numbers || []) {
+      for (const it of numbersFromApi) {
         const st = String(it.status || "").toLowerCase();
         const num = Number(it.n);
         const soldInitial = getPrincipalSoldInitials(it);
