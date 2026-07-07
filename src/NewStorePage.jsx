@@ -608,7 +608,7 @@ export default function NewStorePage({
     setOpen(false);
 
     if (principalOpen !== true) {
-      alert("Rodada encerrada. Em breve abriremos a pr\u00f3xima.");
+      alert("Rodada encerrada. Em breve abriremos o próximo sorteio.");
       return;
     }
 
@@ -719,11 +719,11 @@ export default function NewStorePage({
     if (principalOpen !== true) {
       return {
         border: "2px solid",
-        borderColor: "rgba(255,255,255,0.16)",
-        bgcolor: "rgba(255,255,255,0.06)",
-        color: "rgba(255,255,255,0.45)",
+        borderColor: "error.main",
+        bgcolor: "rgba(211,47,47,0.15)",
+        color: "grey.300",
         cursor: "not-allowed",
-        opacity: 0.72,
+        opacity: 0.85,
       };
     }
     if (isIndisponivel(n)) {
@@ -1637,7 +1637,7 @@ Baseado no resultado oficial da Lotomania (Caixa Econômica Federal).
 
             {principalClosedForPurchase && (
               <Alert severity="info" sx={{ mb: 2, bgcolor: "rgba(2,136,209,0.12)" }}>
-                Rodada encerrada. Em breve abriremos a pr\u00f3xima.
+                Rodada encerrada. Em breve abriremos o próximo sorteio.
               </Alert>
             )}
 
