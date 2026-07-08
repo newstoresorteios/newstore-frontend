@@ -30,6 +30,34 @@ const FILTERS = [
   ["sem_cartao", "Sem cartão"],
 ];
 
+const DEFAULT_CAPTIVE_POLICY = {
+  default_amount_cents: 5500,
+  default_amount_label: "R$ 55,00",
+  variable_pricing_requires_preauth: true,
+  automatic_label: "Automático até R$ 55,00",
+  preauth_label: "Sempre pedir autorização",
+  variable_price_rule_label: "Acima de R$ 55,00, a pré-autorização é obrigatória para todos.",
+};
+
+function normalizePolicy(policy) {
+  return {
+    ...DEFAULT_CAPTIVE_POLICY,
+    ...(policy && typeof policy === "object" ? policy : {}),
+  };
+}
+
+function formatShortAmount(amountCents) {
+  const cents = Number(amountCents);
+  if (!Number.isFinite(cents) || cents <= 0) return DEFAULT_CAPTIVE_POLICY.default_amount_label.replace(",00", "");
+  const value = cents / 100;
+  return value.toLocaleString("pt-BR", {
+    style: "currency",
+    currency: "BRL",
+    minimumFractionDigits: cents % 100 === 0 ? 0 : 2,
+    maximumFractionDigits: 2,
+  });
+}
+
 function StatusChip({ label, tone = "neutral" }) {
   const sx = {
     success: { color: "#061006", bgcolor: newStoreAdminColors.greenStrong },
@@ -72,6 +100,7 @@ export default function AdminCaptivesPage() {
   const [rowError, setRowError] = React.useState("");
   const [updatingId, setUpdatingId] = React.useState("");
   const [tab, setTab] = React.useState("captives");
+  const [policy, setPolicy] = React.useState(DEFAULT_CAPTIVE_POLICY);
 
   React.useEffect(() => {
     const timer = setTimeout(() => {
@@ -88,9 +117,11 @@ export default function AdminCaptivesPage() {
       const payload = await listAdminCaptives({ q: debouncedQ, status, page, pageSize });
       setItems(Array.isArray(payload?.items) ? payload.items : []);
       setTotal(Number(payload?.total || 0));
+      setPolicy(normalizePolicy(payload?.policy));
     } catch {
       setItems([]);
       setTotal(0);
+      setPolicy(DEFAULT_CAPTIVE_POLICY);
       setError("Não foi possível carregar os números cativos.");
     } finally {
       setLoading(false);
@@ -171,6 +202,8 @@ export default function AdminCaptivesPage() {
 
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
   const empty = !loading && !error && items.length === 0;
+  const automaticButtonLabel = `Automático até ${formatShortAmount(policy.default_amount_cents)}`;
+  const variableRuleLabel = policy.variable_price_rule_label || DEFAULT_CAPTIVE_POLICY.variable_price_rule_label;
 
   return (
     <ThemeProvider theme={theme}>
@@ -195,6 +228,9 @@ export default function AdminCaptivesPage() {
             <Typography sx={{ color: "text.secondary", mt: 0.5 }}>
               Controle de participação dos clientes com números cativos.
             </Typography>
+            <Alert severity="info" variant="outlined" sx={{ mt: 1.5 }}>
+              Regra de valor variável: até {policy.default_amount_label} o cativo pode seguir no automático. Acima de {policy.default_amount_label}, todos os cativos exigem pré-autorização e só são cobrados após confirmação do cliente.
+            </Alert>
           </Box>
 
           <Paper variant="outlined" sx={{ p: { xs: 2, md: 2.5 }, ...adminPanelPaperSx }}>
@@ -273,9 +309,14 @@ export default function AdminCaptivesPage() {
                             {row.participation_active ? <StatusChip label="Participando" tone="success" /> : <StatusChip label="Pausado" tone="error" />}
                           </TableCell>
                           <TableCell>
-                            {requiresPreauth
-                              ? <StatusChip label={row.authorization_mode_label || "Pré-autorização"} tone="warning" />
-                              : <StatusChip label={row.authorization_mode_label || "Automático"} tone="neutral" />}
+                            <Stack spacing={0.5}>
+                              {requiresPreauth
+                                ? <StatusChip label={row.authorization_mode_label || policy.preauth_label} tone="warning" />
+                                : <StatusChip label={row.authorization_mode_label || policy.automatic_label} tone="neutral" />}
+                              <Typography variant="caption" sx={{ color: "text.secondary", fontWeight: 700 }}>
+                                Regra variável: acima do valor padrão, exige autorização.
+                              </Typography>
+                            </Stack>
                           </TableCell>
                           <TableCell>
                             {row.card_status === "configured" ? <StatusChip label="Cartão configurado" tone="success" /> : <StatusChip label="Sem cartão" tone="warning" />}
@@ -311,7 +352,7 @@ export default function AdminCaptivesPage() {
                                 onClick={() => toggleAuthorizationMode(row)}
                                 sx={{ whiteSpace: "nowrap" }}
                               >
-                                {requiresPreauth ? "Voltar automático" : "Usar pré-autorização"}
+                                {requiresPreauth ? automaticButtonLabel : "Pedir autorização sempre"}
                               </Button>
                             </Stack>
                           </TableCell>
@@ -322,7 +363,11 @@ export default function AdminCaptivesPage() {
                 </Table>
               </TableContainer>
             ) : (
-              <TableContainer>
+              <Box>
+                <Alert severity="info" variant="outlined" sx={{ m: 2 }}>
+                  Pausar notificações impede o envio da mensagem de pré-autorização. Em sorteios acima do valor padrão, isso não libera cobrança automática direta.
+                </Alert>
+                <TableContainer>
                 <Table size="small" sx={{ minWidth: 1080 }}>
                   <TableHead>
                     <TableRow>
@@ -352,14 +397,19 @@ export default function AdminCaptivesPage() {
                             {row.participation_active ? <StatusChip label="Participando" tone="success" /> : <StatusChip label="Pausado" tone="error" />}
                           </TableCell>
                           <TableCell>
-                            {requiresPreauth
-                              ? <StatusChip label={row.authorization_mode_label || "Pré-autorização"} tone="warning" />
-                              : <StatusChip label={row.authorization_mode_label || "Automático"} tone="neutral" />}
+                            <Stack spacing={0.5}>
+                              {requiresPreauth
+                                ? <StatusChip label={row.authorization_mode_label || policy.preauth_label} tone="warning" />
+                                : <StatusChip label={row.authorization_mode_label || policy.automatic_label} tone="neutral" />}
+                              <Typography variant="caption" sx={{ color: "text.secondary", fontWeight: 700 }}>
+                                {row.variable_price_rule_label || variableRuleLabel}
+                              </Typography>
+                            </Stack>
                           </TableCell>
                           <TableCell>
                             {notificationsEnabled
                               ? <StatusChip label={row.preauth_notifications_label || "Ativas"} tone="success" />
-                              : <StatusChip label={row.preauth_notifications_label || "Pausadas"} tone="warning" />}
+                              : <StatusChip label="Pausadas - não cobrar direto" tone="warning" />}
                           </TableCell>
                           <TableCell align="right">
                             <Button
@@ -380,6 +430,7 @@ export default function AdminCaptivesPage() {
                   </TableBody>
                 </Table>
               </TableContainer>
+              </Box>
             )}
           </Paper>
 
