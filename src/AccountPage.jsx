@@ -502,7 +502,7 @@ export default function AccountPage() {
         return;
       }
       if (r.status === 402 || j?.error === "payment_failed") {
-        setCaptiveAuthorizationMessage("A autorização foi registrada, mas a cobrança não foi aprovada. Verifique seu cartão cadastrado.");
+        setCaptiveAuthorizationsError("A cobrança anterior não foi concluída. Seu número continua reservado enquanto o prazo estiver válido.");
         await loadCaptiveAuthorizations();
         return;
       }
@@ -1166,6 +1166,7 @@ export default function AccountPage() {
                   const updating = captiveAuthorizationUpdatingId === item.id;
                   const visuallyExpired = Date.parse(item.expires_at || "") <= Date.now();
                   const amountInfo = captiveAmountInfo(item);
+                  const retryableFailed = item.status === "failed" && item.retryable === true;
                   return (
                     <Box
                       key={item.id}
@@ -1207,6 +1208,12 @@ export default function AccountPage() {
                           </Alert>
                         )}
 
+                        {retryableFailed && (
+                          <Alert severity="warning" variant="outlined">
+                            A cobrança anterior não foi concluída. Seu número continua reservado até o prazo indicado.
+                          </Alert>
+                        )}
+
                         <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
                           <Button
                             variant="contained"
@@ -1214,7 +1221,7 @@ export default function AccountPage() {
                             disabled={updating || !amountInfo.valid}
                             onClick={() => handleCaptiveAuthorizationDecision(item, "authorize")}
                           >
-                            Autorizar participação
+                            {retryableFailed ? "Tentar autorizar novamente" : "Autorizar participação"}
                           </Button>
                           <Button
                             variant="outlined"

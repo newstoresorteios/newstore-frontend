@@ -207,9 +207,9 @@ export default function CaptiveConfirmationPage() {
         setError("Essa confirmação expirou e o número foi liberado para venda geral.");
       } else if (message.includes("payment_failed")) {
         setItems((current) => current.map((entry) => (
-          entry.id === item.id ? { ...entry, status: "failed" } : entry
+          entry.id === item.id ? { ...entry, status: "failed", retryable: true } : entry
         )));
-        setError("Não foi possível concluir a cobrança. Entre em contato com o suporte da New Store.");
+        setError("A cobrança anterior não foi concluída. Seu número continua reservado enquanto o prazo estiver válido.");
       } else {
         setError("Não foi possível registrar sua decisão.");
       }
@@ -277,6 +277,7 @@ export default function CaptiveConfirmationPage() {
 
           {items.map((item) => {
             const pending = item.status === "pending";
+            const retryableFailed = item.status === "failed" && item.retryable === true;
             const authorizing = loading === `authorize:${item.id}`;
             const declining = loading === `decline:${item.id}`;
             return (
@@ -287,7 +288,12 @@ export default function CaptiveConfirmationPage() {
                   <span>Valor <strong style={styles.metaStrong}>{item.amount || "-"}</strong></span>
                   <span>Status <strong style={styles.metaStrong}>{statusText(item.status)}</strong></span>
                 </div>
-                {pending ? (
+                {retryableFailed ? (
+                  <div style={{ ...styles.feedback, ...styles.error }}>
+                    A cobrança anterior não foi concluída. Seu número continua reservado até o prazo indicado.
+                  </div>
+                ) : null}
+                {pending || retryableFailed ? (
                   <div style={styles.actions}>
                     <button
                       type="button"
@@ -295,7 +301,7 @@ export default function CaptiveConfirmationPage() {
                       onClick={() => decide(item, "authorize")}
                       disabled={Boolean(loading)}
                     >
-                      {authorizing ? "Confirmando..." : "Confirmar participação"}
+                      {authorizing ? "Confirmando..." : retryableFailed ? "Tentar autorizar novamente" : "Confirmar participação"}
                     </button>
                     <button
                       type="button"
