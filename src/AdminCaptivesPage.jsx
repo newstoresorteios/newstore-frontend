@@ -2,7 +2,7 @@ import * as React from "react";
 import { useNavigate } from "react-router-dom";
 import {
   Alert, AppBar, Box, Button, Chip, CircularProgress, Container, CssBaseline,
-  IconButton, MenuItem, Paper, Stack, Table, TableBody, TableCell,
+  Dialog, DialogActions, DialogContent, DialogTitle, IconButton, MenuItem, Paper, Stack, Table, TableBody, TableCell,
   TableContainer, TableHead, TableRow, Tab, Tabs, TextField, ThemeProvider, Toolbar,
   Typography,
 } from "@mui/material";
@@ -11,8 +11,10 @@ import RefreshRoundedIcon from "@mui/icons-material/RefreshRounded";
 import PauseCircleOutlineRoundedIcon from "@mui/icons-material/PauseCircleOutlineRounded";
 import PlayCircleOutlineRoundedIcon from "@mui/icons-material/PlayCircleOutlineRounded";
 import SwapHorizRoundedIcon from "@mui/icons-material/SwapHorizRounded";
+import CreditCardRoundedIcon from "@mui/icons-material/CreditCardRounded";
 import { adminPanelPaperSx, createNewStoreAdminTheme, newStoreAdminColors } from "./adminTheme";
 import {
+  authorizeCurrentDrawCaptiveParticipation,
   listAdminCaptives,
   listCaptiveNotificationHistory,
   listCurrentDrawCaptiveParticipation,
@@ -97,6 +99,7 @@ function StatusChip({ label, tone = "neutral" }) {
   const sx = {
     success: { color: "#061006", bgcolor: newStoreAdminColors.greenStrong },
     neutral: { color: "#F5F7F5", bgcolor: "rgba(255,255,255,0.12)" },
+    info: { color: "#fff", bgcolor: "#2563EB" },
     warning: { color: "#141006", bgcolor: "#D6A100" },
     error: { color: "#fff", bgcolor: "#9F2F2D" },
   }[tone];
@@ -160,7 +163,12 @@ function attemptTypeLabel(type) {
   }[type] || type || "-";
 }
 
-function authorizationStatusLabel(status) {
+function authorizationStatusLabel(status, source = null) {
+  if (status === "authorized" && source === "admin") return "Confirmado pelo administrador";
+  if (status === "authorized" && source === "client") return "Confirmado pelo cliente";
+  if (status === "charged" && source === "admin") return "Cobrança concluída — autorização administrativa";
+  if (status === "charged" && source === "client") return "Cobrança concluída — confirmação do cliente";
+  if (status === "failed" && source === "admin") return "Falha após autorização administrativa";
   return {
     pending: "Aguardando confirmação",
     authorized: "Autorizada",
@@ -188,6 +196,9 @@ function participationState(row) {
   const labels = {
     pending: ["Ativo — aguardando confirmação", "warning"],
     confirmed: ["Ativo — cobrança confirmada", "success"],
+    confirmed_client: ["Confirmado pelo cliente", "success"],
+    confirmed_admin: ["Confirmado pelo administrador", "success"],
+    payment_processing: ["Cobrança em processamento", "info"],
     failed_retryable: ["Ativo — cobrança falhou, nova tentativa disponível", "error"],
     failed: ["Falha — reserva indisponível", "error"],
     disabled: ["Desativado pelo administrador", "neutral"],
@@ -241,6 +252,10 @@ export default function AdminCaptivesPage() {
   const [participationLoading, setParticipationLoading] = React.useState(false);
   const [participationError, setParticipationError] = React.useState("");
   const [participationUpdatingId, setParticipationUpdatingId] = React.useState("");
+  const [authorizationDialogItem, setAuthorizationDialogItem] = React.useState(null);
+  const [authorizationLoadingId, setAuthorizationLoadingId] = React.useState("");
+  const [authorizationError, setAuthorizationError] = React.useState("");
+  const [authorizationMessage, setAuthorizationMessage] = React.useState("");
 
   React.useEffect(() => {
     const timer = setTimeout(() => {
@@ -508,6 +523,56 @@ export default function AdminCaptivesPage() {
     }
   }
 
+  function openAdminAuthorization(row) {
+    if (!row?.can_admin_authorize || authorizationLoadingId) return;
+    setAuthorizationDialogItem(row);
+    setAuthorizationError("");
+    setAuthorizationMessage("");
+  }
+
+  function closeAdminAuthorization() {
+    if (authorizationLoadingId) return;
+    setAuthorizationDialogItem(null);
+    setAuthorizationError("");
+  }
+
+  async function handleAdminAuthorization() {
+    const row = authorizationDialogItem;
+    if (!row?.authorization_id || !currentDraw?.draw_id || authorizationLoadingId) return;
+    setAuthorizationLoadingId(row.authorization_id);
+    setAuthorizationError("");
+    try {
+      await authorizeCurrentDrawCaptiveParticipation(row.authorization_id, currentDraw.draw_id);
+      await loadParticipation();
+      setAuthorizationDialogItem(null);
+      setAuthorizationMessage("Cobrança autorizada e participação confirmada pelo administrador.");
+    } catch (error) {
+      const message = String(error?.message || "");
+      if (message.includes("participation_declined_by_customer")) {
+        setAuthorizationError("O cliente recusou esta participação. É necessário reabrir a autorização antes de confirmar administrativamente.");
+      } else if (message.includes("payment_in_progress")) {
+        setAuthorizationError("Já existe uma cobrança em processamento para esta participação.");
+      } else if (message.includes("authorization_amount_outdated")) {
+        setAuthorizationError("O valor da autorização está desatualizado. Reemita a confirmação antes de autorizar.");
+      } else if (message.includes("captive_number_not_available_for_user")) {
+        setAuthorizationError("O número cativo não está disponível para este usuário.");
+      } else if (message.includes("authorization_expired")) {
+        setAuthorizationError("O prazo desta autorização expirou.");
+      } else if (message.includes("captive_preauth_not_required")) {
+        setAuthorizationError("Este sorteio utiliza o fluxo automático padrão.");
+      } else if (message.includes("payment_failed") || message.includes("authorization_charge_not_configured")) {
+        setAuthorizationError("A autorização administrativa foi registrada, mas a cobrança não foi concluída.");
+        await loadParticipation();
+      } else if (message.includes("403") || message.includes("401")) {
+        setAuthorizationError("Você não possui permissão para executar esta ação.");
+      } else {
+        setAuthorizationError(`Não foi possível autorizar a cobrança (${message || "erro desconhecido"}).`);
+      }
+    } finally {
+      setAuthorizationLoadingId("");
+    }
+  }
+
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
   const historyTotalPages = Math.max(1, Math.ceil(historyTotal / historyLimit));
   const participationTotalPages = Math.max(1, Math.ceil(participationTotal / participationLimit));
@@ -681,6 +746,7 @@ export default function AdminCaptivesPage() {
             {participationTotal} número{participationTotal === 1 ? "" : "s"}
           </Typography>
         </Stack>
+        {authorizationMessage && <Alert severity="success" sx={{ m: 2 }}>{authorizationMessage}</Alert>}
         {participationError && <Alert severity="error" sx={{ m: 2 }}>{participationError}</Alert>}
         {participationLoading ? (
           <Stack direction="row" spacing={1.5} alignItems="center" sx={{ p: 3 }}>
@@ -711,7 +777,11 @@ export default function AdminCaptivesPage() {
                 {participationItems.map((row) => {
                   const [stateLabel, stateTone] = participationState(row);
                   const updating = participationUpdatingId === row.autopay_number_id;
-                  const protectedParticipation = row.payment_approved === true || ["authorized", "charged"].includes(row.authorization_status);
+                  const authorizationUpdating = authorizationLoadingId === row.authorization_id;
+                  const protectedParticipation =
+                    row.payment_approved === true ||
+                    row.payment_in_progress === true ||
+                    ["authorized", "charged"].includes(row.authorization_status);
                   return (
                     <TableRow key={row.autopay_number_id} hover>
                       <TableCell sx={{ fontWeight: 800 }}>{row.user_name || "-"}</TableCell>
@@ -719,7 +789,7 @@ export default function AdminCaptivesPage() {
                       <TableCell sx={{ fontWeight: 900 }}>{row.captive_number}</TableCell>
                       <TableCell><StatusChip label="Ativo" tone="success" /></TableCell>
                       <TableCell><StatusChip label={stateLabel} tone={stateTone} /></TableCell>
-                      <TableCell>{authorizationStatusLabel(row.authorization_status)}</TableCell>
+                      <TableCell>{authorizationStatusLabel(row.authorization_status, row.authorization_source)}</TableCell>
                       <TableCell>{reservationStatusLabel(row.reservation_status || row.draw_number_status)}</TableCell>
                       <TableCell>
                         {row.notification_status
@@ -729,21 +799,40 @@ export default function AdminCaptivesPage() {
                       <TableCell>{row.authorization_amount_cents ? formatAmountBRL(row.authorization_amount_cents) : "-"}</TableCell>
                       <TableCell>{formatDate(row.authorization_expires_at) || "-"}</TableCell>
                       <TableCell align="right">
-                        <Button
-                          variant={row.enabled_current_draw ? "outlined" : "contained"}
-                          color={row.enabled_current_draw ? "error" : "success"}
-                          size="small"
-                          disabled={updating || protectedParticipation || !currentDraw?.preauth_required}
-                          startIcon={updating
-                            ? <CircularProgress color="inherit" size={16} />
-                            : row.enabled_current_draw ? <PauseCircleOutlineRoundedIcon /> : <PlayCircleOutlineRoundedIcon />}
-                          onClick={() => toggleCurrentDrawParticipation(row)}
-                          sx={{ whiteSpace: "nowrap" }}
-                        >
-                          {protectedParticipation
-                            ? "Participação confirmada"
-                            : row.enabled_current_draw ? "Desativar neste sorteio" : "Ativar neste sorteio"}
-                        </Button>
+                        <Stack direction="row" spacing={1} justifyContent="flex-end" sx={{ minWidth: 320 }}>
+                          {row.can_admin_authorize === true && (
+                            <Button
+                              variant="contained"
+                              color="success"
+                              size="small"
+                              disabled={updating || authorizationUpdating}
+                              startIcon={authorizationUpdating
+                                ? <CircularProgress color="inherit" size={16} />
+                                : <CreditCardRoundedIcon />}
+                              onClick={() => openAdminAuthorization(row)}
+                              sx={{ whiteSpace: "nowrap" }}
+                            >
+                              {authorizationUpdating ? "Autorizando..." : "Autorizar cobrança"}
+                            </Button>
+                          )}
+                          <Button
+                            variant={row.enabled_current_draw ? "outlined" : "contained"}
+                            color={row.enabled_current_draw ? "error" : "success"}
+                            size="small"
+                            disabled={updating || authorizationUpdating || protectedParticipation || !currentDraw?.preauth_required}
+                            startIcon={updating
+                              ? <CircularProgress color="inherit" size={16} />
+                              : row.enabled_current_draw ? <PauseCircleOutlineRoundedIcon /> : <PlayCircleOutlineRoundedIcon />}
+                            onClick={() => toggleCurrentDrawParticipation(row)}
+                            sx={{ whiteSpace: "nowrap" }}
+                          >
+                            {row.payment_in_progress === true
+                              ? "Cobrança em processamento"
+                              : protectedParticipation
+                                ? "Participação confirmada"
+                              : row.enabled_current_draw ? "Desativar neste sorteio" : "Ativar neste sorteio"}
+                          </Button>
+                        </Stack>
                       </TableCell>
                     </TableRow>
                   );
@@ -1084,6 +1173,62 @@ export default function AdminCaptivesPage() {
           </Stack>
         </Stack>
       </Container>
+      <Dialog
+        open={Boolean(authorizationDialogItem)}
+        onClose={closeAdminAuthorization}
+        fullWidth
+        maxWidth="sm"
+      >
+        <DialogTitle sx={{ fontWeight: 900 }}>Autorizar cobrança do cativo?</DialogTitle>
+        <DialogContent dividers>
+          <Stack spacing={2}>
+            <Typography>
+              Ao continuar, o administrador confirmará a participação deste cliente no sorteio atual e autorizará o fluxo de cobrança correspondente.
+            </Typography>
+            <Box>
+              <Typography variant="body2" sx={{ color: "text.secondary" }}>Cliente</Typography>
+              <Typography sx={{ fontWeight: 800 }}>{authorizationDialogItem?.user_name || "-"}</Typography>
+              <Typography variant="body2">{authorizationDialogItem?.user_email || "-"}</Typography>
+            </Box>
+            <Stack direction={{ xs: "column", sm: "row" }} spacing={2}>
+              <Box sx={{ flex: 1 }}>
+                <Typography variant="body2" sx={{ color: "text.secondary" }}>Número cativo</Typography>
+                <Typography sx={{ fontWeight: 900 }}>{authorizationDialogItem?.captive_number ?? "-"}</Typography>
+              </Box>
+              <Box sx={{ flex: 1 }}>
+                <Typography variant="body2" sx={{ color: "text.secondary" }}>Sorteio atual</Typography>
+                <Typography sx={{ fontWeight: 900 }}>{currentDraw?.draw_id ? `#${currentDraw.draw_id}` : "-"}</Typography>
+              </Box>
+              <Box sx={{ flex: 1 }}>
+                <Typography variant="body2" sx={{ color: "text.secondary" }}>Valor da cota</Typography>
+                <Typography sx={{ fontWeight: 900 }}>
+                  {formatAmountBRL(authorizationDialogItem?.authorization_amount_cents)}
+                </Typography>
+              </Box>
+            </Stack>
+            <Alert severity="warning" variant="outlined">
+              Esta ação será registrada como autorização administrativa. O pagamento só será considerado concluído após confirmação real do provedor.
+            </Alert>
+            {authorizationError && <Alert severity="error">{authorizationError}</Alert>}
+          </Stack>
+        </DialogContent>
+        <DialogActions sx={{ p: 2 }}>
+          <Button onClick={closeAdminAuthorization} disabled={Boolean(authorizationLoadingId)}>
+            Cancelar
+          </Button>
+          <Button
+            variant="contained"
+            color="success"
+            startIcon={authorizationLoadingId
+              ? <CircularProgress color="inherit" size={16} />
+              : <CreditCardRoundedIcon />}
+            onClick={handleAdminAuthorization}
+            disabled={Boolean(authorizationLoadingId)}
+          >
+            {authorizationLoadingId ? "Autorizando..." : "Autorizar cobrança"}
+          </Button>
+        </DialogActions>
+      </Dialog>
     </ThemeProvider>
   );
 }

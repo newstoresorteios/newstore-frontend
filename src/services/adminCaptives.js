@@ -59,6 +59,13 @@ export function updateCurrentDrawCaptiveParticipation(id, enabled, reason) {
   });
 }
 
+export function authorizeCurrentDrawCaptiveParticipation(authorizationId, drawId) {
+  return postJSON(
+    `/admin/captives/current-draw-participation/${encodeURIComponent(String(authorizationId))}/authorize`,
+    { draw_id: Number(drawId) }
+  );
+}
+
 export function reissueAndResendCaptivePreauths() {
   return postJSON("/admin/captive-preauth/current-draw/reissue-and-resend", {
     confirmation: "REEMITIR",
