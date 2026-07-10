@@ -32,8 +32,35 @@ export function getAdminCaptivesCurrentDraw() {
   return getJSON("/admin/dashboard/summary");
 }
 
-export function reissueAndResendCaptivePreauths(drawId) {
-  return postJSON(`/admin/captive-preauth/draws/${encodeURIComponent(String(drawId))}/reissue-and-resend`, {
+export function listCaptiveNotificationHistory(params = {}) {
+  const qs = new URLSearchParams();
+  Object.entries(params).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && String(value).trim() !== "") {
+      qs.set(key, String(value));
+    }
+  });
+  return getJSON(`/admin/captives/notification-history${qs.toString() ? `?${qs.toString()}` : ""}`);
+}
+
+export function listCurrentDrawCaptiveParticipation(params = {}) {
+  const qs = new URLSearchParams();
+  Object.entries(params).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && String(value).trim() !== "") {
+      qs.set(key, String(value));
+    }
+  });
+  return getJSON(`/admin/captives/current-draw-participation${qs.toString() ? `?${qs.toString()}` : ""}`);
+}
+
+export function updateCurrentDrawCaptiveParticipation(id, enabled, reason) {
+  return patchJSON(`/admin/captives/current-draw-participation/${encodeURIComponent(String(id))}`, {
+    enabled: enabled === true,
+    reason: String(reason || "").trim(),
+  });
+}
+
+export function reissueAndResendCaptivePreauths() {
+  return postJSON("/admin/captive-preauth/current-draw/reissue-and-resend", {
     confirmation: "REEMITIR",
   });
 }

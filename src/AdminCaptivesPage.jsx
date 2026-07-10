@@ -13,12 +13,14 @@ import PlayCircleOutlineRoundedIcon from "@mui/icons-material/PlayCircleOutlineR
 import SwapHorizRoundedIcon from "@mui/icons-material/SwapHorizRounded";
 import { adminPanelPaperSx, createNewStoreAdminTheme, newStoreAdminColors } from "./adminTheme";
 import {
-  getAdminCaptivesCurrentDraw,
   listAdminCaptives,
+  listCaptiveNotificationHistory,
+  listCurrentDrawCaptiveParticipation,
   reissueAndResendCaptivePreauths,
   updateAdminCaptiveAuthorizationMode,
   updateAdminCaptiveParticipation,
   updateCaptivePreauthNotifications,
+  updateCurrentDrawCaptiveParticipation,
 } from "./services/adminCaptives";
 
 const theme = createNewStoreAdminTheme();
@@ -30,6 +32,28 @@ const FILTERS = [
   ["sem_whatsapp", "Sem WhatsApp"],
   ["com_cartao", "Com cartão"],
   ["sem_cartao", "Sem cartão"],
+];
+const HISTORY_STATUS_FILTERS = [
+  ["", "Todos os status"],
+  ["accepted", "Aceita pela Brevo"],
+  ["sent", "Enviada"],
+  ["delivered", "Entregue"],
+  ["skipped", "Não enviada"],
+  ["failed", "Falha"],
+];
+const HISTORY_TYPE_FILTERS = [
+  ["", "Todos os tipos"],
+  ["initial", "Envio inicial"],
+  ["reissue", "Reemissão"],
+  ["manual_activation", "Ativação manual"],
+];
+const PARTICIPATION_FILTERS = [
+  ["all", "Todos"],
+  ["enabled", "Ativos neste sorteio"],
+  ["disabled", "Desativados neste sorteio"],
+  ["pending", "Aguardando confirmação"],
+  ["confirmed", "Confirmados"],
+  ["failed", "Com falha"],
 ];
 
 const DEFAULT_CAPTIVE_POLICY = {
@@ -97,6 +121,84 @@ function LastRun({ row }) {
   return <StatusChip label={status === "pending" ? "Última tentativa pendente" : status} />;
 }
 
+function notificationStatusLabel(status) {
+  return {
+    accepted: "Aceita pela Brevo",
+    sent: "Enviada",
+    delivered: "Entregue",
+    skipped: "Não enviada",
+    not_sent: "Não enviada",
+    failed: "Falha",
+  }[status] || status || "Sem envio";
+}
+
+function notificationStatusTone(status) {
+  if (["accepted", "sent", "delivered"].includes(status)) return "success";
+  if (status === "failed") return "error";
+  return "warning";
+}
+
+function notificationReasonLabel(reason) {
+  return {
+    whatsapp_consent_missing: "Sem consentimento",
+    preauth_notifications_disabled: "Notificações pausadas",
+    invalid_phone: "Telefone inválido",
+    provider_failed: "Falha no provedor",
+    skipped_near_expiration: "Prazo próximo da expiração",
+    reservation_unavailable: "Reserva indisponível",
+    payment_already_approved: "Participação já confirmada",
+    whatsapp_template_missing: "Template indisponível",
+    whatsapp_disabled: "WhatsApp desabilitado",
+  }[reason] || reason || "-";
+}
+
+function attemptTypeLabel(type) {
+  return {
+    initial: "Envio inicial",
+    reissue: "Reemissão",
+    manual_activation: "Ativação manual",
+  }[type] || type || "-";
+}
+
+function authorizationStatusLabel(status) {
+  return {
+    pending: "Aguardando confirmação",
+    authorized: "Autorizada",
+    charged: "Cobrança confirmada",
+    failed: "Falha de cobrança",
+    declined: "Recusada pelo cliente",
+    expired: "Expirada",
+  }[status] || status || "Sem autorização";
+}
+
+function reservationStatusLabel(status) {
+  return {
+    pending: "Pendente",
+    active: "Ativa",
+    reserved: "Reservada",
+    expired: "Liberada",
+    cancelled: "Cancelada",
+    paid: "Confirmada",
+    sold: "Vendida",
+    available: "Disponível",
+  }[String(status || "").toLowerCase()] || status || "-";
+}
+
+function participationState(row) {
+  const labels = {
+    pending: ["Ativo — aguardando confirmação", "warning"],
+    confirmed: ["Ativo — cobrança confirmada", "success"],
+    failed_retryable: ["Ativo — cobrança falhou, nova tentativa disponível", "error"],
+    failed: ["Falha — reserva indisponível", "error"],
+    disabled: ["Desativado pelo administrador", "neutral"],
+    declined: ["Recusado pelo cliente", "neutral"],
+    expired: ["Expirado", "neutral"],
+    authorized: ["Ativo — confirmação registrada", "warning"],
+    no_authorization: ["Sem autorização criada", "neutral"],
+  };
+  return labels[row?.participation_state] || labels.no_authorization;
+}
+
 export default function AdminCaptivesPage() {
   const navigate = useNavigate();
   const [items, setItems] = React.useState([]);
@@ -116,6 +218,29 @@ export default function AdminCaptivesPage() {
   const [reissueLoading, setReissueLoading] = React.useState(false);
   const [reissueError, setReissueError] = React.useState("");
   const [reissueResult, setReissueResult] = React.useState(null);
+  const [currentDrawPendingCount, setCurrentDrawPendingCount] = React.useState(0);
+  const [currentDrawDisabledCount, setCurrentDrawDisabledCount] = React.useState(0);
+  const [historyItems, setHistoryItems] = React.useState([]);
+  const [historyTotal, setHistoryTotal] = React.useState(0);
+  const [historyPage, setHistoryPage] = React.useState(1);
+  const [historyLimit] = React.useState(50);
+  const [historyStatus, setHistoryStatus] = React.useState("");
+  const [historyAttemptType, setHistoryAttemptType] = React.useState("");
+  const [historyDrawId, setHistoryDrawId] = React.useState("");
+  const [historySearch, setHistorySearch] = React.useState("");
+  const [historyDebouncedSearch, setHistoryDebouncedSearch] = React.useState("");
+  const [historyLoading, setHistoryLoading] = React.useState(false);
+  const [historyError, setHistoryError] = React.useState("");
+  const [participationItems, setParticipationItems] = React.useState([]);
+  const [participationTotal, setParticipationTotal] = React.useState(0);
+  const [participationPage, setParticipationPage] = React.useState(1);
+  const [participationLimit] = React.useState(50);
+  const [participationFilter, setParticipationFilter] = React.useState("all");
+  const [participationSearch, setParticipationSearch] = React.useState("");
+  const [participationDebouncedSearch, setParticipationDebouncedSearch] = React.useState("");
+  const [participationLoading, setParticipationLoading] = React.useState(false);
+  const [participationError, setParticipationError] = React.useState("");
+  const [participationUpdatingId, setParticipationUpdatingId] = React.useState("");
 
   React.useEffect(() => {
     const timer = setTimeout(() => {
@@ -124,6 +249,22 @@ export default function AdminCaptivesPage() {
     }, 300);
     return () => clearTimeout(timer);
   }, [q]);
+
+  React.useEffect(() => {
+    const timer = setTimeout(() => {
+      setHistoryDebouncedSearch(historySearch);
+      setHistoryPage(1);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [historySearch]);
+
+  React.useEffect(() => {
+    const timer = setTimeout(() => {
+      setParticipationDebouncedSearch(participationSearch);
+      setParticipationPage(1);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [participationSearch]);
 
   const load = React.useCallback(async () => {
     setLoading(true);
@@ -147,22 +288,78 @@ export default function AdminCaptivesPage() {
 
   const loadCurrentDraw = React.useCallback(async () => {
     try {
-      const payload = await getAdminCaptivesCurrentDraw();
-      setCurrentDraw(payload?.draw_id == null ? null : {
-        draw_id: Number(payload.draw_id),
-        price_cents: Number(payload.price_cents),
-      });
+      const payload = await listCurrentDrawCaptiveParticipation({ page: 1, limit: 1 });
+      setCurrentDraw(payload?.draw || null);
+      setCurrentDrawPendingCount(Number(payload?.pending_authorizations || 0));
+      setCurrentDrawDisabledCount(Number(payload?.disabled_count || 0));
     } catch {
       setCurrentDraw(null);
+      setCurrentDrawPendingCount(0);
+      setCurrentDrawDisabledCount(0);
     }
   }, []);
 
   React.useEffect(() => { loadCurrentDraw(); }, [loadCurrentDraw]);
 
+  const loadHistory = React.useCallback(async () => {
+    setHistoryLoading(true);
+    setHistoryError("");
+    try {
+      const payload = await listCaptiveNotificationHistory({
+        draw_id: historyDrawId,
+        status: historyStatus,
+        attempt_type: historyAttemptType,
+        search: historyDebouncedSearch,
+        page: historyPage,
+        limit: historyLimit,
+      });
+      setHistoryItems(Array.isArray(payload?.items) ? payload.items : []);
+      setHistoryTotal(Number(payload?.total || 0));
+    } catch {
+      setHistoryItems([]);
+      setHistoryTotal(0);
+      setHistoryError("Não foi possível carregar o histórico de mensagens.");
+    } finally {
+      setHistoryLoading(false);
+    }
+  }, [historyDrawId, historyStatus, historyAttemptType, historyDebouncedSearch, historyPage, historyLimit]);
+
+  React.useEffect(() => {
+    if (tab === "history") loadHistory();
+  }, [tab, loadHistory]);
+
+  const loadParticipation = React.useCallback(async () => {
+    setParticipationLoading(true);
+    setParticipationError("");
+    try {
+      const payload = await listCurrentDrawCaptiveParticipation({
+        search: participationDebouncedSearch,
+        status: participationFilter,
+        page: participationPage,
+        limit: participationLimit,
+      });
+      setParticipationItems(Array.isArray(payload?.items) ? payload.items : []);
+      setParticipationTotal(Number(payload?.total || 0));
+      setCurrentDraw(payload?.draw || null);
+      setCurrentDrawPendingCount(Number(payload?.pending_authorizations || 0));
+      setCurrentDrawDisabledCount(Number(payload?.disabled_count || 0));
+    } catch {
+      setParticipationItems([]);
+      setParticipationTotal(0);
+      setParticipationError("Não foi possível carregar a participação do sorteio atual.");
+    } finally {
+      setParticipationLoading(false);
+    }
+  }, [participationDebouncedSearch, participationFilter, participationPage, participationLimit]);
+
+  React.useEffect(() => {
+    if (tab === "participation") loadParticipation();
+  }, [tab, loadParticipation]);
+
   async function handleReissueAndResend() {
     if (!currentDraw?.draw_id || reissueLoading) return;
     const confirmed = window.confirm(
-      "Esta ação corrigirá o valor das autorizações ainda pendentes para o valor atual do sorteio principal e realizará uma nova tentativa de WhatsApp apenas para clientes autorizados. Nenhuma cobrança será realizada. Deseja continuar?"
+      "Esta ação corrigirá os valores das autorizações abertas e realizará uma nova tentativa de WhatsApp somente para clientes autorizados. Nenhuma cobrança será realizada. Deseja continuar?"
     );
     if (!confirmed) return;
 
@@ -170,8 +367,11 @@ export default function AdminCaptivesPage() {
     setReissueError("");
     setReissueResult(null);
     try {
-      const result = await reissueAndResendCaptivePreauths(currentDraw.draw_id);
+      const result = await reissueAndResendCaptivePreauths();
       setReissueResult(result);
+      await loadCurrentDraw();
+      if (tab === "history") await loadHistory();
+      if (tab === "participation") await loadParticipation();
     } catch (error) {
       const message = String(error?.message || "");
       if (message.includes("confirmation_required")) setReissueError("Confirmação administrativa obrigatória.");
@@ -252,10 +452,309 @@ export default function AdminCaptivesPage() {
     }
   }
 
+  async function toggleCurrentDrawParticipation(row) {
+    const nextEnabled = row.enabled_current_draw !== true;
+    const reason = window.prompt(
+      nextEnabled
+        ? "Informe o motivo da ativação neste sorteio:"
+        : "Informe o motivo da desativação neste sorteio:"
+    );
+    if (reason == null) return;
+    if (!String(reason).trim()) {
+      setParticipationError("Informe um motivo para concluir a alteração.");
+      return;
+    }
+    const confirmed = window.confirm(
+      nextEnabled
+        ? "Ativar este número somente no sorteio principal atual? Nenhuma cobrança será realizada."
+        : "Desativar este número somente no sorteio principal atual? A confirmação aberta será encerrada e a reserva da rodada será liberada."
+    );
+    if (!confirmed || participationUpdatingId) return;
+
+    const captiveId = row.autopay_number_id;
+    setParticipationUpdatingId(captiveId);
+    setParticipationError("");
+    try {
+      const payload = await updateCurrentDrawCaptiveParticipation(captiveId, nextEnabled, reason);
+      const updatedItem = payload?.item;
+      if (updatedItem?.autopay_number_id) {
+        setParticipationItems((current) => current.map((item) => (
+          String(item.autopay_number_id) === String(updatedItem.autopay_number_id) ? updatedItem : item
+        )));
+        if (row.enabled_current_draw !== updatedItem.enabled_current_draw) {
+          setCurrentDrawDisabledCount((current) => Math.max(0, current + (updatedItem.enabled_current_draw ? -1 : 1)));
+        }
+        const wasPending = row.participation_state === "pending";
+        const isPending = updatedItem.participation_state === "pending";
+        if (wasPending !== isPending) {
+          setCurrentDrawPendingCount((current) => Math.max(0, current + (isPending ? 1 : -1)));
+        }
+      }
+    } catch (error) {
+      const message = String(error?.message || "");
+      if (message.includes("participation_already_confirmed")) {
+        setParticipationError("A participação já foi confirmada e não pode ser desativada nesta tela.");
+      } else if (message.includes("captive_preauth_not_required")) {
+        setParticipationError("Este sorteio utiliza o fluxo automático padrão. A ativação manual com pré-autorização não se aplica.");
+      } else if (message.includes("participation_declined_by_customer")) {
+        setParticipationError("A participação foi recusada pelo cliente e não pode ser reaberta por esta ação.");
+      } else if (message.includes("number_not_available")) {
+        setParticipationError("O número não está disponível para reserva neste sorteio.");
+      } else {
+        setParticipationError(`Não foi possível atualizar a participação (${message || "erro desconhecido"}).`);
+      }
+    } finally {
+      setParticipationUpdatingId("");
+    }
+  }
+
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const historyTotalPages = Math.max(1, Math.ceil(historyTotal / historyLimit));
+  const participationTotalPages = Math.max(1, Math.ceil(participationTotal / participationLimit));
+  const visiblePage = tab === "history" ? historyPage : tab === "participation" ? participationPage : page;
+  const visibleTotalPages = tab === "history" ? historyTotalPages : tab === "participation" ? participationTotalPages : totalPages;
+  const visiblePageLoading = tab === "history" ? historyLoading : tab === "participation" ? participationLoading : loading;
   const empty = !loading && !error && items.length === 0;
   const automaticButtonLabel = `Automático até ${formatShortAmount(policy.default_amount_cents)}`;
   const variableRuleLabel = policy.variable_price_rule_label || DEFAULT_CAPTIVE_POLICY.variable_price_rule_label;
+
+  function renderNotificationHistory() {
+    return (
+      <Box>
+        <Stack
+          direction={{ xs: "column", lg: "row" }}
+          spacing={1.5}
+          alignItems={{ xs: "stretch", lg: "center" }}
+          sx={{ p: 2, borderBottom: "1px solid", borderColor: "divider" }}
+        >
+          <TextField
+            label="Busca por cliente, e-mail ou número"
+            value={historySearch}
+            onChange={(event) => setHistorySearch(event.target.value)}
+            size="small"
+            sx={{ minWidth: { lg: 300 } }}
+          />
+          <TextField
+            label="Sorteio"
+            type="number"
+            value={historyDrawId}
+            onChange={(event) => { setHistoryDrawId(event.target.value); setHistoryPage(1); }}
+            size="small"
+            inputProps={{ min: 1 }}
+            sx={{ width: { lg: 140 } }}
+          />
+          <TextField
+            select
+            label="Status"
+            value={historyStatus}
+            onChange={(event) => { setHistoryStatus(event.target.value); setHistoryPage(1); }}
+            size="small"
+            sx={{ minWidth: { lg: 190 } }}
+          >
+            {HISTORY_STATUS_FILTERS.map(([value, label]) => <MenuItem key={value || "all"} value={value}>{label}</MenuItem>)}
+          </TextField>
+          <TextField
+            select
+            label="Tipo da tentativa"
+            value={historyAttemptType}
+            onChange={(event) => { setHistoryAttemptType(event.target.value); setHistoryPage(1); }}
+            size="small"
+            sx={{ minWidth: { lg: 190 } }}
+          >
+            {HISTORY_TYPE_FILTERS.map(([value, label]) => <MenuItem key={value || "all"} value={value}>{label}</MenuItem>)}
+          </TextField>
+          <Box sx={{ flex: 1 }} />
+          <Typography variant="body2" sx={{ color: "text.secondary", fontWeight: 800 }}>
+            {historyTotal} tentativa{historyTotal === 1 ? "" : "s"}
+          </Typography>
+        </Stack>
+        <Alert severity="info" variant="outlined" sx={{ m: 2 }}>
+          “Aceita pela Brevo” indica que o provedor aceitou a solicitação de envio. Não significa que o cliente confirmou a participação.
+        </Alert>
+        {historyError && <Alert severity="error" sx={{ mx: 2, mb: 2 }}>{historyError}</Alert>}
+        {historyLoading ? (
+          <Stack direction="row" spacing={1.5} alignItems="center" sx={{ p: 3 }}>
+            <CircularProgress size={22} />
+            <Typography sx={{ color: "text.secondary" }}>Carregando histórico</Typography>
+          </Stack>
+        ) : historyItems.length === 0 ? (
+          <Typography sx={{ p: 3, color: "text.secondary" }}>
+            Nenhuma tentativa de mensagem encontrada para os filtros selecionados.
+          </Typography>
+        ) : (
+          <TableContainer>
+            <Table size="small" sx={{ minWidth: 1500 }}>
+              <TableHead>
+                <TableRow>
+                  <TableCell>Data e hora</TableCell>
+                  <TableCell>Cliente</TableCell>
+                  <TableCell>E-mail</TableCell>
+                  <TableCell>Telefone</TableCell>
+                  <TableCell>Número cativo</TableCell>
+                  <TableCell>Sorteio</TableCell>
+                  <TableCell>Valor informado</TableCell>
+                  <TableCell>Template Brevo</TableCell>
+                  <TableCell>Tipo</TableCell>
+                  <TableCell>Status da mensagem</TableCell>
+                  <TableCell>Motivo</TableCell>
+                  <TableCell>Status da autorização</TableCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {historyItems.map((row) => (
+                  <TableRow key={row.id} hover>
+                    <TableCell>{formatDate(row.created_at) || "-"}</TableCell>
+                    <TableCell sx={{ fontWeight: 800 }}>{row.user_name || "-"}</TableCell>
+                    <TableCell>{row.user_email || "-"}</TableCell>
+                    <TableCell>{row.user_phone_masked || "-"}</TableCell>
+                    <TableCell sx={{ fontWeight: 900 }}>{row.captive_number}</TableCell>
+                    <TableCell>#{row.draw_id} — {row.draw_title || "Sorteio"}</TableCell>
+                    <TableCell>{formatAmountBRL(row.amount_cents)}</TableCell>
+                    <TableCell>{row.template_id || "-"}</TableCell>
+                    <TableCell>{attemptTypeLabel(row.attempt_type)}</TableCell>
+                    <TableCell>
+                      <StatusChip label={notificationStatusLabel(row.status)} tone={notificationStatusTone(row.status)} />
+                    </TableCell>
+                    <TableCell>{notificationReasonLabel(row.error_code)}</TableCell>
+                    <TableCell>{authorizationStatusLabel(row.authorization_status)}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </TableContainer>
+        )}
+      </Box>
+    );
+  }
+
+  function renderCurrentDrawParticipation() {
+    if (!currentDraw?.draw_id && !participationLoading) {
+      return <Typography sx={{ p: 3, color: "text.secondary" }}>Nenhum sorteio principal aberto.</Typography>;
+    }
+    return (
+      <Box>
+        <Stack
+          direction={{ xs: "column", md: "row" }}
+          spacing={2}
+          sx={{ p: 2, borderBottom: "1px solid", borderColor: "divider" }}
+        >
+          <Box sx={{ flex: 1 }}>
+            <Typography sx={{ fontWeight: 900 }}>Sorteio principal: #{currentDraw?.draw_id}</Typography>
+            <Typography variant="body2" sx={{ color: "text.secondary" }}>
+              Valor da cota: {formatAmountBRL(currentDraw?.amount_cents)}
+            </Typography>
+          </Box>
+          <Typography variant="body2" sx={{ fontWeight: 800, color: "text.secondary" }}>
+            Regra: {currentDraw?.preauth_required ? "pré-autorização obrigatória" : "fluxo automático padrão"}
+          </Typography>
+        </Stack>
+        {currentDraw && !currentDraw.preauth_required && (
+          <Alert severity="info" variant="outlined" sx={{ m: 2 }}>
+            Este sorteio utiliza o fluxo automático padrão. A ativação manual com pré-autorização não se aplica.
+          </Alert>
+        )}
+        <Stack
+          direction={{ xs: "column", md: "row" }}
+          spacing={1.5}
+          alignItems={{ xs: "stretch", md: "center" }}
+          sx={{ p: 2, borderBottom: "1px solid", borderColor: "divider" }}
+        >
+          <TextField
+            label="Busca por nome, e-mail ou número"
+            value={participationSearch}
+            onChange={(event) => setParticipationSearch(event.target.value)}
+            size="small"
+            sx={{ minWidth: { md: 340 } }}
+          />
+          <TextField
+            select
+            label="Participação"
+            value={participationFilter}
+            onChange={(event) => { setParticipationFilter(event.target.value); setParticipationPage(1); }}
+            size="small"
+            sx={{ minWidth: { md: 250 } }}
+          >
+            {PARTICIPATION_FILTERS.map(([value, label]) => <MenuItem key={value} value={value}>{label}</MenuItem>)}
+          </TextField>
+          <Box sx={{ flex: 1 }} />
+          <Typography variant="body2" sx={{ color: "text.secondary", fontWeight: 800 }}>
+            {participationTotal} número{participationTotal === 1 ? "" : "s"}
+          </Typography>
+        </Stack>
+        {participationError && <Alert severity="error" sx={{ m: 2 }}>{participationError}</Alert>}
+        {participationLoading ? (
+          <Stack direction="row" spacing={1.5} alignItems="center" sx={{ p: 3 }}>
+            <CircularProgress size={22} />
+            <Typography sx={{ color: "text.secondary" }}>Carregando participações</Typography>
+          </Stack>
+        ) : participationItems.length === 0 ? (
+          <Typography sx={{ p: 3, color: "text.secondary" }}>Nenhum número cativo encontrado.</Typography>
+        ) : (
+          <TableContainer>
+            <Table size="small" sx={{ minWidth: 1560 }}>
+              <TableHead>
+                <TableRow>
+                  <TableCell>Cliente</TableCell>
+                  <TableCell>E-mail</TableCell>
+                  <TableCell>Número cativo</TableCell>
+                  <TableCell>Status permanente</TableCell>
+                  <TableCell>Participação no sorteio atual</TableCell>
+                  <TableCell>Status da autorização</TableCell>
+                  <TableCell>Status da reserva</TableCell>
+                  <TableCell>Status da mensagem</TableCell>
+                  <TableCell>Valor da autorização</TableCell>
+                  <TableCell>Prazo</TableCell>
+                  <TableCell align="right">Ações</TableCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {participationItems.map((row) => {
+                  const [stateLabel, stateTone] = participationState(row);
+                  const updating = participationUpdatingId === row.autopay_number_id;
+                  const protectedParticipation = row.payment_approved === true || ["authorized", "charged"].includes(row.authorization_status);
+                  return (
+                    <TableRow key={row.autopay_number_id} hover>
+                      <TableCell sx={{ fontWeight: 800 }}>{row.user_name || "-"}</TableCell>
+                      <TableCell>{row.user_email || "-"}</TableCell>
+                      <TableCell sx={{ fontWeight: 900 }}>{row.captive_number}</TableCell>
+                      <TableCell><StatusChip label="Ativo" tone="success" /></TableCell>
+                      <TableCell><StatusChip label={stateLabel} tone={stateTone} /></TableCell>
+                      <TableCell>{authorizationStatusLabel(row.authorization_status)}</TableCell>
+                      <TableCell>{reservationStatusLabel(row.reservation_status || row.draw_number_status)}</TableCell>
+                      <TableCell>
+                        {row.notification_status
+                          ? <StatusChip label={notificationStatusLabel(row.notification_status)} tone={notificationStatusTone(row.notification_status)} />
+                          : "-"}
+                      </TableCell>
+                      <TableCell>{row.authorization_amount_cents ? formatAmountBRL(row.authorization_amount_cents) : "-"}</TableCell>
+                      <TableCell>{formatDate(row.authorization_expires_at) || "-"}</TableCell>
+                      <TableCell align="right">
+                        <Button
+                          variant={row.enabled_current_draw ? "outlined" : "contained"}
+                          color={row.enabled_current_draw ? "error" : "success"}
+                          size="small"
+                          disabled={updating || protectedParticipation || !currentDraw?.preauth_required}
+                          startIcon={updating
+                            ? <CircularProgress color="inherit" size={16} />
+                            : row.enabled_current_draw ? <PauseCircleOutlineRoundedIcon /> : <PlayCircleOutlineRoundedIcon />}
+                          onClick={() => toggleCurrentDrawParticipation(row)}
+                          sx={{ whiteSpace: "nowrap" }}
+                        >
+                          {protectedParticipation
+                            ? "Participação confirmada"
+                            : row.enabled_current_draw ? "Desativar neste sorteio" : "Ativar neste sorteio"}
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          </TableContainer>
+        )}
+      </Box>
+    );
+  }
 
   return (
     <ThemeProvider theme={theme}>
@@ -269,7 +768,12 @@ export default function AdminCaptivesPage() {
           <Box sx={{ flex: 1 }} />
           <Button
             startIcon={<RefreshRoundedIcon />}
-            onClick={() => { load(); loadCurrentDraw(); }}
+            onClick={() => {
+              loadCurrentDraw();
+              if (tab === "history") loadHistory();
+              else if (tab === "participation") loadParticipation();
+              else load();
+            }}
             variant="outlined"
             size="small"
           >
@@ -290,6 +794,7 @@ export default function AdminCaptivesPage() {
             </Alert>
           </Box>
 
+          {(tab === "captives" || tab === "notifications") && (
           <Paper variant="outlined" sx={{ p: { xs: 2, md: 2.5 }, ...adminPanelPaperSx }}>
             <Stack direction={{ xs: "column", md: "row" }} spacing={1.5} alignItems={{ xs: "stretch", md: "center" }}>
               <TextField label="Busca" value={q} onChange={(e) => setQ(e.target.value)} size="small" sx={{ minWidth: { md: 360 } }} />
@@ -309,9 +814,10 @@ export default function AdminCaptivesPage() {
               </Typography>
             </Stack>
           </Paper>
+          )}
 
-          {error && <Alert severity="error">{error}</Alert>}
-          {rowError && <Alert severity="warning">{rowError}</Alert>}
+          {(tab === "captives" || tab === "notifications") && error && <Alert severity="error">{error}</Alert>}
+          {(tab === "captives" || tab === "notifications") && rowError && <Alert severity="warning">{rowError}</Alert>}
 
           <Paper variant="outlined" sx={{ ...adminPanelPaperSx, overflow: "hidden" }}>
             <Tabs
@@ -323,11 +829,13 @@ export default function AdminCaptivesPage() {
             >
               <Tab value="captives" label="Cativos" />
               <Tab value="notifications" label="Notificações" />
+              <Tab value="history" label="Histórico de mensagens" />
+              <Tab value="participation" label="Participação no sorteio atual" />
             </Tabs>
           </Paper>
 
           <Paper variant="outlined" sx={{ ...adminPanelPaperSx, overflow: "hidden" }}>
-            {loading ? (
+            {tab === "history" ? renderNotificationHistory() : tab === "participation" ? renderCurrentDrawParticipation() : loading ? (
               <Stack direction="row" spacing={1.5} alignItems="center" sx={{ p: 3 }}>
                 <CircularProgress size={22} />
                 <Typography sx={{ color: "text.secondary" }}>Carregando</Typography>
@@ -435,16 +943,22 @@ export default function AdminCaptivesPage() {
                     <Stack direction={{ xs: "column", sm: "row" }} spacing={1.5} alignItems={{ xs: "stretch", sm: "center" }}>
                       <Box sx={{ flex: 1 }}>
                         <Typography variant="body2" sx={{ fontWeight: 800 }}>
-                          Sorteio: {currentDraw?.draw_id ? `#${currentDraw.draw_id}` : "não identificado"}
+                          Sorteio principal: {currentDraw?.draw_id ? `#${currentDraw.draw_id}` : "não identificado"}
                         </Typography>
                         <Typography variant="body2" sx={{ color: "text.secondary" }}>
-                          Valor atual da cota: {formatAmountBRL(currentDraw?.price_cents)}
+                          Valor atual: {formatAmountBRL(currentDraw?.amount_cents)}
+                        </Typography>
+                        <Typography variant="body2" sx={{ color: "text.secondary" }}>
+                          Autorizações pendentes: {currentDrawPendingCount}
+                        </Typography>
+                        <Typography variant="body2" sx={{ color: "text.secondary" }}>
+                          Cativos desabilitados neste sorteio: {currentDrawDisabledCount}
                         </Typography>
                       </Box>
                       <Button
                         variant="contained"
                         color="warning"
-                        disabled={reissueLoading || !currentDraw?.draw_id}
+                        disabled={reissueLoading || !currentDraw?.draw_id || !currentDraw?.preauth_required}
                         onClick={handleReissueAndResend}
                         startIcon={reissueLoading ? <CircularProgress color="inherit" size={16} /> : null}
                         sx={{ whiteSpace: "nowrap" }}
@@ -457,10 +971,13 @@ export default function AdminCaptivesPage() {
                       <Alert severity={Number(reissueResult.failed || 0) > 0 ? "warning" : "success"} variant="outlined">
                         <Stack spacing={0.25}>
                           <Typography variant="body2">{Number(reissueResult.pending_found || 0)} autorizações pendentes encontradas</Typography>
+                          <Typography variant="body2">{Number(reissueResult.failed_recoverable_found || 0)} falhas recuperáveis encontradas</Typography>
+                          <Typography variant="body2">{Number(reissueResult.failed_recovered || 0)} falhas recuperadas</Typography>
                           <Typography variant="body2">{Number(reissueResult.amount_corrected || 0)} valores corrigidos</Typography>
                           <Typography variant="body2">{Number(reissueResult.sent || 0)} mensagens reenviadas</Typography>
                           <Typography variant="body2">{Number(reissueResult.skipped_consent || 0)} sem consentimento</Typography>
                           <Typography variant="body2">{Number(reissueResult.skipped_notifications_disabled || 0)} com notificações pausadas</Typography>
+                          <Typography variant="body2">{Number(reissueResult.skipped_invalid_phone || 0)} com telefone inválido</Typography>
                           <Typography variant="body2">{Number(reissueResult.skipped_near_expiration || 0)} perto de expirar</Typography>
                           <Typography variant="body2">{Number(reissueResult.failed || 0)} falha de envio</Typography>
                         </Stack>
@@ -539,11 +1056,31 @@ export default function AdminCaptivesPage() {
           </Paper>
 
           <Stack direction="row" spacing={1} alignItems="center" justifyContent="flex-end">
-            <Button variant="outlined" disabled={page <= 1 || loading} onClick={() => setPage((value) => Math.max(1, value - 1))}>Anterior</Button>
+            <Button
+              variant="outlined"
+              disabled={visiblePage <= 1 || visiblePageLoading}
+              onClick={() => {
+                if (tab === "history") setHistoryPage((value) => Math.max(1, value - 1));
+                else if (tab === "participation") setParticipationPage((value) => Math.max(1, value - 1));
+                else setPage((value) => Math.max(1, value - 1));
+              }}
+            >
+              Anterior
+            </Button>
             <Typography variant="body2" sx={{ color: "text.secondary", fontWeight: 800 }}>
-              Página {page} de {totalPages}
+              Página {visiblePage} de {visibleTotalPages}
             </Typography>
-            <Button variant="outlined" disabled={page >= totalPages || loading} onClick={() => setPage((value) => value + 1)}>Próxima</Button>
+            <Button
+              variant="outlined"
+              disabled={visiblePage >= visibleTotalPages || visiblePageLoading}
+              onClick={() => {
+                if (tab === "history") setHistoryPage((value) => value + 1);
+                else if (tab === "participation") setParticipationPage((value) => value + 1);
+                else setPage((value) => value + 1);
+              }}
+            >
+              Próxima
+            </Button>
           </Stack>
         </Stack>
       </Container>
