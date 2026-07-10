@@ -377,10 +377,11 @@ export default function AdminDashboard() {
     let msg = "Configurações atualizadas.";
     try {
       // 1) preço — usa a rota que já funciona hoje
-      const priceCents = Math.max(
-        0,
-        Math.floor(Number(principalForm.ticket_price_cents || 0))
-      );
+      const priceCents = Number(principalForm.ticket_price_cents);
+      if (!Number.isInteger(priceCents) || priceCents <= 0) {
+        alert("Informe um valor válido para a cota antes de salvar.");
+        return;
+      }
       await postJSON("/admin/dashboard/ticket-price", { price_cents: priceCents });
 
       // 2) banner + max — tenta POST /config (se seu backend ainda não tiver, isso cairá no catch)
@@ -446,7 +447,16 @@ export default function AdminDashboard() {
 
     try {
       setPrincipalCreating(true);
-      await postJSON("/admin/dashboard/new", { draw_type: "principal", number_count: 100 });
+      const ticketPriceCents = Number(principalForm.ticket_price_cents);
+      if (!Number.isInteger(ticketPriceCents) || ticketPriceCents <= 0) {
+        alert("Informe um valor válido para a cota antes de criar o sorteio.");
+        return;
+      }
+      await postJSON("/admin/dashboard/new", {
+        draw_type: "principal",
+        number_count: 100,
+        ticket_price_cents: ticketPriceCents,
+      });
       await loadSummary();
       // Notifica o frontend para refetch imediato de config/numbers (reservados) sem esperar polling
       try {

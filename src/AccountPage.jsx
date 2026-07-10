@@ -211,6 +211,12 @@ export default function AccountPage() {
   // AutoPay
   const [autoOpen, setAutoOpen] = React.useState(false);
   const [claims, setClaims] = React.useState({ taken: [], mine: [] });
+  const [hasCaptiveConfirmationAccess, setHasCaptiveConfirmationAccess] = React.useState(false);
+  const [captiveAuthorizations, setCaptiveAuthorizations] = React.useState([]);
+  const [captiveAuthorizationsLoading, setCaptiveAuthorizationsLoading] = React.useState(false);
+  const [captiveAuthorizationsError, setCaptiveAuthorizationsError] = React.useState("");
+  const [captiveAuthorizationUpdatingId, setCaptiveAuthorizationUpdatingId] = React.useState(null);
+  const [captiveAuthorizationMessage, setCaptiveAuthorizationMessage] = React.useState("");
   async function loadClaims() {
     try {
       const j = await getJSON("/autopay/claims");
@@ -220,7 +226,24 @@ export default function AccountPage() {
       });
     } catch {}
   }
-  React.useEffect(() => { loadClaims(); }, []);
+  const loadCaptiveAuthorizations = React.useCallback(async () => {
+    setCaptiveAuthorizationsLoading(true);
+    setCaptiveAuthorizationsError("");
+    try {
+      const j = await getJSON("/captive-preauth/me");
+      setHasCaptiveConfirmationAccess(j?.has_captive === true);
+      setCaptiveAuthorizations(Array.isArray(j?.items) ? j.items : []);
+    } catch {
+      setCaptiveAuthorizationsError("Não foi possível carregar suas confirmações de cativo agora.");
+      setCaptiveAuthorizations([]);
+    } finally {
+      setCaptiveAuthorizationsLoading(false);
+    }
+  }, []);
+  React.useEffect(() => {
+    loadClaims();
+    loadCaptiveAuthorizations();
+  }, [loadCaptiveAuthorizations]);
 
   // NOVO: busca a ÚLTIMA reserva ATIVA do sorteio, priorizando os números informados
   async function findLatestActiveReservation(drawId, numbersHint) {
@@ -421,6 +444,89 @@ export default function AccountPage() {
   function copyPix() {
     const key = pixData?.copy || pixData?.copy_paste || pixData?.copy_paste_code || pixData?.emv || pixData?.qr_code || "";
     if (key) navigator.clipboard.writeText(key).catch(() => {});
+  }
+
+  function formatCaptiveDeadline(value) {
+    const date = new Date(value || "");
+    if (Number.isNaN(date.getTime())) return "--/--/---- às --:--";
+    return `${date.toLocaleDateString("pt-BR")} às ${date.toLocaleTimeString("pt-BR", {
+      hour: "2-digit",
+      minute: "2-digit",
+    })}`;
+  }
+
+  function captiveAmountInfo(item) {
+    const amountCents = Number(item?.amount_cents);
+    if (!Number.isInteger(amountCents) || amountCents <= 0) {
+      return { valid: false, label: item?.amount || "" };
+    }
+    return {
+      valid: true,
+      label: (amountCents / 100).toLocaleString("pt-BR", {
+        style: "currency",
+        currency: "BRL",
+      }),
+    };
+  }
+
+  async function handleCaptiveAuthorizationDecision(item, action) {
+    const authorizationId = item?.id;
+    if (!authorizationId || captiveAuthorizationUpdatingId === authorizationId) return;
+    const amountInfo = captiveAmountInfo(item);
+    if (action === "authorize" && !amountInfo.valid) {
+      setCaptiveAuthorizationsError("Não foi possível identificar o valor desta participação.");
+      return;
+    }
+
+    const confirmed = window.confirm(
+      action === "authorize"
+        ? `Ao confirmar, será processada uma cobrança de ${amountInfo.label} no cartão cadastrado.`
+        : "Deseja recusar esta participação? O número reservado será liberado para este sorteio."
+    );
+    if (!confirmed) return;
+
+    setCaptiveAuthorizationUpdatingId(authorizationId);
+    setCaptiveAuthorizationMessage("");
+    setCaptiveAuthorizationsError("");
+    try {
+      const r = await fetch(apiJoin(`/captive-preauth/me/${encodeURIComponent(authorizationId)}/${action}`), {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeaders() },
+        credentials: "include",
+      });
+      const j = await r.json().catch(() => ({}));
+
+      if (r.status === 410 || j?.error === "authorization_expired") {
+        setCaptiveAuthorizationsError("O prazo desta autorização expirou.");
+        await loadCaptiveAuthorizations();
+        return;
+      }
+      if (r.status === 402 || j?.error === "payment_failed") {
+        setCaptiveAuthorizationMessage("A autorização foi registrada, mas a cobrança não foi aprovada. Verifique seu cartão cadastrado.");
+        await loadCaptiveAuthorizations();
+        return;
+      }
+      if (!r.ok) {
+        const messages = {
+          authorization_not_found: "Esta autorização não foi encontrada.",
+          number_not_available: "Não foi possível confirmar esta participação porque o número não está mais reservado.",
+        };
+        setCaptiveAuthorizationsError(messages[j?.error] || "Não foi possível registrar sua resposta agora.");
+        await loadCaptiveAuthorizations();
+        return;
+      }
+
+      setCaptiveAuthorizationMessage(
+        action === "authorize"
+          ? "Participação autorizada com sucesso."
+          : "Participação recusada. A reserva desta rodada foi liberada."
+      );
+      await loadCaptiveAuthorizations();
+    } catch {
+      setCaptiveAuthorizationsError("Não foi possível registrar sua resposta agora.");
+    } finally {
+      setCaptiveAuthorizationUpdatingId(null);
+    }
   }
 
   const doLogout = () => { setMenuEl(null); logout(); navigate("/"); };
@@ -1024,6 +1130,108 @@ export default function AccountPage() {
               </Stack>
             </Paper>
           </Box>
+
+          {hasCaptiveConfirmationAccess && (
+            <Paper
+              variant="outlined"
+              sx={{
+                p: { xs: 2, md: 3 },
+                borderColor: captiveAuthorizations.length ? "rgba(255,193,7,0.55)" : undefined,
+              }}
+            >
+              <Stack spacing={1.5}>
+                <Typography variant="h6" fontWeight={900}>Confirmações de cativo</Typography>
+
+                {captiveAuthorizationsLoading && (
+                  <Box sx={{ py: 0.5 }}><LinearProgress /></Box>
+                )}
+
+                {captiveAuthorizationsError && (
+                  <Alert severity="warning" variant="outlined">{captiveAuthorizationsError}</Alert>
+                )}
+                {captiveAuthorizationMessage && (
+                  <Alert severity="success" variant="outlined">{captiveAuthorizationMessage}</Alert>
+                )}
+
+                {!captiveAuthorizationsLoading && captiveAuthorizations.length === 0 && (
+                  <Box>
+                    <Typography fontWeight={800}>Nenhuma confirmação pendente no momento.</Typography>
+                    <Typography variant="body2" sx={{ opacity: 0.78, mt: 0.5 }}>
+                      Quando um sorteio exigir sua autorização, ela aparecerá aqui.
+                    </Typography>
+                  </Box>
+                )}
+
+                {captiveAuthorizations.map((item) => {
+                  const updating = captiveAuthorizationUpdatingId === item.id;
+                  const visuallyExpired = Date.parse(item.expires_at || "") <= Date.now();
+                  const amountInfo = captiveAmountInfo(item);
+                  return (
+                    <Box
+                      key={item.id}
+                      sx={{
+                        border: "1px solid rgba(255,255,255,0.12)",
+                        borderLeft: "4px solid #FFC107",
+                        borderRadius: 2,
+                        p: { xs: 1.5, md: 2 },
+                        bgcolor: "rgba(255,193,7,0.045)",
+                      }}
+                    >
+                      <Stack spacing={1.25}>
+                        <Stack
+                          direction={{ xs: "column", sm: "row" }}
+                          justifyContent="space-between"
+                          alignItems={{ xs: "flex-start", sm: "center" }}
+                          spacing={1}
+                        >
+                          <Box sx={{ minWidth: 0 }}>
+                            <Typography fontWeight={900}>Confirmação de participação</Typography>
+                            <Typography sx={{ fontWeight: 800, wordBreak: "break-word" }}>
+                              {item.draw_title || `Sorteio #${item.draw_id}`}
+                            </Typography>
+                          </Box>
+                          {visuallyExpired && <Chip size="small" color="warning" label="Prazo expirado" />}
+                        </Stack>
+
+                        <Stack spacing={0.5}>
+                          <Typography variant="body2">Número cativo: {Number(item.captive_number)}</Typography>
+                          <Typography variant="body2">
+                            Valor da cota: {amountInfo.valid ? amountInfo.label : "valor indisponível"}
+                          </Typography>
+                          <Typography variant="body2">Responder até: {formatCaptiveDeadline(item.expires_at)}</Typography>
+                        </Stack>
+
+                        {!amountInfo.valid && (
+                          <Alert severity="warning" variant="outlined">
+                            Não foi possível identificar o valor desta participação.
+                          </Alert>
+                        )}
+
+                        <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
+                          <Button
+                            variant="contained"
+                            color="success"
+                            disabled={updating || !amountInfo.valid}
+                            onClick={() => handleCaptiveAuthorizationDecision(item, "authorize")}
+                          >
+                            Autorizar participação
+                          </Button>
+                          <Button
+                            variant="outlined"
+                            color="error"
+                            disabled={updating}
+                            onClick={() => handleCaptiveAuthorizationDecision(item, "decline")}
+                          >
+                            Recusar participação
+                          </Button>
+                        </Stack>
+                      </Stack>
+                    </Box>
+                  );
+                })}
+              </Stack>
+            </Paper>
+          )}
 
           {/* ====== Números cativos ====== */}
           <Paper variant="outlined" sx={{ p: { xs: 2, md: 3 } }}>
