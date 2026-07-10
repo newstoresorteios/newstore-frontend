@@ -1,4 +1,4 @@
-import { getJSON, patchJSON } from "../lib/api";
+import { getJSON, patchJSON, postJSON } from "../lib/api";
 
 export function listAdminCaptives(params = {}) {
   const qs = new URLSearchParams();
@@ -25,5 +25,15 @@ export function updateAdminCaptiveAuthorizationMode(id, authorizationMode) {
 export function updateCaptivePreauthNotifications(id, enabled) {
   return patchJSON(`/admin/captives/${encodeURIComponent(String(id))}/preauth-notifications`, {
     preauth_notifications_enabled: enabled === true,
+  });
+}
+
+export function getAdminCaptivesCurrentDraw() {
+  return getJSON("/admin/dashboard/summary");
+}
+
+export function reissueAndResendCaptivePreauths(drawId) {
+  return postJSON(`/admin/captive-preauth/draws/${encodeURIComponent(String(drawId))}/reissue-and-resend`, {
+    confirmation: "REEMITIR",
   });
 }

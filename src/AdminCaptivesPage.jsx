@@ -13,7 +13,9 @@ import PlayCircleOutlineRoundedIcon from "@mui/icons-material/PlayCircleOutlineR
 import SwapHorizRoundedIcon from "@mui/icons-material/SwapHorizRounded";
 import { adminPanelPaperSx, createNewStoreAdminTheme, newStoreAdminColors } from "./adminTheme";
 import {
+  getAdminCaptivesCurrentDraw,
   listAdminCaptives,
+  reissueAndResendCaptivePreauths,
   updateAdminCaptiveAuthorizationMode,
   updateAdminCaptiveParticipation,
   updateCaptivePreauthNotifications,
@@ -55,6 +57,15 @@ function formatShortAmount(amountCents) {
     currency: "BRL",
     minimumFractionDigits: cents % 100 === 0 ? 0 : 2,
     maximumFractionDigits: 2,
+  });
+}
+
+function formatAmountBRL(amountCents) {
+  const cents = Number(amountCents);
+  if (!Number.isInteger(cents) || cents <= 0) return "-";
+  return (cents / 100).toLocaleString("pt-BR", {
+    style: "currency",
+    currency: "BRL",
   });
 }
 
@@ -101,6 +112,10 @@ export default function AdminCaptivesPage() {
   const [updatingId, setUpdatingId] = React.useState("");
   const [tab, setTab] = React.useState("captives");
   const [policy, setPolicy] = React.useState(DEFAULT_CAPTIVE_POLICY);
+  const [currentDraw, setCurrentDraw] = React.useState(null);
+  const [reissueLoading, setReissueLoading] = React.useState(false);
+  const [reissueError, setReissueError] = React.useState("");
+  const [reissueResult, setReissueResult] = React.useState(null);
 
   React.useEffect(() => {
     const timer = setTimeout(() => {
@@ -129,6 +144,43 @@ export default function AdminCaptivesPage() {
   }, [debouncedQ, status, page, pageSize]);
 
   React.useEffect(() => { load(); }, [load]);
+
+  const loadCurrentDraw = React.useCallback(async () => {
+    try {
+      const payload = await getAdminCaptivesCurrentDraw();
+      setCurrentDraw(payload?.draw_id == null ? null : {
+        draw_id: Number(payload.draw_id),
+        price_cents: Number(payload.price_cents),
+      });
+    } catch {
+      setCurrentDraw(null);
+    }
+  }, []);
+
+  React.useEffect(() => { loadCurrentDraw(); }, [loadCurrentDraw]);
+
+  async function handleReissueAndResend() {
+    if (!currentDraw?.draw_id || reissueLoading) return;
+    const confirmed = window.confirm(
+      "Esta ação corrigirá o valor das autorizações ainda pendentes para o valor atual do sorteio principal e realizará uma nova tentativa de WhatsApp apenas para clientes autorizados. Nenhuma cobrança será realizada. Deseja continuar?"
+    );
+    if (!confirmed) return;
+
+    setReissueLoading(true);
+    setReissueError("");
+    setReissueResult(null);
+    try {
+      const result = await reissueAndResendCaptivePreauths(currentDraw.draw_id);
+      setReissueResult(result);
+    } catch (error) {
+      const message = String(error?.message || "");
+      if (message.includes("confirmation_required")) setReissueError("Confirmação administrativa obrigatória.");
+      else if (message.includes("captive_preauth_not_required")) setReissueError("O valor atual da cota não exige pré-autorização.");
+      else setReissueError("Não foi possível reemitir e reenviar as confirmações pendentes.");
+    } finally {
+      setReissueLoading(false);
+    }
+  }
 
   async function toggleParticipation(row) {
     setUpdatingId(`${row.id}:participation`);
@@ -215,7 +267,12 @@ export default function AdminCaptivesPage() {
           </IconButton>
           <Typography sx={{ ml: 1, fontWeight: 900 }}>CATIVOS</Typography>
           <Box sx={{ flex: 1 }} />
-          <Button startIcon={<RefreshRoundedIcon />} onClick={load} variant="outlined" size="small">
+          <Button
+            startIcon={<RefreshRoundedIcon />}
+            onClick={() => { load(); loadCurrentDraw(); }}
+            variant="outlined"
+            size="small"
+          >
             Atualizar
           </Button>
         </Toolbar>
@@ -364,6 +421,53 @@ export default function AdminCaptivesPage() {
               </TableContainer>
             ) : (
               <Box>
+                <Paper variant="outlined" sx={{ m: 2, p: 2, bgcolor: "rgba(255,255,255,0.02)" }}>
+                  <Stack spacing={1.5}>
+                    <Box>
+                      <Typography sx={{ fontWeight: 900 }}>Reenvio de confirmações pendentes</Typography>
+                      <Typography variant="body2" sx={{ color: "text.secondary", mt: 0.5 }}>
+                        Corrige o valor das pré-autorizações ainda pendentes deste sorteio e realiza uma nova tentativa de envio para clientes com WhatsApp autorizado.
+                      </Typography>
+                      <Typography variant="body2" sx={{ color: "text.secondary", mt: 0.5 }}>
+                        Clientes sem permissão de WhatsApp continuarão podendo responder pelo painel da conta.
+                      </Typography>
+                    </Box>
+                    <Stack direction={{ xs: "column", sm: "row" }} spacing={1.5} alignItems={{ xs: "stretch", sm: "center" }}>
+                      <Box sx={{ flex: 1 }}>
+                        <Typography variant="body2" sx={{ fontWeight: 800 }}>
+                          Sorteio: {currentDraw?.draw_id ? `#${currentDraw.draw_id}` : "não identificado"}
+                        </Typography>
+                        <Typography variant="body2" sx={{ color: "text.secondary" }}>
+                          Valor atual da cota: {formatAmountBRL(currentDraw?.price_cents)}
+                        </Typography>
+                      </Box>
+                      <Button
+                        variant="contained"
+                        color="warning"
+                        disabled={reissueLoading || !currentDraw?.draw_id}
+                        onClick={handleReissueAndResend}
+                        startIcon={reissueLoading ? <CircularProgress color="inherit" size={16} /> : null}
+                        sx={{ whiteSpace: "nowrap" }}
+                      >
+                        {reissueLoading ? "Reemitindo..." : "Reemitir e reenviar pendentes"}
+                      </Button>
+                    </Stack>
+                    {reissueError && <Alert severity="error" variant="outlined">{reissueError}</Alert>}
+                    {reissueResult && (
+                      <Alert severity={Number(reissueResult.failed || 0) > 0 ? "warning" : "success"} variant="outlined">
+                        <Stack spacing={0.25}>
+                          <Typography variant="body2">{Number(reissueResult.pending_found || 0)} autorizações pendentes encontradas</Typography>
+                          <Typography variant="body2">{Number(reissueResult.amount_corrected || 0)} valores corrigidos</Typography>
+                          <Typography variant="body2">{Number(reissueResult.sent || 0)} mensagens reenviadas</Typography>
+                          <Typography variant="body2">{Number(reissueResult.skipped_consent || 0)} sem consentimento</Typography>
+                          <Typography variant="body2">{Number(reissueResult.skipped_notifications_disabled || 0)} com notificações pausadas</Typography>
+                          <Typography variant="body2">{Number(reissueResult.skipped_near_expiration || 0)} perto de expirar</Typography>
+                          <Typography variant="body2">{Number(reissueResult.failed || 0)} falha de envio</Typography>
+                        </Stack>
+                      </Alert>
+                    )}
+                  </Stack>
+                </Paper>
                 <Alert severity="info" variant="outlined" sx={{ m: 2 }}>
                   Pausar notificações impede o envio da mensagem de pré-autorização. Em sorteios acima do valor padrão, isso não libera cobrança automática direta.
                 </Alert>
