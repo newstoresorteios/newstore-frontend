@@ -52,6 +52,10 @@ export function listCurrentDrawCaptiveParticipation(params = {}) {
   return getJSON(`/admin/captives/current-draw-participation${qs.toString() ? `?${qs.toString()}` : ""}`);
 }
 
+export function isDatabaseMigrationRequiredError(error) {
+  return String(error?.message || "").includes("database_migration_required");
+}
+
 export function updateCurrentDrawCaptiveParticipation(id, enabled, reason) {
   return patchJSON(`/admin/captives/current-draw-participation/${encodeURIComponent(String(id))}`, {
     enabled: enabled === true,

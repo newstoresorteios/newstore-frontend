@@ -15,6 +15,7 @@ import CreditCardRoundedIcon from "@mui/icons-material/CreditCardRounded";
 import { adminPanelPaperSx, createNewStoreAdminTheme, newStoreAdminColors } from "./adminTheme";
 import {
   authorizeCurrentDrawCaptiveParticipation,
+  isDatabaseMigrationRequiredError,
   listAdminCaptives,
   listCaptiveNotificationHistory,
   listCurrentDrawCaptiveParticipation,
@@ -214,6 +215,7 @@ export default function AdminCaptivesPage() {
   const [tab, setTab] = React.useState("captives");
   const [policy, setPolicy] = React.useState(DEFAULT_CAPTIVE_POLICY);
   const [currentDraw, setCurrentDraw] = React.useState(null);
+  const [currentDrawError, setCurrentDrawError] = React.useState("");
   const [reissueLoading, setReissueLoading] = React.useState(false);
   const [reissueError, setReissueError] = React.useState("");
   const [reissueResult, setReissueResult] = React.useState(null);
@@ -292,13 +294,12 @@ export default function AdminCaptivesPage() {
   const loadCurrentDraw = React.useCallback(async () => {
     try {
       const payload = await listCurrentDrawCaptiveParticipation({ page: 1, limit: 1 });
+      setCurrentDrawError("");
       setCurrentDraw(payload?.draw || null);
       setCurrentDrawPendingCount(Number(payload?.pending_authorizations || 0));
       setCurrentDrawDisabledCount(Number(payload?.disabled_count || 0));
-    } catch {
-      setCurrentDraw(null);
-      setCurrentDrawPendingCount(0);
-      setCurrentDrawDisabledCount(0);
+    } catch (error) {
+      setCurrentDrawError(isDatabaseMigrationRequiredError(error) ? "migration" : "internal");
     }
   }, []);
 
@@ -343,13 +344,14 @@ export default function AdminCaptivesPage() {
       });
       setParticipationItems(Array.isArray(payload?.items) ? payload.items : []);
       setParticipationTotal(Number(payload?.total || 0));
+      setCurrentDrawError("");
       setCurrentDraw(payload?.draw || null);
       setCurrentDrawPendingCount(Number(payload?.pending_authorizations || 0));
       setCurrentDrawDisabledCount(Number(payload?.disabled_count || 0));
-    } catch {
+    } catch (error) {
       setParticipationItems([]);
       setParticipationTotal(0);
-      setParticipationError("Não foi possível carregar a participação do sorteio atual.");
+      setCurrentDrawError(isDatabaseMigrationRequiredError(error) ? "migration" : "internal");
     } finally {
       setParticipationLoading(false);
     }
@@ -684,7 +686,29 @@ export default function AdminCaptivesPage() {
   }
 
   function renderCurrentDrawParticipation() {
-    if (!currentDraw?.draw_id && !participationLoading) {
+    if (participationLoading) {
+      return (
+        <Stack direction="row" spacing={1.5} alignItems="center" sx={{ p: 3 }}>
+          <CircularProgress size={22} />
+          <Typography sx={{ color: "text.secondary" }}>Carregando participações</Typography>
+        </Stack>
+      );
+    }
+    if (currentDrawError === "migration") {
+      return (
+        <Alert severity="error" sx={{ m: 2 }}>
+          As migrations 023 e 024 precisam ser aplicadas no banco antes de usar esta área.
+        </Alert>
+      );
+    }
+    if (currentDrawError === "internal") {
+      return (
+        <Alert severity="error" sx={{ m: 2 }}>
+          Não foi possível carregar a participação do sorteio atual.
+        </Alert>
+      );
+    }
+    if (!currentDraw?.draw_id) {
       return <Typography sx={{ p: 3, color: "text.secondary" }}>Nenhum sorteio principal aberto.</Typography>;
     }
     return (
@@ -739,12 +763,7 @@ export default function AdminCaptivesPage() {
         </Stack>
         {authorizationMessage && <Alert severity="success" sx={{ m: 2 }}>{authorizationMessage}</Alert>}
         {participationError && <Alert severity="error" sx={{ m: 2 }}>{participationError}</Alert>}
-        {participationLoading ? (
-          <Stack direction="row" spacing={1.5} alignItems="center" sx={{ p: 3 }}>
-            <CircularProgress size={22} />
-            <Typography sx={{ color: "text.secondary" }}>Carregando participações</Typography>
-          </Stack>
-        ) : participationItems.length === 0 ? (
+        {participationItems.length === 0 ? (
           <Typography sx={{ p: 3, color: "text.secondary" }}>Nenhum número cativo encontrado.</Typography>
         ) : (
           <TableContainer>
