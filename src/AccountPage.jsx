@@ -12,6 +12,7 @@ import {
 } from "@mui/material";
 import ArrowBackIosNewRoundedIcon from "@mui/icons-material/ArrowBackIosNewRounded";
 import AccountCircleRoundedIcon from "@mui/icons-material/AccountCircleRounded";
+import EmojiEventsRoundedIcon from "@mui/icons-material/EmojiEventsRounded";
 import { apiJoin, authHeaders, getJSON } from "./lib/api";
 
 // ▼ PIX
@@ -698,6 +699,11 @@ export default function AccountPage() {
     u.name || u.fullName || u.nome || u.displayName || u.username || u.email || "NOME DO CLIENTE";
   const couponCode = u?.coupon_code || cupom || "CUPOMAQUI";
   const isAdminUser = !!(u?.is_admin || u?.role === "admin" || (u?.email && u.email.toLowerCase() === ADMIN_EMAIL));
+  const winnerBalanceCents = u?.winner_balance_cents == null ? null : Number(u.winner_balance_cents);
+  const showWinnerBalance = Number.isFinite(winnerBalanceCents) && winnerBalanceCents > 0;
+  const winnerBalanceLabel = showWinnerBalance
+    ? (winnerBalanceCents / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })
+    : "";
 
   // salvar config
   async function handleSaveConfig() {
@@ -796,6 +802,65 @@ export default function AccountPage() {
               </Button>
             </Stack>
           </Paper>
+
+          {showWinnerBalance && (
+            <Paper
+              variant="outlined"
+              sx={{
+                p: { xs: 2, md: 2.5 },
+                border: "1.5px solid #D4AF37",
+                boxShadow: "0 0 24px rgba(212,175,55,0.16)",
+                background:
+                  "linear-gradient(135deg, rgba(212,175,55,0.14) 0%, rgba(18,18,18,0.98) 42%, rgba(83,64,18,0.22) 100%)",
+                cursor: "default",
+              }}
+            >
+              <Stack direction="row" spacing={2} alignItems="center">
+                <Box
+                  sx={{
+                    width: { xs: 48, sm: 56 },
+                    height: { xs: 48, sm: 56 },
+                    borderRadius: "50%",
+                    display: "grid",
+                    placeItems: "center",
+                    color: "#D4AF37",
+                    bgcolor: "rgba(212,175,55,0.10)",
+                    border: "1px solid rgba(212,175,55,0.42)",
+                    flex: "0 0 auto",
+                  }}
+                >
+                  <EmojiEventsRoundedIcon sx={{ fontSize: { xs: 28, sm: 34 } }} />
+                </Box>
+                <Box sx={{ minWidth: 0 }}>
+                  <Typography
+                    sx={{
+                      fontWeight: 900,
+                      letterSpacing: 1.2,
+                      color: "#F1D26A",
+                      fontSize: { xs: 12, sm: 13 },
+                    }}
+                  >
+                    SALDO VENCEDOR
+                  </Typography>
+                  <Typography
+                    sx={{
+                      fontWeight: 900,
+                      color: "#FFE9A3",
+                      fontSize: { xs: 26, sm: 34 },
+                      lineHeight: 1.1,
+                      mt: 0.25,
+                      wordBreak: "break-word",
+                    }}
+                  >
+                    {winnerBalanceLabel}
+                  </Typography>
+                  <Typography sx={{ opacity: 0.82, mt: 0.5 }}>
+                    Prêmio em créditos New Store
+                  </Typography>
+                </Box>
+              </Stack>
+            </Paper>
+          )}
 
           {/* Configurações do sorteio (apenas admin) */}
           {isAdminUser && (

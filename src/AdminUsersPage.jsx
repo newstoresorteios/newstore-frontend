@@ -4,7 +4,7 @@ import {
   AppBar, Toolbar, IconButton, Typography, Container, CssBaseline, Paper, Stack,
   TextField, Button, Table, TableHead, TableBody, TableRow, TableCell, TableContainer,
   Checkbox, Divider, Snackbar, Alert, CircularProgress, createTheme, ThemeProvider, Box, Chip, MenuItem,
-  Tab, Tabs
+  Tab, Tabs, Dialog, DialogTitle, DialogContent, DialogActions
 } from "@mui/material";
 import ArrowBackIosNewRoundedIcon from "@mui/icons-material/ArrowBackIosNewRounded";
 import SearchRoundedIcon from "@mui/icons-material/SearchRounded";
@@ -311,6 +311,8 @@ function normalizeUsers(payload) {
     created_at: u.created_at || u.createdAt || null,
     coupon_code: u.coupon_code || "",
     coupon_value_cents: Number(u.coupon_value_cents || 0),
+    winner_balance_cents: u.winner_balance_cents == null ? null : Number(u.winner_balance_cents),
+    winner_balance_updated_at: u.winner_balance_updated_at || null,
   }));
 }
 
@@ -327,10 +329,16 @@ export default function AdminUsersPage() {
   const blank = {
     id: null, name: "", email: "", phone: "", is_admin: false,
     coupon_code: "", coupon_value_cents: 0,
+    winner_balance_cents: null, winner_balance_updated_at: null,
   };
   const [form, setForm] = React.useState(blank);
   const [saldoStr, setSaldoStr] = React.useState("0,00");
   const [balanceAdjustmentReason, setBalanceAdjustmentReason] = React.useState("");
+  const [winnerDialog, setWinnerDialog] = React.useState({ open: false, mode: "assign" });
+  const [winnerAmountStr, setWinnerAmountStr] = React.useState("");
+  const [winnerReason, setWinnerReason] = React.useState("");
+  const [winnerSaving, setWinnerSaving] = React.useState(false);
+  const [winnerError, setWinnerError] = React.useState("");
 
   const [saving, setSaving] = React.useState(false);
   const [toast, setToast] = React.useState({ open: false, msg: "", sev: "success" });
@@ -450,14 +458,86 @@ export default function AdminUsersPage() {
       is_admin: !!u.is_admin,
       coupon_code: u.coupon_code || "",
       coupon_value_cents: Number(u.coupon_value_cents || 0),
+      winner_balance_cents: u.winner_balance_cents == null ? null : Number(u.winner_balance_cents),
+      winner_balance_updated_at: u.winner_balance_updated_at || null,
     });
     setSaldoStr(centsToBRLString(u.coupon_value_cents || 0));
     setBalanceAdjustmentReason("");
+    setWinnerError("");
   }
   function handleNew() {
     setForm(blank);
     setSaldoStr("0,00");
     setBalanceAdjustmentReason("");
+    setWinnerError("");
+  }
+
+  function mergeUpdatedUser(updated) {
+    const normalized = normalizeUsers([updated])[0];
+    if (!normalized) return;
+    setUsers((prev) => prev.map((u) => (u.id === normalized.id ? normalized : u)));
+    setForm((prev) => (prev.id === normalized.id ? normalized : prev));
+    setSaldoStr(centsToBRLString(normalized.coupon_value_cents || 0));
+  }
+
+  function openWinnerBalanceDialog(mode) {
+    if (!form.id) {
+      setToast({ open: true, sev: "warning", msg: "Selecione um cliente na lista." });
+      return;
+    }
+    setWinnerDialog({ open: true, mode });
+    setWinnerAmountStr(mode === "hide" ? "" : centsToBRLString(form.winner_balance_cents || 0));
+    setWinnerReason("");
+    setWinnerError("");
+  }
+
+  async function handleWinnerBalanceSave() {
+    if (!form.id) {
+      setWinnerError("Selecione um cliente na lista.");
+      return;
+    }
+
+    const reason = String(winnerReason || "").trim();
+    if (!reason) {
+      setWinnerError("Informe o motivo.");
+      return;
+    }
+
+    const isHide = winnerDialog.mode === "hide";
+    const amountCents = isHide ? null : brlStringToCents(winnerAmountStr);
+    if (!isHide && amountCents <= 0) {
+      setWinnerError("Informe um valor maior que zero.");
+      return;
+    }
+
+    if (isHide && !window.confirm("Ocultar saldo vencedor deste cliente?")) return;
+
+    try {
+      setWinnerSaving(true);
+      setWinnerError("");
+      const r = await fetch(apiJoin(`/admin/users/${form.id}/winner-balance`), {
+        method: isHide ? "DELETE" : "PATCH",
+        headers: { "Content-Type": "application/json", ...authHeaders() },
+        credentials: "include",
+        body: JSON.stringify(isHide ? { reason } : { amount_cents: amountCents, reason }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j?.error || "winner_balance_failed");
+
+      mergeUpdatedUser(j.user || j);
+      setWinnerDialog({ open: false, mode: "assign" });
+      setWinnerReason("");
+      setWinnerAmountStr("");
+      setToast({
+        open: true,
+        sev: "success",
+        msg: isHide ? "Saldo vencedor ocultado." : "Saldo vencedor salvo.",
+      });
+    } catch (e) {
+      setWinnerError(e?.message || "Não foi possível salvar o saldo vencedor.");
+    } finally {
+      setWinnerSaving(false);
+    }
   }
 
   async function handleSave() {
@@ -730,6 +810,52 @@ export default function AdminUsersPage() {
               />
             </Stack>
 
+            <Paper
+              variant="outlined"
+              sx={{
+                mt: 2,
+                p: { xs: 1.5, md: 2 },
+                borderColor: "rgba(212,175,55,0.38)",
+                bgcolor: "rgba(212,175,55,0.04)",
+              }}
+            >
+              <Stack spacing={1.25}>
+                <Box>
+                  <Typography variant="subtitle1" fontWeight={900}>
+                    Saldo vencedor
+                  </Typography>
+                  <Typography variant="body2" sx={{ opacity: 0.76 }}>
+                    Prêmio em créditos atribuído ao cliente. Este valor é separado do cashback.
+                  </Typography>
+                </Box>
+                <Typography sx={{ fontWeight: 800 }}>
+                  {form.winner_balance_cents == null
+                    ? "Não atribuído — oculto para o cliente"
+                    : `Saldo vencedor atual: ${toBRL(Number(form.winner_balance_cents) / 100)}`}
+                </Typography>
+                <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
+                  <Button
+                    variant="outlined"
+                    color="secondary"
+                    disabled={!form.id}
+                    onClick={() => openWinnerBalanceDialog(form.winner_balance_cents == null ? "assign" : "update")}
+                  >
+                    {form.winner_balance_cents == null ? "Atribuir saldo vencedor" : "Atualizar saldo vencedor"}
+                  </Button>
+                  {form.winner_balance_cents != null && (
+                    <Button
+                      variant="text"
+                      color="error"
+                      disabled={!form.id}
+                      onClick={() => openWinnerBalanceDialog("hide")}
+                    >
+                      Ocultar saldo vencedor
+                    </Button>
+                  )}
+                </Stack>
+              </Stack>
+            </Paper>
+
             <Stack direction="row" spacing={1.5} sx={{ mt: 2 }}>
               <Button startIcon={<AddRoundedIcon />} onClick={handleNew}>Novo</Button>
               <Button
@@ -953,7 +1079,7 @@ export default function AdminUsersPage() {
           {/* Tabela */}
           <Paper variant="outlined" sx={{ p: 1, border: "1px solid rgba(255,255,255,0.08)", bgcolor: "background.paper" }}>
             <TableContainer>
-              <Table size="small" sx={{ minWidth: 920 }}>
+              <Table size="small" sx={{ minWidth: 1040 }}>
                 <TableHead>
                   <TableRow>
                     <TableCell sx={{ fontWeight: 800, whiteSpace: "nowrap" }}>ID</TableCell>
@@ -962,6 +1088,7 @@ export default function AdminUsersPage() {
                     <TableCell sx={{ fontWeight: 800, whiteSpace: "nowrap" }}>CELULAR</TableCell>
                     <TableCell sx={{ fontWeight: 800, whiteSpace: "nowrap" }}>CUPOM</TableCell>
                     <TableCell sx={{ fontWeight: 800, whiteSpace: "nowrap" }}>SALDO</TableCell>
+                    <TableCell sx={{ fontWeight: 800, whiteSpace: "nowrap" }}>SALDO VENCEDOR</TableCell>
                     <TableCell sx={{ fontWeight: 800, whiteSpace: "nowrap" }}>ADMIN</TableCell>
                     <TableCell sx={{ fontWeight: 800, whiteSpace: "nowrap" }}>CRIADO EM</TableCell>
                   </TableRow>
@@ -969,12 +1096,12 @@ export default function AdminUsersPage() {
                 <TableBody>
                   {loading && (
                     <TableRow>
-                      <TableCell colSpan={8} sx={{ color: "#bbb" }}>Carregando…</TableCell>
+                      <TableCell colSpan={9} sx={{ color: "#bbb" }}>Carregando…</TableCell>
                     </TableRow>
                   )}
                   {!loading && filtered.length === 0 && (
                     <TableRow>
-                      <TableCell colSpan={8} sx={{ color: "#bbb" }}>Nenhum usuário encontrado.</TableCell>
+                      <TableCell colSpan={9} sx={{ color: "#bbb" }}>Nenhum usuário encontrado.</TableCell>
                     </TableRow>
                   )}
                   {filtered.map((u) => (
@@ -985,6 +1112,9 @@ export default function AdminUsersPage() {
                       <TableCell>{u.phone}</TableCell>
                       <TableCell>{u.coupon_code || "-"}</TableCell>
                       <TableCell>{toBRL((u.coupon_value_cents || 0) / 100)}</TableCell>
+                      <TableCell sx={{ whiteSpace: "nowrap" }}>
+                        {u.winner_balance_cents == null ? "—" : toBRL(Number(u.winner_balance_cents) / 100)}
+                      </TableCell>
                       <TableCell>{u.is_admin ? "Sim" : "Não"}</TableCell>
                       <TableCell>{u.created_at ? new Date(u.created_at).toLocaleString("pt-BR") : "--"}</TableCell>
                     </TableRow>
@@ -995,6 +1125,60 @@ export default function AdminUsersPage() {
           </Paper>
         </Stack>
       </Container>
+
+      <Dialog
+        open={winnerDialog.open}
+        onClose={() => {
+          if (!winnerSaving) setWinnerDialog((s) => ({ ...s, open: false }));
+        }}
+        fullWidth
+        maxWidth="sm"
+      >
+        <DialogTitle sx={{ fontWeight: 900 }}>
+          {winnerDialog.mode === "hide" ? "Ocultar saldo vencedor" : "Saldo vencedor"}
+        </DialogTitle>
+        <DialogContent dividers>
+          <Stack spacing={2} sx={{ pt: 0.5 }}>
+            {winnerDialog.mode !== "hide" && (
+              <TextField
+                label="Valor do saldo vencedor"
+                value={winnerAmountStr}
+                onChange={(e) => setWinnerAmountStr(e.target.value)}
+                helperText="Informe o valor final em reais. Não é incremento."
+                fullWidth
+                autoFocus
+              />
+            )}
+            <TextField
+              label={winnerDialog.mode === "hide" ? "Motivo para ocultar" : "Motivo da atribuição"}
+              value={winnerReason}
+              onChange={(e) => setWinnerReason(e.target.value)}
+              inputProps={{ maxLength: 500 }}
+              multiline
+              minRows={2}
+              fullWidth
+            />
+            {winnerError && (
+              <Alert severity="error" variant="outlined">
+                {winnerError}
+              </Alert>
+            )}
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button disabled={winnerSaving} onClick={() => setWinnerDialog((s) => ({ ...s, open: false }))}>
+            Cancelar
+          </Button>
+          <Button
+            variant="contained"
+            color={winnerDialog.mode === "hide" ? "error" : "secondary"}
+            disabled={winnerSaving}
+            onClick={handleWinnerBalanceSave}
+          >
+            {winnerSaving ? "Salvando..." : winnerDialog.mode === "hide" ? "Ocultar saldo vencedor" : "Salvar saldo vencedor"}
+          </Button>
+        </DialogActions>
+      </Dialog>
 
       <Snackbar
         open={toast.open}
