@@ -179,19 +179,6 @@ function authorizationStatusLabel(status, source = null) {
   }[status] || status || "Sem autorização";
 }
 
-function reservationStatusLabel(status) {
-  return {
-    pending: "Pendente",
-    active: "Ativa",
-    reserved: "Reservada",
-    expired: "Liberada",
-    cancelled: "Cancelada",
-    paid: "Confirmada",
-    sold: "Vendida",
-    available: "Disponível",
-  }[String(status || "").toLowerCase()] || status || "-";
-}
-
 function participationState(row) {
   const labels = {
     pending: ["Ativo — aguardando confirmação", "warning"],
@@ -205,6 +192,7 @@ function participationState(row) {
     declined: ["Recusado pelo cliente", "neutral"],
     expired: ["Expirado", "neutral"],
     authorized: ["Ativo — confirmação registrada", "warning"],
+    review_required: ["Revisão necessária", "error"],
     no_authorization: ["Sem autorização criada", "neutral"],
   };
   return labels[row?.participation_state] || labels.no_authorization;
@@ -493,17 +481,7 @@ export default function AdminCaptivesPage() {
       const payload = await updateCurrentDrawCaptiveParticipation(captiveId, nextEnabled, reason);
       const updatedItem = payload?.item;
       if (updatedItem?.autopay_number_id) {
-        setParticipationItems((current) => current.map((item) => (
-          String(item.autopay_number_id) === String(updatedItem.autopay_number_id) ? updatedItem : item
-        )));
-        if (row.enabled_current_draw !== updatedItem.enabled_current_draw) {
-          setCurrentDrawDisabledCount((current) => Math.max(0, current + (updatedItem.enabled_current_draw ? -1 : 1)));
-        }
-        const wasPending = row.participation_state === "pending";
-        const isPending = updatedItem.participation_state === "pending";
-        if (wasPending !== isPending) {
-          setCurrentDrawPendingCount((current) => Math.max(0, current + (isPending ? 1 : -1)));
-        }
+        await loadParticipation();
       }
     } catch (error) {
       const message = String(error?.message || "");
@@ -537,31 +515,44 @@ export default function AdminCaptivesPage() {
   }
 
   async function handleAdminAuthorization() {
-    const row = authorizationDialogItem;
-    if (!row?.authorization_id || !currentDraw?.draw_id || authorizationLoadingId) return;
-    setAuthorizationLoadingId(row.authorization_id);
+    const group = authorizationDialogItem;
+    if (!group?.authorization_id || !currentDraw?.draw_id || authorizationLoadingId) return;
+    setAuthorizationLoadingId(group.group_key || group.authorization_id);
     setAuthorizationError("");
     try {
-      await authorizeCurrentDrawCaptiveParticipation(row.authorization_id, currentDraw.draw_id);
+      const result = await authorizeCurrentDrawCaptiveParticipation(group.authorization_id, currentDraw.draw_id);
       await loadParticipation();
       setAuthorizationDialogItem(null);
-      setAuthorizationMessage("Cobrança autorizada e participação confirmada pelo administrador.");
+      const confirmedNumbers = result?.captive_numbers || group.captive_numbers || [];
+      const numbers = confirmedNumbers.join(" e ");
+      const totalAmount = result?.total_amount_cents ?? group.total_amount_cents;
+      setAuthorizationMessage(
+        confirmedNumbers.length === 1
+          ? `Cobrança única de ${formatAmountBRL(totalAmount)} autorizada. O número ${numbers} foi confirmado.`
+          : `Cobrança única de ${formatAmountBRL(totalAmount)} autorizada. Os números ${numbers} foram confirmados.`
+      );
     } catch (error) {
       const message = String(error?.message || "");
       if (message.includes("participation_declined_by_customer")) {
         setAuthorizationError("O cliente recusou esta participação. É necessário reabrir a autorização antes de confirmar administrativamente.");
       } else if (message.includes("payment_in_progress")) {
         setAuthorizationError("Já existe uma cobrança em processamento para esta participação.");
-      } else if (message.includes("authorization_amount_outdated")) {
-        setAuthorizationError("O valor da autorização está desatualizado. Reemita a confirmação antes de autorizar.");
+      } else if (message.includes("authorization_amount_outdated") || message.includes("authorization_amount_mismatch")) {
+        setAuthorizationError("O grupo possui uma autorização com valor diferente do preço atual e precisa de revisão.");
       } else if (message.includes("captive_number_not_available_for_user")) {
         setAuthorizationError("O número cativo não está disponível para este usuário.");
       } else if (message.includes("authorization_expired")) {
         setAuthorizationError("O prazo desta autorização expirou.");
       } else if (message.includes("captive_preauth_not_required")) {
         setAuthorizationError("Este sorteio utiliza o fluxo automático padrão.");
-      } else if (message.includes("payment_failed") || message.includes("authorization_charge_not_configured")) {
-        setAuthorizationError("A autorização administrativa foi registrada, mas a cobrança não foi concluída.");
+      } else if (message.includes("payment_method_unavailable") || message.includes("authorization_charge_not_configured")) {
+        setAuthorizationError("O cliente não possui cartão cadastrado.");
+      } else if (message.includes("group_already_partially_or_fully_charged")) {
+        setAuthorizationError("O grupo possui uma participação já cobrada e precisa de revisão.");
+      } else if (message.includes("group_requires_review") || message.includes("group_changed")) {
+        setAuthorizationError("O grupo foi alterado ou possui participações inconsistentes. Atualize e revise os números.");
+      } else if (message.includes("payment_failed")) {
+        setAuthorizationError(`A cobrança de ${formatAmountBRL(group.total_amount_cents)} não foi aprovada.`);
         await loadParticipation();
       } else if (message.includes("403") || message.includes("401")) {
         setAuthorizationError("Você não possui permissão para executar esta ação.");
@@ -743,7 +734,7 @@ export default function AdminCaptivesPage() {
           </TextField>
           <Box sx={{ flex: 1 }} />
           <Typography variant="body2" sx={{ color: "text.secondary", fontWeight: 800 }}>
-            {participationTotal} número{participationTotal === 1 ? "" : "s"}
+            {participationTotal} cliente{participationTotal === 1 ? "" : "s"}
           </Typography>
         </Stack>
         {authorizationMessage && <Alert severity="success" sx={{ m: 2 }}>{authorizationMessage}</Alert>}
@@ -757,81 +748,94 @@ export default function AdminCaptivesPage() {
           <Typography sx={{ p: 3, color: "text.secondary" }}>Nenhum número cativo encontrado.</Typography>
         ) : (
           <TableContainer>
-            <Table size="small" sx={{ minWidth: 1560 }}>
+            <Table size="small" sx={{ minWidth: 1180 }}>
               <TableHead>
                 <TableRow>
                   <TableCell>Cliente</TableCell>
                   <TableCell>E-mail</TableCell>
-                  <TableCell>Número cativo</TableCell>
-                  <TableCell>Status permanente</TableCell>
-                  <TableCell>Participação no sorteio atual</TableCell>
-                  <TableCell>Status da autorização</TableCell>
-                  <TableCell>Status da reserva</TableCell>
-                  <TableCell>Status da mensagem</TableCell>
-                  <TableCell>Valor da autorização</TableCell>
-                  <TableCell>Prazo</TableCell>
+                  <TableCell>Números cativos</TableCell>
+                  <TableCell>Quantidade</TableCell>
+                  <TableCell>Valor unitário</TableCell>
+                  <TableCell>Valor total</TableCell>
+                  <TableCell>Status do grupo</TableCell>
+                  <TableCell>Participações</TableCell>
                   <TableCell align="right">Ações</TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
-                {participationItems.map((row) => {
-                  const [stateLabel, stateTone] = participationState(row);
-                  const updating = participationUpdatingId === row.autopay_number_id;
-                  const authorizationUpdating = authorizationLoadingId === row.authorization_id;
-                  const protectedParticipation =
-                    row.payment_approved === true ||
-                    row.payment_in_progress === true ||
-                    ["authorized", "charged"].includes(row.authorization_status);
+                {participationItems.map((group) => {
+                  const [stateLabel, stateTone] = participationState(group);
+                  const authorizationUpdating = authorizationLoadingId === (group.group_key || group.authorization_id);
                   return (
-                    <TableRow key={row.autopay_number_id} hover>
-                      <TableCell sx={{ fontWeight: 800 }}>{row.user_name || "-"}</TableCell>
-                      <TableCell>{row.user_email || "-"}</TableCell>
-                      <TableCell sx={{ fontWeight: 900 }}>{row.captive_number}</TableCell>
-                      <TableCell><StatusChip label="Ativo" tone="success" /></TableCell>
+                    <TableRow key={group.group_key || `${group.draw_id}:${group.user_id}`} hover>
+                      <TableCell sx={{ fontWeight: 800 }}>{group.user_name || "-"}</TableCell>
+                      <TableCell>{group.user_email || "-"}</TableCell>
+                      <TableCell sx={{ fontWeight: 900 }}>{(group.captive_numbers || []).join(", ") || "-"}</TableCell>
+                      <TableCell>{group.quantity || 0}</TableCell>
+                      <TableCell>{formatAmountBRL(group.unit_amount_cents)}</TableCell>
+                      <TableCell sx={{ fontWeight: 900 }}>{formatAmountBRL(group.total_amount_cents)}</TableCell>
                       <TableCell><StatusChip label={stateLabel} tone={stateTone} /></TableCell>
-                      <TableCell>{authorizationStatusLabel(row.authorization_status, row.authorization_source)}</TableCell>
-                      <TableCell>{reservationStatusLabel(row.reservation_status || row.draw_number_status)}</TableCell>
                       <TableCell>
-                        {row.notification_status
-                          ? <StatusChip label={notificationStatusLabel(row.notification_status)} tone={notificationStatusTone(row.notification_status)} />
-                          : "-"}
+                        <Stack spacing={0.75} sx={{ minWidth: 280 }}>
+                          {(group.items || []).map((item) => {
+                            const [itemLabel, itemTone] = participationState(item);
+                            const updating = participationUpdatingId === item.autopay_number_id;
+                            const protectedParticipation =
+                              item.payment_approved === true ||
+                              item.payment_in_progress === true ||
+                              ["authorized", "charged"].includes(item.authorization_status);
+                            return (
+                              <Stack
+                                key={item.autopay_number_id}
+                                direction="row"
+                                spacing={1}
+                                alignItems="center"
+                                justifyContent="space-between"
+                              >
+                                <Typography variant="body2" sx={{ fontWeight: 900 }}>
+                                  Nº {item.captive_number}
+                                </Typography>
+                                <StatusChip label={itemLabel} tone={itemTone} />
+                                <Button
+                                  variant="text"
+                                  color={item.enabled_current_draw ? "error" : "success"}
+                                  size="small"
+                                  disabled={updating || authorizationUpdating || protectedParticipation || !currentDraw?.preauth_required}
+                                  onClick={() => toggleCurrentDrawParticipation(item)}
+                                >
+                                  {updating
+                                    ? "Atualizando..."
+                                    : protectedParticipation
+                                      ? "Confirmada"
+                                      : item.enabled_current_draw ? "Desativar" : "Ativar"}
+                                </Button>
+                              </Stack>
+                            );
+                          })}
+                        </Stack>
                       </TableCell>
-                      <TableCell>{row.authorization_amount_cents ? formatAmountBRL(row.authorization_amount_cents) : "-"}</TableCell>
-                      <TableCell>{formatDate(row.authorization_expires_at) || "-"}</TableCell>
                       <TableCell align="right">
-                        <Stack direction="row" spacing={1} justifyContent="flex-end" sx={{ minWidth: 320 }}>
-                          {row.can_admin_authorize === true && (
+                        <Stack spacing={1} alignItems="flex-end" sx={{ minWidth: 210 }}>
+                          {group.can_admin_authorize === true && (
                             <Button
                               variant="contained"
                               color="success"
                               size="small"
-                              disabled={updating || authorizationUpdating}
+                              disabled={authorizationUpdating || Boolean(participationUpdatingId)}
                               startIcon={authorizationUpdating
                                 ? <CircularProgress color="inherit" size={16} />
                                 : <CreditCardRoundedIcon />}
-                              onClick={() => openAdminAuthorization(row)}
+                              onClick={() => openAdminAuthorization(group)}
                               sx={{ whiteSpace: "nowrap" }}
                             >
                               {authorizationUpdating ? "Autorizando..." : "Autorizar cobrança"}
                             </Button>
                           )}
-                          <Button
-                            variant={row.enabled_current_draw ? "outlined" : "contained"}
-                            color={row.enabled_current_draw ? "error" : "success"}
-                            size="small"
-                            disabled={updating || authorizationUpdating || protectedParticipation || !currentDraw?.preauth_required}
-                            startIcon={updating
-                              ? <CircularProgress color="inherit" size={16} />
-                              : row.enabled_current_draw ? <PauseCircleOutlineRoundedIcon /> : <PlayCircleOutlineRoundedIcon />}
-                            onClick={() => toggleCurrentDrawParticipation(row)}
-                            sx={{ whiteSpace: "nowrap" }}
-                          >
-                            {row.payment_in_progress === true
-                              ? "Cobrança em processamento"
-                              : protectedParticipation
-                                ? "Participação confirmada"
-                              : row.enabled_current_draw ? "Desativar neste sorteio" : "Ativar neste sorteio"}
-                          </Button>
+                          {group.requires_review === true && (
+                            <Typography variant="body2" sx={{ color: "error.main", fontWeight: 800 }}>
+                              Revisão necessária
+                            </Typography>
+                          )}
                         </Stack>
                       </TableCell>
                     </TableRow>
@@ -1179,11 +1183,12 @@ export default function AdminCaptivesPage() {
         fullWidth
         maxWidth="sm"
       >
-        <DialogTitle sx={{ fontWeight: 900 }}>Autorizar cobrança do cativo?</DialogTitle>
+        <DialogTitle sx={{ fontWeight: 900 }}>Autorizar cobrança única?</DialogTitle>
         <DialogContent dividers>
           <Stack spacing={2}>
             <Typography>
-              Ao continuar, o administrador confirmará a participação deste cliente no sorteio atual e autorizará o fluxo de cobrança correspondente.
+              Você autorizará uma única cobrança de {formatAmountBRL(authorizationDialogItem?.total_amount_cents)} para os números cativos{" "}
+              {(authorizationDialogItem?.captive_numbers || []).join(" e ")}.
             </Typography>
             <Box>
               <Typography variant="body2" sx={{ color: "text.secondary" }}>Cliente</Typography>
@@ -1192,22 +1197,36 @@ export default function AdminCaptivesPage() {
             </Box>
             <Stack direction={{ xs: "column", sm: "row" }} spacing={2}>
               <Box sx={{ flex: 1 }}>
-                <Typography variant="body2" sx={{ color: "text.secondary" }}>Número cativo</Typography>
-                <Typography sx={{ fontWeight: 900 }}>{authorizationDialogItem?.captive_number ?? "-"}</Typography>
+                <Typography variant="body2" sx={{ color: "text.secondary" }}>Números cativos</Typography>
+                <Typography sx={{ fontWeight: 900 }}>{(authorizationDialogItem?.captive_numbers || []).join(", ") || "-"}</Typography>
               </Box>
               <Box sx={{ flex: 1 }}>
                 <Typography variant="body2" sx={{ color: "text.secondary" }}>Sorteio atual</Typography>
                 <Typography sx={{ fontWeight: 900 }}>{currentDraw?.draw_id ? `#${currentDraw.draw_id}` : "-"}</Typography>
               </Box>
               <Box sx={{ flex: 1 }}>
-                <Typography variant="body2" sx={{ color: "text.secondary" }}>Valor da cota</Typography>
+                <Typography variant="body2" sx={{ color: "text.secondary" }}>Quantidade</Typography>
                 <Typography sx={{ fontWeight: 900 }}>
-                  {formatAmountBRL(authorizationDialogItem?.authorization_amount_cents)}
+                  {authorizationDialogItem?.quantity || 0}
                 </Typography>
               </Box>
             </Stack>
+            <Stack direction={{ xs: "column", sm: "row" }} spacing={2}>
+              <Box sx={{ flex: 1 }}>
+                <Typography variant="body2" sx={{ color: "text.secondary" }}>Valor unitário</Typography>
+                <Typography sx={{ fontWeight: 900 }}>{formatAmountBRL(authorizationDialogItem?.unit_amount_cents)}</Typography>
+              </Box>
+              <Box sx={{ flex: 1 }}>
+                <Typography variant="body2" sx={{ color: "text.secondary" }}>Valor total</Typography>
+                <Typography sx={{ fontWeight: 900 }}>{formatAmountBRL(authorizationDialogItem?.total_amount_cents)}</Typography>
+              </Box>
+              <Box sx={{ flex: 1 }}>
+                <Typography variant="body2" sx={{ color: "text.secondary" }}>Origem</Typography>
+                <Typography sx={{ fontWeight: 900 }}>Autorização administrativa</Typography>
+              </Box>
+            </Stack>
             <Alert severity="warning" variant="outlined">
-              Esta ação será registrada como autorização administrativa. O pagamento só será considerado concluído após confirmação real do provedor.
+              Confirme somente se deseja cobrar o valor total uma única vez e confirmar todos os números deste grupo.
             </Alert>
             {authorizationError && <Alert severity="error">{authorizationError}</Alert>}
           </Stack>
