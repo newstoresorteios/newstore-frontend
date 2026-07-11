@@ -504,7 +504,7 @@ export default function AdminCaptivesPage() {
   }
 
   function openAdminAuthorization(row) {
-    if (!row?.can_admin_authorize || authorizationLoadingId) return;
+    if (!(row?.can_admin_authorize || row?.can_admin_authorize_remaining) || authorizationLoadingId) return;
     setAuthorizationDialogItem(row);
     setAuthorizationError("");
     setAuthorizationMessage("");
@@ -534,15 +534,22 @@ export default function AdminCaptivesPage() {
           : `Cobrança única de ${formatAmountBRL(totalAmount)} autorizada. Os números ${numbers} foram confirmados.`
       );
     } catch (error) {
-      const message = String(error?.message || "");
+      const message = String(error?.error || error?.message || "");
       if (message.includes("participation_declined_by_customer")) {
         setAuthorizationError("O cliente recusou esta participação. É necessário reabrir a autorização antes de confirmar administrativamente.");
       } else if (message.includes("payment_in_progress")) {
         setAuthorizationError("Já existe uma cobrança em processamento para esta participação.");
       } else if (message.includes("authorization_amount_outdated") || message.includes("authorization_amount_mismatch")) {
         setAuthorizationError("O grupo possui uma autorização com valor diferente do preço atual e precisa de revisão.");
-      } else if (message.includes("captive_number_not_available_for_user")) {
-        setAuthorizationError("O número cativo não está disponível para este usuário.");
+      } else if (message.includes("captive_binding_invalid")) {
+        setAuthorizationError("O vínculo de um dos números cativos está inconsistente.");
+      } else if (message.includes("captive_reservation_invalid")) {
+        setAuthorizationError("Uma das reservas não está mais válida. Atualize a lista antes de tentar novamente.");
+      } else if (message.includes("captive_group_row_mismatch")) {
+        setAuthorizationError("Existem registros inconsistentes ou duplicados neste grupo.");
+      } else if (message.includes("captive_group_changed")) {
+        setAuthorizationError("A participação mudou desde o carregamento. Atualize a lista.");
+        await loadParticipation();
       } else if (message.includes("authorization_expired")) {
         setAuthorizationError("O prazo desta autorização expirou.");
       } else if (message.includes("captive_preauth_not_required")) {
@@ -792,7 +799,15 @@ export default function AdminCaptivesPage() {
                       <TableCell sx={{ fontWeight: 900 }}>{(group.captive_numbers || []).join(", ") || "-"}</TableCell>
                       <TableCell>{group.quantity || 0}</TableCell>
                       <TableCell>{formatAmountBRL(group.unit_amount_cents)}</TableCell>
-                      <TableCell sx={{ fontWeight: 900 }}>{formatAmountBRL(group.total_amount_cents)}</TableCell>
+                      <TableCell sx={{ fontWeight: 900 }}>
+                        {group.partially_charged ? (
+                          <Stack spacing={0.25}>
+                            <Typography variant="body2">Total original: {formatAmountBRL(group.original_total_amount_cents)}</Typography>
+                            <Typography variant="body2">Já confirmado: {formatAmountBRL(group.charged_amount_cents)}</Typography>
+                            <Typography variant="body2" sx={{ fontWeight: 900 }}>Restante: {formatAmountBRL(group.remaining_amount_cents)}</Typography>
+                          </Stack>
+                        ) : formatAmountBRL(group.total_amount_cents)}
+                      </TableCell>
                       <TableCell><StatusChip label={stateLabel} tone={stateTone} /></TableCell>
                       <TableCell>
                         <Stack spacing={0.75} sx={{ minWidth: 280 }}>
@@ -835,7 +850,7 @@ export default function AdminCaptivesPage() {
                       </TableCell>
                       <TableCell align="right">
                         <Stack spacing={1} alignItems="flex-end" sx={{ minWidth: 210 }}>
-                          {group.can_admin_authorize === true && (
+                          {(group.can_admin_authorize === true || group.can_admin_authorize_remaining === true) && (
                             <Button
                               variant="contained"
                               color="success"
@@ -847,7 +862,7 @@ export default function AdminCaptivesPage() {
                               onClick={() => openAdminAuthorization(group)}
                               sx={{ whiteSpace: "nowrap" }}
                             >
-                              {authorizationUpdating ? "Autorizando..." : "Autorizar cobrança"}
+                              {authorizationUpdating ? "Autorizando..." : group.can_admin_authorize_remaining ? "Autorizar cobrança restante" : "Autorizar cobrança"}
                             </Button>
                           )}
                           {group.requires_review === true && (
@@ -1206,9 +1221,15 @@ export default function AdminCaptivesPage() {
         <DialogContent dividers>
           <Stack spacing={2}>
             <Typography>
-              Você autorizará uma única cobrança de {formatAmountBRL(authorizationDialogItem?.total_amount_cents)} para os números cativos{" "}
-              {(authorizationDialogItem?.captive_numbers || []).join(" e ")}.
+              {authorizationDialogItem?.can_admin_authorize_remaining
+                ? `Será realizada uma única cobrança de ${formatAmountBRL(authorizationDialogItem?.remaining_amount_cents)} somente para ${authorizationDialogItem?.remaining_captive_numbers?.length === 1 ? "o número" : "os números"} ${(authorizationDialogItem?.remaining_captive_numbers || []).join(" e ")}.`
+                : `Será realizada uma única cobrança de ${formatAmountBRL(authorizationDialogItem?.total_amount_cents)} para os números ${(authorizationDialogItem?.captive_numbers || []).join(" e ")}.`}
             </Typography>
+            {authorizationDialogItem?.can_admin_authorize_remaining && (
+              <Alert severity="info">
+                Os números {(authorizationDialogItem?.charged_captive_numbers || []).join(" e ")} já estão confirmados e não serão cobrados novamente.
+              </Alert>
+            )}
             <Box>
               <Typography variant="body2" sx={{ color: "text.secondary" }}>Cliente</Typography>
               <Typography sx={{ fontWeight: 800 }}>{authorizationDialogItem?.user_name || "-"}</Typography>
@@ -1226,7 +1247,7 @@ export default function AdminCaptivesPage() {
               <Box sx={{ flex: 1 }}>
                 <Typography variant="body2" sx={{ color: "text.secondary" }}>Quantidade</Typography>
                 <Typography sx={{ fontWeight: 900 }}>
-                  {authorizationDialogItem?.quantity || 0}
+                  {authorizationDialogItem?.can_admin_authorize_remaining ? authorizationDialogItem?.remaining_quantity : authorizationDialogItem?.quantity || 0}
                 </Typography>
               </Box>
             </Stack>
@@ -1245,7 +1266,7 @@ export default function AdminCaptivesPage() {
               </Box>
             </Stack>
             <Alert severity="warning" variant="outlined">
-              Confirme somente se deseja cobrar o valor total uma única vez e confirmar todos os números deste grupo.
+              {authorizationDialogItem?.can_admin_authorize_remaining ? "Confirme somente se deseja cobrar uma única vez o valor restante deste grupo." : "Confirme somente se deseja cobrar o valor total uma única vez e confirmar todos os números deste grupo."}
             </Alert>
             {authorizationError && <Alert severity="error">{authorizationError}</Alert>}
           </Stack>
@@ -1263,7 +1284,7 @@ export default function AdminCaptivesPage() {
             onClick={handleAdminAuthorization}
             disabled={Boolean(authorizationLoadingId)}
           >
-            {authorizationLoadingId ? "Autorizando..." : "Autorizar cobrança"}
+            {authorizationLoadingId ? "Autorizando..." : authorizationDialogItem?.can_admin_authorize_remaining ? "Autorizar cobrança restante" : "Autorizar cobrança"}
           </Button>
         </DialogActions>
       </Dialog>

@@ -1,4 +1,4 @@
-import { getJSON, patchJSON, postJSON } from "../lib/api";
+import { apiJoin, authHeaders, getJSON, patchJSON, postJSON } from "../lib/api";
 
 export function listAdminCaptives(params = {}) {
   const qs = new URLSearchParams();
@@ -63,11 +63,26 @@ export function updateCurrentDrawCaptiveParticipation(id, enabled, reason) {
   });
 }
 
-export function authorizeCurrentDrawCaptiveParticipation(authorizationId, drawId) {
-  return postJSON(
-    `/admin/captives/current-draw-participation/${encodeURIComponent(String(authorizationId))}/authorize`,
-    { draw_id: Number(drawId) }
+export async function authorizeCurrentDrawCaptiveParticipation(authorizationId, drawId) {
+  const response = await fetch(
+    apiJoin(`/admin/captives/current-draw-participation/${encodeURIComponent(String(authorizationId))}/authorize`),
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      credentials: "omit",
+      body: JSON.stringify({ draw_id: Number(drawId) }),
+    }
   );
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const requestError = new Error(payload?.message || payload?.error || String(response.status));
+    requestError.status = response.status;
+    requestError.error = payload?.error || null;
+    requestError.reason = payload?.reason || null;
+    requestError.responseMessage = payload?.message || null;
+    throw requestError;
+  }
+  return payload;
 }
 
 export function reissueAndResendCaptivePreauths() {
