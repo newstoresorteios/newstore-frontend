@@ -63,14 +63,13 @@ export function updateCurrentDrawCaptiveParticipation(id, enabled, reason) {
   });
 }
 
-export async function authorizeCurrentDrawCaptiveParticipation(authorizationId, drawId) {
+export async function authorizeCurrentDrawCaptiveParticipation(authorizationId) {
   const response = await fetch(
     apiJoin(`/admin/captives/current-draw-participation/${encodeURIComponent(String(authorizationId))}/authorize`),
     {
       method: "POST",
-      headers: { "Content-Type": "application/json", ...authHeaders() },
+      headers: authHeaders(),
       credentials: "omit",
-      body: JSON.stringify({ draw_id: Number(drawId) }),
     }
   );
   const payload = await response.json().catch(() => ({}));
@@ -80,6 +79,9 @@ export async function authorizeCurrentDrawCaptiveParticipation(authorizationId, 
     requestError.error = payload?.error || null;
     requestError.reason = payload?.reason || null;
     requestError.responseMessage = payload?.message || null;
+    requestError.retryable = payload?.retryable === true;
+    requestError.providerBillId = payload?.provider_bill_id || null;
+    requestError.providerChargeId = payload?.provider_charge_id || null;
     throw requestError;
   }
   return payload;

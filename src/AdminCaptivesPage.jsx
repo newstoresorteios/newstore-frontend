@@ -245,6 +245,7 @@ export default function AdminCaptivesPage() {
   const [authorizationDialogItem, setAuthorizationDialogItem] = React.useState(null);
   const [authorizationLoadingId, setAuthorizationLoadingId] = React.useState("");
   const [authorizationError, setAuthorizationError] = React.useState("");
+  const [authorizationRetryBlocked, setAuthorizationRetryBlocked] = React.useState(false);
   const [authorizationMessage, setAuthorizationMessage] = React.useState("");
 
   React.useEffect(() => {
@@ -507,6 +508,7 @@ export default function AdminCaptivesPage() {
     if (!(row?.can_admin_authorize || row?.can_admin_authorize_remaining) || authorizationLoadingId) return;
     setAuthorizationDialogItem(row);
     setAuthorizationError("");
+    setAuthorizationRetryBlocked(false);
     setAuthorizationMessage("");
   }
 
@@ -514,15 +516,17 @@ export default function AdminCaptivesPage() {
     if (authorizationLoadingId) return;
     setAuthorizationDialogItem(null);
     setAuthorizationError("");
+    setAuthorizationRetryBlocked(false);
   }
 
   async function handleAdminAuthorization() {
     const group = authorizationDialogItem;
-    if (!group?.authorization_id || !currentDraw?.draw_id || authorizationLoadingId) return;
+    if (!group?.authorization_id || authorizationLoadingId || authorizationRetryBlocked) return;
     setAuthorizationLoadingId(group.group_key || group.authorization_id);
     setAuthorizationError("");
+    setAuthorizationRetryBlocked(false);
     try {
-      const result = await authorizeCurrentDrawCaptiveParticipation(group.authorization_id, currentDraw.draw_id);
+      const result = await authorizeCurrentDrawCaptiveParticipation(group.authorization_id);
       await loadParticipation();
       setAuthorizationDialogItem(null);
       const confirmedNumbers = result?.captive_numbers || group.captive_numbers || [];
@@ -555,19 +559,29 @@ export default function AdminCaptivesPage() {
       } else if (message.includes("captive_preauth_not_required")) {
         setAuthorizationError("Este sorteio utiliza o fluxo automático padrão.");
       } else if (message.includes("payment_method_unavailable") || message.includes("authorization_charge_not_configured")) {
-        setAuthorizationError("O cliente não possui cartão cadastrado.");
+        setAuthorizationError("O cartão cadastrado para este cliente não está disponível na Vindi.");
+      } else if (message.includes("captive_payment_profile_mismatch")) {
+        setAuthorizationError("O cartão cadastrado não corresponde ao cliente deste cativo.");
+      } else if (message.includes("payment_provider_unavailable")) {
+        setAuthorizationError("A Vindi está temporariamente indisponível. Nenhuma cobrança foi enviada.");
+        await loadParticipation();
+      } else if (message.includes("payment_preflight_internal_error") || message.includes("payment_attempt_persist_failed")) {
+        setAuthorizationError("Ocorreu um erro interno antes do envio da cobrança.");
+      } else if (message.includes("payment_result_unknown")) {
+        setAuthorizationError("O resultado da cobrança precisa ser conferido na Vindi antes de uma nova tentativa.");
       } else if (message.includes("group_already_partially_or_fully_charged")) {
         setAuthorizationError("O grupo possui uma participação já cobrada e precisa de revisão.");
       } else if (message.includes("group_requires_review") || message.includes("group_changed")) {
         setAuthorizationError("O grupo foi alterado ou possui participações inconsistentes. Atualize e revise os números.");
       } else if (message.includes("payment_failed")) {
-        setAuthorizationError(`A cobrança de ${formatAmountBRL(group.total_amount_cents)} não foi aprovada.`);
+        setAuthorizationError("A cobrança não foi aprovada pelo cartão cadastrado.");
         await loadParticipation();
       } else if (message.includes("403") || message.includes("401")) {
         setAuthorizationError("Você não possui permissão para executar esta ação.");
       } else {
         setAuthorizationError(`Não foi possível autorizar a cobrança (${message || "erro desconhecido"}).`);
       }
+      setAuthorizationRetryBlocked(error?.retryable !== true);
     } finally {
       setAuthorizationLoadingId("");
     }
@@ -1282,7 +1296,7 @@ export default function AdminCaptivesPage() {
               ? <CircularProgress color="inherit" size={16} />
               : <CreditCardRoundedIcon />}
             onClick={handleAdminAuthorization}
-            disabled={Boolean(authorizationLoadingId)}
+            disabled={Boolean(authorizationLoadingId) || authorizationRetryBlocked}
           >
             {authorizationLoadingId ? "Autorizando..." : authorizationDialogItem?.can_admin_authorize_remaining ? "Autorizar cobrança restante" : "Autorizar cobrança"}
           </Button>
