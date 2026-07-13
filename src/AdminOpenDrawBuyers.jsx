@@ -510,12 +510,10 @@ export default function AdminOpenDrawBuyers() {
       const innerW = cardW - innerPadX * 2;
 
       const NAME_FONT = "900 34px Inter, system-ui, Segoe UI, Roboto, Arial";
-      const EMAIL_FONT = "600 22px Inter, system-ui, Segoe UI, Roboto, Arial";
       const META_FONT = "800 25px Inter, system-ui, Segoe UI, Roboto, Arial";
       const NUM_FONT = "700 28px Inter, system-ui, Segoe UI, Roboto, Arial";
 
       const NAME_LH = 38;
-      const EMAIL_LH = 27;
       const META_LH = 30;
       const NUM_LH = 32;
 
@@ -637,9 +635,6 @@ export default function AdminOpenDrawBuyers() {
             titleLines[1] = fitSingleLine(mctx, titleLines[1], innerW);
           }
 
-          mctx.font = EMAIL_FONT;
-          const emailLine = buyer.email ? fitSingleLine(mctx, buyer.email, innerW) : "";
-
           mctx.font = NUM_FONT;
           const allNumLines = numbersToLines(mctx, buyer.numbers, innerW);
           const numberLineChunks = chunkArray(allNumLines, MAX_NUM_LINES_PER_CARD);
@@ -655,7 +650,6 @@ export default function AdminOpenDrawBuyers() {
             const h =
               30 +
               titleLines.length * NAME_LH +
-              (emailLine ? EMAIL_LH + 4 : 0) +
               META_LH +
               (partLabel ? 24 : 0) +
               16 +
@@ -666,7 +660,6 @@ export default function AdminOpenDrawBuyers() {
               buyerIndex: idx,
               user_id: buyer.user_id,
               name: buyer.name,
-              emailLine,
               qty: buyer.qty,
               total_cents: buyer.total_cents,
               titleLines,
@@ -809,13 +802,6 @@ export default function AdminOpenDrawBuyers() {
         for (const line of item.titleLines) {
           ctx.fillText(line, innerX, cy);
           cy += NAME_LH;
-        }
-
-        if (item.emailLine) {
-          ctx.font = EMAIL_FONT;
-          ctx.fillStyle = "rgba(255,255,255,.62)";
-          ctx.fillText(item.emailLine, innerX, cy);
-          cy += EMAIL_LH + 4;
         }
 
         ctx.font = META_FONT;
