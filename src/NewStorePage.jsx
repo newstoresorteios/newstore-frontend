@@ -2188,7 +2188,16 @@ Baseado no resultado oficial da Lotomania (Caixa Econômica Federal).
                         </Button>
                       </Stack>
                     </Stack>
+                  </Stack>
 
+                  <Box
+                    sx={{
+                      width: "100%",
+                      display: "flex",
+                      justifyContent: "center",
+                      alignItems: "center",
+                    }}
+                  >
                     <Box
                       sx={{
                         width: { xs: "calc(100vw - 32px)", sm: "calc(100vw - 64px)", md: "100%" },
@@ -2252,13 +2261,13 @@ Baseado no resultado oficial da Lotomania (Caixa Econômica Federal).
                         })}
                       </Box>
                     </Box>
+                  </Box>
 
-                    {additionalNoticeByDrawId[drawId] && (
-                      <Alert severity="warning" sx={{ bgcolor: "rgba(255,193,7,0.10)" }}>
-                        {additionalNoticeByDrawId[drawId]}
-                      </Alert>
-                    )}
-                  </Stack>
+                  {additionalNoticeByDrawId[drawId] && (
+                    <Alert severity="warning" sx={{ mt: 2, bgcolor: "rgba(255,193,7,0.10)" }}>
+                      {additionalNoticeByDrawId[drawId]}
+                    </Alert>
+                  )}
 
                   {renderPixLoadingOverlay({
                     open: isAdditionalPixLoadingThisDraw,
