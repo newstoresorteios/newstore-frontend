@@ -91,7 +91,7 @@ const getInitialsFromName = (name) =>
     .join("")
     .toUpperCase();
 
-const getPrincipalSoldInitials = (item) => {
+const getNumberOwnerInitials = (item) => {
   const rawInitials =
     item?.initials ||
     item?.buyer_initials ||
@@ -99,7 +99,10 @@ const getPrincipalSoldInitials = (item) => {
     item?.owner_initials ||
     item?.ownerInitials ||
     item?.oi;
-  if (rawInitials) return String(rawInitials).slice(0, 3).toUpperCase();
+
+  if (rawInitials) {
+    return String(rawInitials).slice(0, 3).toUpperCase();
+  }
 
   const rawName =
     item?.buyer_name ||
@@ -107,6 +110,7 @@ const getPrincipalSoldInitials = (item) => {
     item?.customer_name ||
     item?.comprador ||
     item?.reserved_by ||
+    item?.owner_name ||
     item?.user?.name ||
     item?.customer?.name ||
     (typeof item?.owner === "string" ? item.owner : item?.owner?.name) ||
@@ -114,6 +118,8 @@ const getPrincipalSoldInitials = (item) => {
 
   return getInitialsFromName(rawName).slice(0, 3);
 };
+
+const getPrincipalSoldInitials = getNumberOwnerInitials;
 
 // Mocks
 const MOCK_RESERVADOS = [];
@@ -267,6 +273,7 @@ const getSecondaryNumbersFromPayload = (payload) => {
         ...item,
         n,
         status: normalizeSecondaryStatus(item?.status),
+        owner_initials: getNumberOwnerInitials(item) || null,
       };
     })
     .filter(Boolean);
@@ -1246,9 +1253,68 @@ export default function NewStorePage({
     };
   }, [fetchAdditionalNumbers]);
 
-  const getAdditionalNumberStatus = (drawId, n) => {
+  const getAdditionalNumberItem = (drawId, n) => {
     const numbers = additionalNumbersByDrawId[drawId] || [];
-    return numbers.find((item) => item.n === n)?.status || "blocked";
+    return numbers.find((item) => Number(item.n) === Number(n)) || null;
+  };
+
+  const getAdditionalNumberInitials = (drawId, n) => {
+    const item = getAdditionalNumberItem(drawId, n);
+    return getNumberOwnerInitials(item);
+  };
+
+  const getAdditionalNumberStatus = (drawId, n) => {
+    const item = getAdditionalNumberItem(drawId, n);
+    return item?.status || "blocked";
+  };
+
+  const getAdditionalCellSx = (drawId, n) => {
+    const status = getAdditionalNumberStatus(drawId, n);
+    const selected = isAdditionalSelected(drawId, n);
+
+    if (selected) {
+      return {
+        border: "2px solid",
+        borderColor: "secondary.main",
+        bgcolor: "rgba(255,193,7,0.16)",
+        color: "secondary.main",
+        cursor: "pointer",
+      };
+    }
+    if (status === "available") {
+      return {
+        border: "2px solid rgba(255,255,255,0.08)",
+        bgcolor: "primary.main",
+        color: "#0E0E0E",
+        cursor: "pointer",
+        "&:hover": { filter: "brightness(0.95)" },
+      };
+    }
+    if (status === "reserved") {
+      return {
+        border: "2px solid",
+        borderColor: "secondary.main",
+        bgcolor: "rgba(255,193,7,0.12)",
+        color: "rgba(255,255,255,0.72)",
+        cursor: "not-allowed",
+      };
+    }
+    if (status === "sold") {
+      return {
+        border: "2px solid",
+        borderColor: "error.main",
+        bgcolor: "rgba(211,47,47,0.15)",
+        color: "rgba(255,255,255,0.55)",
+        cursor: "not-allowed",
+      };
+    }
+    return {
+      border: "2px solid",
+      borderColor: "error.main",
+      bgcolor: "rgba(211,47,47,0.15)",
+      color: "rgba(255,255,255,0.55)",
+      cursor: "not-allowed",
+    };
   };
 
   const isAdditionalSelected = (drawId, n) =>
@@ -1483,6 +1549,85 @@ export default function NewStorePage({
   const handleContinueAdditional = async (draw) => {
     const reservation = await handleReserveAdditionalNumbers(draw);
     if (reservation) await handleAdditionalPix(draw, reservation);
+  };
+
+  const renderNumberContent = ({ number, initials, sold, closedInitials = false }) => {
+    const showSoldOverlay = sold && !closedInitials;
+
+    return (
+      <>
+        <Box
+          component="span"
+          sx={{
+            display: { xs: showSoldOverlay ? "none" : "inline", md: "inline" },
+          }}
+        >
+          {closedInitials || pad2(number)}
+        </Box>
+
+        {showSoldOverlay && (
+          <Box
+            sx={{
+              display: { xs: "flex", md: "none" },
+              position: "absolute",
+              inset: 0,
+              alignItems: "center",
+              justifyContent: "center",
+              flexDirection: "column",
+              gap: 0.25,
+              pointerEvents: "none",
+            }}
+          >
+            <Box sx={{ fontWeight: 900, lineHeight: 1 }}>
+              {pad2(number)}
+            </Box>
+
+            {initials && (
+              <Box
+                sx={{
+                  mt: 0.25,
+                  px: 0.5,
+                  py: 0.1,
+                  borderRadius: 0.75,
+                  fontSize: 10,
+                  fontWeight: 900,
+                  lineHeight: 1,
+                  backgroundColor: "rgba(0,0,0,0.45)",
+                  color: "#fff",
+                  letterSpacing: 0.5,
+                }}
+              >
+                {initials}
+              </Box>
+            )}
+          </Box>
+        )}
+
+        {showSoldOverlay && initials && (
+          <Box
+            sx={{
+              display: { xs: "none", md: "block" },
+              position: "absolute",
+              right: 4,
+              bottom: 4,
+              px: 0.5,
+              py: 0.1,
+              borderRadius: 0.75,
+              fontSize: 10,
+              fontWeight: 900,
+              lineHeight: 1,
+              backgroundColor: "rgba(0,0,0,0.45)",
+              color: "#fff",
+              letterSpacing: 0.5,
+              pointerEvents: "none",
+              zIndex: 2,
+            }}
+          >
+            {initials}
+          </Box>
+        )}
+      </>
+    );
   };
 
   return (
@@ -1994,33 +2139,29 @@ Baseado no resultado oficial da Lotomania (Caixa Econômica Federal).
 
                     <Box
                       sx={{
-                        width: "100%",
-                        display: "flex",
-                        justifyContent: "center",
-                        alignItems: "center",
+                        width: { xs: "calc(100vw - 32px)", sm: "calc(100vw - 64px)", md: "100%" },
+                        maxWidth: 640,
+                        aspectRatio: "1 / 1",
+                        mx: "auto",
                         opacity: loadingNumbers ? 0.72 : 1,
                       }}
                     >
                       <Box
                         sx={{
                           display: "grid",
-                          gridTemplateColumns: {
-                            xs: "repeat(5, 56px)",
-                            sm: "repeat(10, 56px)",
-                            md: "repeat(10, 64px)",
-                          },
-                          gap: { xs: "10px", sm: "12px" },
-                          justifyContent: "center",
-                          alignItems: "center",
-                          width: "fit-content",
-                          maxWidth: "100%",
-                          mx: "auto",
+                          gridTemplateColumns: "repeat(10, minmax(0, 1fr))",
+                          gridTemplateRows: "repeat(10, minmax(0, 1fr))",
+                          gap: { xs: 1, md: 1.2 },
+                          height: "100%",
+                          width: "100%",
                           boxSizing: "border-box",
                         }}
                       >
                         {secondaryPreviewNumbers.map((number) => {
                           const status = getAdditionalNumberStatus(drawId, number);
                           const selected = isAdditionalSelected(drawId, number);
+                          const sold = status === "sold";
+                          const initials = getAdditionalNumberInitials(drawId, number);
                           return (
                             <Box
                               component="button"
@@ -2030,45 +2171,28 @@ Baseado no resultado oficial da Lotomania (Caixa Econômica Federal).
                               aria-pressed={selected ? "true" : "false"}
                               onClick={() => handleAdditionalNumberClick(drawId, number)}
                               sx={{
-                                ...getSecondaryCellSx(number),
-                                ...(selected ? {
-                                  border: "2px solid",
-                                  borderColor: "secondary.main",
-                                  bgcolor: "rgba(255,193,7,0.16)",
-                                  color: "secondary.main",
-                                  cursor: "pointer",
-                                } : status === "available" ? {
-                                  border: "2px solid rgba(255,255,255,0.08)",
-                                  bgcolor: "primary.main",
-                                  color: "#0E0E0E",
-                                  cursor: "pointer",
-                                  "&:hover": { filter: "brightness(0.95)" },
-                                } : status === "reserved" ? {
-                                  border: "2px solid",
-                                  borderColor: "secondary.main",
-                                  bgcolor: "rgba(255,193,7,0.12)",
-                                  color: "rgba(255,255,255,0.72)",
-                                  cursor: "not-allowed",
-                                } : status === "sold" ? {
-                                  border: "2px solid",
-                                  borderColor: "error.main",
-                                  bgcolor: "rgba(211,47,47,0.15)",
-                                  color: "rgba(255,255,255,0.55)",
-                                  cursor: "not-allowed",
-                                } : {}),
+                                ...getAdditionalCellSx(drawId, number),
                                 borderRadius: 1.2,
+                                userSelect: "none",
+                                cursor:
+                                  status !== "available" && !selected
+                                    ? "not-allowed"
+                                    : "pointer",
                                 aspectRatio: "1 / 1",
                                 display: "flex",
                                 alignItems: "center",
                                 justifyContent: "center",
                                 fontWeight: 800,
                                 fontVariantNumeric: "tabular-nums",
-                                fontSize: { xs: 12, sm: 14, md: 16 },
+                                position: "relative",
                                 p: 0,
-                                userSelect: "none",
                               }}
                             >
-                              {pad2(number)}
+                              {renderNumberContent({
+                                number,
+                                initials,
+                                sold,
+                              })}
                             </Box>
                           );
                         })}
