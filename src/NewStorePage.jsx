@@ -41,6 +41,7 @@ import {
   ThemeProvider,
   Toolbar,
   Typography,
+  LinearProgress,
   createTheme,
 } from "@mui/material";
 import AccountCircleRoundedIcon from "@mui/icons-material/AccountCircleRounded";
@@ -1321,6 +1322,7 @@ export default function NewStorePage({
     (selectedAdditionalNumbersByDrawId[drawId] || []).includes(n);
 
   const handleAdditionalNumberClick = (drawId, n) => {
+    if (additionalReserveLoadingByDrawId[drawId] || additionalPixLoadingByDrawId[drawId]) return;
     const status = getAdditionalNumberStatus(drawId, n);
     if (status !== "available" && !isAdditionalSelected(drawId, n)) return;
     const current = selectedAdditionalNumbersByDrawId[drawId] || [];
@@ -1627,6 +1629,50 @@ export default function NewStorePage({
           </Box>
         )}
       </>
+    );
+  };
+
+  const renderPixLoadingOverlay = ({ open, title = "Pagamento via PIX" }) => {
+    if (!open) return null;
+
+    return (
+      <Box
+        sx={{
+          position: "absolute",
+          inset: 0,
+          zIndex: 20,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          bgcolor: "rgba(0,0,0,0.62)",
+          backdropFilter: "blur(1px)",
+          borderRadius: 2,
+        }}
+      >
+        <Box
+          sx={{
+            width: { xs: "calc(100% - 32px)", sm: 460 },
+            maxWidth: "100%",
+            bgcolor: "rgba(24,24,24,0.96)",
+            border: "1px solid rgba(255,255,255,0.08)",
+            borderRadius: 2,
+            p: { xs: 2, sm: 3 },
+            boxShadow: "0 18px 60px rgba(0,0,0,0.45)",
+          }}
+        >
+          <Typography
+            sx={{
+              fontWeight: 800,
+              color: "rgba(255,255,255,0.76)",
+              mb: 2,
+            }}
+          >
+            {title}
+          </Typography>
+
+          <LinearProgress />
+        </Box>
+      </Box>
     );
   };
 
@@ -1995,6 +2041,7 @@ Baseado no resultado oficial da Lotomania (Caixa Econômica Federal).
               !!additionalNumbersLoadingByDrawId[drawId];
             const reserveLoading = !!additionalReserveLoadingByDrawId[drawId];
             const pixLoading = !!additionalPixLoadingByDrawId[drawId];
+            const isAdditionalPixLoadingThisDraw = reserveLoading || pixLoading;
             const banner =
               additionalDraw.banner_title ||
               additionalDraw.product_name ||
@@ -2034,7 +2081,12 @@ Baseado no resultado oficial da Lotomania (Caixa Econômica Federal).
 
                 <Paper
                   variant="outlined"
-                  sx={{ p: { xs: 1.5, md: 3 }, bgcolor: "background.paper" }}
+                  sx={{
+                    p: { xs: 1.5, md: 3 },
+                    bgcolor: "background.paper",
+                    position: "relative",
+                    overflow: "hidden",
+                  }}
                 >
                   <Stack spacing={2}>
                     <Box
@@ -2116,7 +2168,7 @@ Baseado no resultado oficial da Lotomania (Caixa Econômica Federal).
                         <Button
                           variant="outlined"
                           color="inherit"
-                          disabled={!selectedNumbers.length || reserveLoading || pixLoading}
+                          disabled={!selectedNumbers.length || isAdditionalPixLoadingThisDraw}
                           onClick={() =>
                             setSelectedAdditionalNumbersByDrawId((prev) => ({
                               ...prev,
@@ -2129,7 +2181,7 @@ Baseado no resultado oficial da Lotomania (Caixa Econômica Federal).
                         <Button
                           variant="contained"
                           color="success"
-                          disabled={!selectedNumbers.length || reserveLoading || pixLoading}
+                          disabled={!selectedNumbers.length || isAdditionalPixLoadingThisDraw}
                           onClick={() => handleContinueAdditional(additionalDraw)}
                         >
                           CONTINUAR
@@ -2144,6 +2196,8 @@ Baseado no resultado oficial da Lotomania (Caixa Econômica Federal).
                         aspectRatio: "1 / 1",
                         mx: "auto",
                         opacity: loadingNumbers ? 0.72 : 1,
+                        pointerEvents: isAdditionalPixLoadingThisDraw ? "none" : "auto",
+                        cursor: isAdditionalPixLoadingThisDraw ? "not-allowed" : "auto",
                       }}
                     >
                       <Box
@@ -2205,6 +2259,11 @@ Baseado no resultado oficial da Lotomania (Caixa Econômica Federal).
                       </Alert>
                     )}
                   </Stack>
+
+                  {renderPixLoadingOverlay({
+                    open: isAdditionalPixLoadingThisDraw,
+                    title: "Pagamento via PIX",
+                  })}
                 </Paper>
               </React.Fragment>
             );
