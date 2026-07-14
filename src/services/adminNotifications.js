@@ -70,6 +70,18 @@ export async function getNotificationHealth() {
   return apiGet("/api/admin/notifications/health");
 }
 
+export async function getNotificationCatalog() {
+  return apiGet("/admin/notifications/catalog");
+}
+
+export async function previewManualNotification(payload) {
+  return postJSON("/admin/notifications/manual/preview", payload);
+}
+
+export async function sendManualNotification(payload) {
+  return postJSON("/admin/notifications/manual/send", payload);
+}
+
 export async function listNotificationDispatches(params = {}) {
   const data = await apiGet("/api/admin/notifications/dispatches", params);
   const list = extractList(data, ["rows", "dispatches", "items"]);
