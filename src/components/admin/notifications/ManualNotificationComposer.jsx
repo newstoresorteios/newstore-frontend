@@ -36,7 +36,14 @@ import {
   sendManualNotification,
 } from "../../../services/adminNotifications";
 import NotificationStatusChip from "./NotificationStatusChip";
-import { CHANNEL_LABELS, friendlyError, templateKey, templateName } from "./notificationUi";
+import {
+  CHANNEL_LABELS,
+  connectedBrevoWhatsAppTemplates,
+  friendlyError,
+  templateKey,
+  templateLanguageLabel,
+  templateName,
+} from "./notificationUi";
 
 const STEPS = ["Canal", "Modelo", "Destinatários", "Prévia", "Confirmação"];
 const CHANNELS = [
@@ -286,7 +293,16 @@ export default function ManualNotificationComposer({ initialChannel = "" }) {
     setForm((current) => ({ ...current, ...patch }));
   };
 
-  const templates = catalog?.channels?.[channel]?.templates || [];
+  const connectedWhatsappTemplates = React.useMemo(
+    () => connectedBrevoWhatsAppTemplates(catalog?.channels?.whatsapp?.templates),
+    [catalog]
+  );
+  const templates = React.useMemo(() => {
+    if (channel !== "whatsapp") return catalog?.channels?.[channel]?.templates || [];
+    return connectedWhatsappTemplates.filter(
+      (template) => template.manual_send_allowed !== false
+    );
+  }, [catalog, channel, connectedWhatsappTemplates]);
   const params = templateParameters(selectedTemplate);
   const pushTitleError = channel === "push" && (!form.title.trim() || form.title.length > 80);
   const pushMessageError = channel === "push" && (!form.message.trim() || form.message.length > 180);
@@ -295,6 +311,14 @@ export default function ManualNotificationComposer({ initialChannel = "" }) {
   const emailFieldsValid = channel !== "email" || (form.subject.trim() && form.text.trim());
   const modelValid = Boolean(selectedTemplate) && !pushTitleError && !pushMessageError && !pushUrlError && whatsappParamsValid && emailFieldsValid;
   const recipientsValid = form.audience === "all_active_push" || recipients.length > 0;
+
+  React.useEffect(() => {
+    if (!selectedTemplate) return;
+    const selectedKey = templateKey(selectedTemplate);
+    if (templates.some((template) => templateKey(template) === selectedKey)) return;
+    invalidatePreview();
+    setSelectedTemplate(null);
+  }, [invalidatePreview, selectedTemplate, templates]);
 
   const chooseChannel = (value) => {
     if (!channelAvailability(value, catalog, health).enabled) return;
@@ -434,12 +458,29 @@ export default function ManualNotificationComposer({ initialChannel = "" }) {
         <Select id="manual-template" labelId="manual-template-label" label="Modelo" value={templateKey(selectedTemplate)} onChange={(event) => chooseTemplate(event.target.value)}>
           {templates.map((template) => (
             <MenuItem key={templateKey(template)} value={templateKey(template)} disabled={template.is_active === false}>
-              {templateName(template)}{template.is_active === false ? " (inativo)" : ""}
+              <Box>
+                <Typography variant="body2" sx={{ fontWeight: 700 }}>
+                  {templateName(template)}{template.is_active === false ? " (inativo)" : ""}
+                </Typography>
+                {channel === "whatsapp" && (
+                  <Typography variant="caption" color="text.secondary">
+                    Template Brevo #{Number(template.provider_template_id)} · {templateLanguageLabel(template)}
+                  </Typography>
+                )}
+              </Box>
             </MenuItem>
           ))}
         </Select>
       </FormControl>
-      {!templates.length && !loadingCatalog && <Alert severity="info">Nenhum modelo disponível para este canal.</Alert>}
+      {!templates.length && !loadingCatalog && (
+        <Alert severity="info">
+          {channel === "whatsapp"
+            ? connectedWhatsappTemplates.length
+              ? "Nenhum template Brevo está disponível para envio manual. Consulte os templates de uso automático na aba Modelos."
+              : "Nenhum template Brevo conectado foi encontrado. Sincronize os templates ou verifique a configuração do backend."
+            : "Nenhum modelo disponível para este canal."}
+        </Alert>
+      )}
       {channel === "push" && selectedTemplate && (
         <>
           <Alert severity="info">Usar este modelo em um envio manual não altera nem executa a regra automática.</Alert>
@@ -453,8 +494,21 @@ export default function ManualNotificationComposer({ initialChannel = "" }) {
           <Alert severity="info">O conteúdo aprovado não pode ser editado aqui. Preencha somente os parâmetros exigidos pelo template.</Alert>
           <Paper variant="outlined" sx={{ p: 2, borderRadius: 2 }}>
             <Typography variant="caption" color="text.secondary">Template Brevo</Typography>
-            <Typography sx={{ fontWeight: 800 }}>{selectedTemplate.provider_template_id || "ID não informado"} · {selectedTemplate.language || selectedTemplate.template_language || "idioma não informado"}</Typography>
-            <Typography variant="body2" sx={{ mt: 1 }}>{selectedTemplate.default_message || selectedTemplate.description || "Conteúdo administrado na Brevo."}</Typography>
+            <Typography sx={{ fontWeight: 800 }}>
+              Template Brevo #{Number(selectedTemplate.provider_template_id)} · {templateLanguageLabel(selectedTemplate)}
+            </Typography>
+            <Stack direction="row" spacing={1} alignItems="center" sx={{ mt: 1 }}>
+              <Typography variant="body2" color="text.secondary">Status:</Typography>
+              <NotificationStatusChip
+                status={selectedTemplate.provider_status || selectedTemplate.configuration_status || "configured"}
+              />
+            </Stack>
+            <Typography variant="body2" sx={{ mt: 1 }}>
+              {selectedTemplate.description || selectedTemplate.default_message || "Conteúdo administrado na Brevo."}
+            </Typography>
+            <Typography variant="body2" sx={{ mt: 1 }}>
+              <strong>Parâmetros:</strong> {params.map(({ key }) => key).join(", ") || "Nenhum"}
+            </Typography>
           </Paper>
         </>
       )}

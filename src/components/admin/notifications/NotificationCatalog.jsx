@@ -4,6 +4,7 @@ import {
   Box,
   Button,
   Checkbox,
+  Chip,
   CircularProgress,
   Dialog,
   DialogActions,
@@ -35,7 +36,15 @@ import {
   updatePushRule,
 } from "../../../services/adminNotifications";
 import NotificationStatusChip from "./NotificationStatusChip";
-import { formatDate, friendlyError, templateKey, templateName } from "./notificationUi";
+import {
+  connectedBrevoWhatsAppTemplates,
+  formatDate,
+  friendlyError,
+  manualSendBlockReasonLabel,
+  templateKey,
+  templateLanguageLabel,
+  templateName,
+} from "./notificationUi";
 
 const EMPTY_RULE = {
   event_key: "",
@@ -65,6 +74,8 @@ function parseParams(value) {
 function TemplateCard({ template, channel, onToggle, onEdit, busy }) {
   const status = template.is_active === false ? "inactive" : "active";
   const origin = channel === "whatsapp" ? "Brevo" : channel === "push" ? "Regra Push" : template.source === "builtin" ? "Modelo padrão" : "Banco";
+  const systemOnly = channel === "whatsapp" && template.manual_send_allowed === false;
+  const blockReason = String(template.manual_send_block_reason || "").trim();
   return (
     <Paper variant="outlined" sx={{ p: 2, borderRadius: 2, display: "flex", flexDirection: "column", minHeight: 250 }}>
       <Stack direction="row" justifyContent="space-between" alignItems="flex-start" spacing={1}>
@@ -72,14 +83,22 @@ function TemplateCard({ template, channel, onToggle, onEdit, busy }) {
           <Typography variant="subtitle1" sx={{ fontWeight: 900 }}>{templateName(template)}</Typography>
           <Typography variant="caption" color="text.secondary" sx={{ fontFamily: "ui-monospace, Menlo, Consolas, monospace", overflowWrap: "anywhere" }}>{templateKey(template)}</Typography>
         </Box>
-        <NotificationStatusChip status={status} />
+        <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" justifyContent="flex-end">
+          {systemOnly && <Chip size="small" color="warning" label="Uso automático do sistema" />}
+          <NotificationStatusChip status={status} />
+        </Stack>
       </Stack>
       <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>{template.description || "Sem descrição."}</Typography>
+      {systemOnly && (
+        <Alert severity="warning" sx={{ mt: 1.5 }}>
+          Este template pode ser consultado, mas não pode ser selecionado para envio manual.
+          <> Motivo informado pelo backend: {manualSendBlockReasonLabel(blockReason)}{blockReason && ` (${blockReason})`}.</>
+        </Alert>
+      )}
       <Stack spacing={0.5} sx={{ mt: 1.5, flex: 1 }}>
         {channel === "whatsapp" && <>
-          <Typography variant="body2"><strong>ID Brevo:</strong> {template.provider_template_id || "-"}</Typography>
-          <Typography variant="body2"><strong>Idioma:</strong> {template.language || template.template_language || "-"}</Typography>
-          <Typography variant="body2"><strong>Status Brevo:</strong> {template.provider_status || "Não informado"}</Typography>
+          <Typography variant="body2" sx={{ fontWeight: 800 }}>Template Brevo #{Number(template.provider_template_id)} · {templateLanguageLabel(template)}</Typography>
+          <Typography variant="body2"><strong>Status Brevo:</strong> {template.provider_status || template.configuration_status || (template.is_active === false ? "inactive" : "active")}</Typography>
           <Typography variant="body2"><strong>Parâmetros:</strong> {parseParams(template.message_params || template.default_params).join(", ") || "Nenhum"}</Typography>
         </>}
         {channel === "push" && <>
@@ -259,7 +278,13 @@ export default function NotificationCatalog({ initialChannel = "whatsapp", focus
     }
   };
 
-  const channelTemplates = subtab === "push" ? pushRules : catalog?.channels?.[subtab]?.templates || [];
+  const channelTemplates = React.useMemo(() => {
+    if (subtab === "push") return pushRules;
+    const backendTemplates = catalog?.channels?.[subtab]?.templates || [];
+    return subtab === "whatsapp"
+      ? connectedBrevoWhatsAppTemplates(backendTemplates)
+      : backendTemplates;
+  }, [catalog, pushRules, subtab]);
 
   return (
     <Stack spacing={2}>
@@ -290,7 +315,13 @@ export default function NotificationCatalog({ initialChannel = "whatsapp", focus
         <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", md: "repeat(2, minmax(0, 1fr))" }, gap: 2 }}>
           {channelTemplates.map((template) => <TemplateCard key={templateKey(template)} template={template} channel={subtab} busy={busy} onToggle={subtab === "whatsapp" && template.id != null ? toggleTemplate : null} onEdit={subtab === "push" ? openRule : subtab === "email" && template.editable === true ? openEmail : null} />)}
         </Box>
-      ) : <Alert severity="info">Nenhum modelo disponível neste canal.</Alert>}
+      ) : (
+        <Alert severity="info">
+          {subtab === "whatsapp"
+            ? "Nenhum template Brevo conectado foi encontrado. Sincronize os templates ou verifique a configuração do backend."
+            : "Nenhum modelo disponível neste canal."}
+        </Alert>
+      )}
 
       <Dialog open={ruleDialog} onClose={() => !busy && setRuleDialog(false)} maxWidth="md" fullWidth>
         <DialogTitle>{editingRule ? "Editar regra Push" : "Nova regra Push"}</DialogTitle>

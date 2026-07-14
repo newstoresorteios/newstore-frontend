@@ -15,6 +15,7 @@ export const ERROR_LABELS = {
   manual_too_many_recipients: "O limite é de 50 usuários por envio",
   manual_push_url_invalid: "A URL deve ser um caminho interno válido",
   manual_template_not_found: "Modelo não encontrado",
+  manual_template_not_allowed: "Este modelo é reservado ao uso automático do sistema",
   manual_email_smtp_not_configured: "SMTP não configurado",
   manual_push_no_eligible_recipients: "Nenhum dispositivo Push elegível",
   manual_email_no_valid_recipients: "Nenhum e-mail válido",
@@ -48,6 +49,38 @@ export function templateKey(template) {
 
 export function templateName(template) {
   return template?.name || template?.description || templateKey(template) || "Modelo sem nome";
+}
+
+export function isConnectedBrevoWhatsAppTemplate(template) {
+  const providerTemplateId = Number(template?.provider_template_id);
+  return template?.provider === "brevo"
+    && Number.isInteger(providerTemplateId)
+    && providerTemplateId > 0
+    && template?.sendable !== false
+    && template?.available !== false;
+}
+
+export function connectedBrevoWhatsAppTemplates(templates) {
+  return Array.isArray(templates)
+    ? templates.filter(isConnectedBrevoWhatsAppTemplate)
+    : [];
+}
+
+export function templateLanguageLabel(template) {
+  const language = String(template?.language || template?.template_language || "").trim();
+  const normalized = language.replace("-", "_").toLowerCase();
+  if (normalized === "pt_br" || normalized === "pt_pt" || normalized === "pt") return "Português";
+  if (normalized === "en_us" || normalized === "en_gb" || normalized === "en") return "Inglês";
+  if (normalized === "es_es" || normalized === "es" || normalized.startsWith("es_")) return "Espanhol";
+  return language || "Idioma não informado";
+}
+
+export function manualSendBlockReasonLabel(value) {
+  const reason = String(value || "").trim();
+  if (reason === "system_only_template") {
+    return "Template reservado aos fluxos automáticos do sistema";
+  }
+  return reason || "Uso manual não permitido pelo backend";
 }
 
 export function sourceLabel(value) {
