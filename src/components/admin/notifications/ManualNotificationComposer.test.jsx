@@ -188,6 +188,85 @@ const emailPreview = {
   requires_bulk_confirmation: true,
 };
 
+test("canal E-mail exibe as duas audiências e all_with_email limpa a seleção individual", async () => {
+  previewManualNotification.mockResolvedValue({
+    ...emailPreview,
+    template: catalog.channels.email.templates[1],
+    subject_preview: "Restam 50 números no sorteio New Store",
+  });
+  render(
+    <ManualNotificationComposer
+      initialChannel="email"
+      initialPreset={{
+        channel: "email",
+        templateKey: "EMAIL_DRAW_REMAINING_50",
+        audience: "selected",
+      }}
+    />
+  );
+
+  await screen.findByDisplayValue("50 números");
+  fireEvent.click(screen.getByRole("button", { name: "Continuar" }));
+
+  const selectedAudience = screen.getByRole("radio", { name: "Escolher usuários" });
+  const allWithEmailAudience = screen.getByRole("radio", { name: "Todos os usuários com e-mail válido" });
+  expect(selectedAudience).toBeChecked();
+  expect(allWithEmailAudience).not.toBeChecked();
+  expect(screen.getByLabelText("Buscar destinatário")).toBeInTheDocument();
+  expect(screen.getByText(/Limite de 50 usuários/i)).toBeInTheDocument();
+  expect(screen.getByText("Selecione ao menos um destinatário.")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Continuar" })).toBeDisabled();
+
+  userEvent.type(screen.getByLabelText("Buscar destinatário"), "Cliente");
+  fireEvent.click(await screen.findByText("Cliente Teste", { selector: "p" }));
+  expect(screen.getByRole("button", { name: "Continuar" })).toBeEnabled();
+
+  fireEvent.click(allWithEmailAudience);
+  expect(allWithEmailAudience).toBeChecked();
+  expect(screen.queryByLabelText("Buscar destinatário")).not.toBeInTheDocument();
+  expect(screen.queryByText(/Limite de 50 usuários/i)).not.toBeInTheDocument();
+  expect(screen.queryByText("Selecione ao menos um destinatário.")).not.toBeInTheDocument();
+  expect(screen.getByText(/Todos os usuários cadastrados com e-mail válido serão considerados/i)).toBeInTheDocument();
+  expect(screen.getByText(/A quantidade final será exibida na prévia antes do envio/i)).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Continuar" })).toBeEnabled();
+  expect(sendManualNotification).not.toHaveBeenCalled();
+
+  fireEvent.click(selectedAudience);
+  expect(screen.getByText("Selecione ao menos um destinatário.")).toBeInTheDocument();
+  expect(screen.queryByText("Cliente Teste")).not.toBeInTheDocument();
+  fireEvent.click(allWithEmailAudience);
+  fireEvent.click(screen.getByRole("button", { name: "Continuar" }));
+  fireEvent.click(screen.getByRole("button", { name: "Gerar prévia" }));
+
+  await waitFor(() => expect(previewManualNotification).toHaveBeenCalledTimes(1));
+  expect(previewManualNotification).toHaveBeenCalledWith(expect.objectContaining({
+    channel: "email",
+    template_key: "EMAIL_DRAW_REMAINING_50",
+    audience: "all_with_email",
+    user_ids: [],
+  }));
+  expect(sendManualNotification).not.toHaveBeenCalled();
+});
+
+test.each([75, 50, 30, 15])("all_with_email fica disponível no modelo EMAIL_DRAW_REMAINING_%i", async (remaining) => {
+  render(
+    <ManualNotificationComposer
+      initialChannel="email"
+      initialPreset={{
+        channel: "email",
+        templateKey: `EMAIL_DRAW_REMAINING_${remaining}`,
+        audience: "all_with_email",
+      }}
+    />
+  );
+
+  await screen.findByDisplayValue(`${remaining} números`);
+  fireEvent.click(screen.getByRole("button", { name: "Continuar" }));
+  expect(screen.getByRole("radio", { name: "Escolher usuários" })).not.toBeChecked();
+  expect(screen.getByRole("radio", { name: "Todos os usuários com e-mail válido" })).toBeChecked();
+  expect(screen.getByRole("button", { name: "Continuar" })).toBeEnabled();
+});
+
 async function reachBulkEmailPreview() {
   previewManualNotification.mockResolvedValue(emailPreview);
   render(
@@ -239,9 +318,10 @@ test("all_with_email oculta o seletor, usa parâmetros fixos e envia somente ap�
   expect(screen.getByRole("textbox", { name: /Link do sorteio/ })).toHaveValue("/");
   fireEvent.click(screen.getByRole("button", { name: "Continuar" }));
 
-  expect(screen.getByRole("combobox", { name: "Audiência" })).toHaveTextContent("Todos os usuários com e-mail válido");
+  expect(screen.getByRole("radio", { name: "Todos os usuários com e-mail válido" })).toBeChecked();
   expect(screen.queryByLabelText("Buscar destinatário")).not.toBeInTheDocument();
-  expect(screen.getByText(/a audiência será calculada pelo backend/i)).toBeInTheDocument();
+  expect(screen.getByText(/Todos os usuários cadastrados com e-mail válido serão considerados/i)).toBeInTheDocument();
+  expect(screen.getByText(/A quantidade final será exibida na prévia antes do envio/i)).toBeInTheDocument();
   expect(screen.queryByText(/consentimento de e-mail|autorização de e-mail|usuários autorizados/i)).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Continuar" }));
   fireEvent.click(screen.getByRole("button", { name: "Gerar prévia" }));

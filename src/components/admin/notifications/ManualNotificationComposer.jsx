@@ -9,9 +9,12 @@ import {
   CircularProgress,
   FormControl,
   FormControlLabel,
+  FormLabel,
   InputLabel,
   MenuItem,
   Paper,
+  Radio,
+  RadioGroup,
   Select,
   Stack,
   Step,
@@ -390,7 +393,14 @@ export default function ManualNotificationComposer({ initialChannel = "", initia
     (!remainingEmailTemplate || (String(form.params.draw_name || "").trim() && !emailDrawUrlError))
   );
   const modelValid = Boolean(selectedTemplate) && !pushTitleError && !pushMessageError && !pushUrlError && whatsappParamsValid && emailFieldsValid;
-  const recipientsValid = ["all_active_push", "all_with_email"].includes(form.audience) || recipients.length > 0;
+  const recipientsValid = form.audience === "selected"
+    ? recipients.length > 0
+    : form.audience === "all_active_push"
+      ? channel === "push"
+      : form.audience === "all_with_email"
+        ? channel === "email" && emailAllWithEmailSupported
+        : false;
+  const recipientStepValid = Boolean(channel) && modelValid && recipientsValid;
 
   React.useEffect(() => {
     if (!selectedTemplate) return;
@@ -455,7 +465,7 @@ export default function ManualNotificationComposer({ initialChannel = "", initia
   }), [channel, form, recipients, selectedTemplate]);
 
   const generatePreview = async () => {
-    if (!modelValid || !recipientsValid || previewing) return;
+    if (!recipientStepValid || previewing) return;
     setPreviewing(true);
     setPreviewError("");
     setPreview(null);
@@ -471,14 +481,15 @@ export default function ManualNotificationComposer({ initialChannel = "", initia
   };
 
   const send = async () => {
-    if (sendingRef.current || !preview?.can_send || (preview.requires_bulk_confirmation && !bulkConfirmed)) return;
+    const requiresBulkConfirmation = form.audience === "all_with_email" || preview?.requires_bulk_confirmation;
+    if (sendingRef.current || !preview?.can_send || (requiresBulkConfirmation && !bulkConfirmed)) return;
     sendingRef.current = true;
     setSending(true);
     setSendError("");
     try {
       const response = await sendManualNotification({
         ...payload,
-        ...(preview.requires_bulk_confirmation ? { confirm_bulk_send: true } : {}),
+        ...(requiresBulkConfirmation ? { confirm_bulk_send: true } : {}),
       });
       setResult(response);
       setBulkConfirmed(false);
@@ -490,7 +501,7 @@ export default function ManualNotificationComposer({ initialChannel = "", initia
     }
   };
 
-  const nextDisabled = activeStep === 0 ? !channel : activeStep === 1 ? !modelValid : activeStep === 2 ? !recipientsValid : activeStep === 3 ? !preview?.can_send : false;
+  const nextDisabled = activeStep === 0 ? !channel : activeStep === 1 ? !modelValid : activeStep === 2 ? !recipientStepValid : activeStep === 3 ? !preview?.can_send : false;
 
   const recipientStats = {
     selected: recipients.length,
@@ -633,20 +644,37 @@ export default function ManualNotificationComposer({ initialChannel = "", initia
 
   const renderRecipients = () => (
     <Stack spacing={2}>
-      {["push", "email"].includes(channel) && (
+      {channel === "email" && emailAllWithEmailSupported && (
+        <FormControl component="fieldset">
+          <FormLabel id="manual-email-audience-label">Audiência de e-mail</FormLabel>
+          <RadioGroup
+            aria-labelledby="manual-email-audience-label"
+            value={form.audience}
+            onChange={(event) => changeAudience(event.target.value)}
+          >
+            <FormControlLabel value="selected" control={<Radio />} label="Escolher usuários" />
+            <FormControlLabel value="all_with_email" control={<Radio />} label="Todos os usuários com e-mail válido" />
+          </RadioGroup>
+        </FormControl>
+      )}
+      {channel === "push" && (
         <FormControl fullWidth>
           <InputLabel id="manual-audience-label">Audiência</InputLabel>
           <Select id="manual-audience" labelId="manual-audience-label" label="Audiência" value={form.audience} onChange={(event) => changeAudience(event.target.value)}>
-            <MenuItem value="selected">{channel === "email" ? "Escolher usuários" : "Usuários selecionados"}</MenuItem>
-            {channel === "push" && <MenuItem value="all_active_push">Todos com Push ativo</MenuItem>}
-            {channel === "email" && emailAllWithEmailSupported && <MenuItem value="all_with_email">Todos os usuários com e-mail válido</MenuItem>}
+            <MenuItem value="selected">Usuários selecionados</MenuItem>
+            <MenuItem value="all_active_push">Todos com Push ativo</MenuItem>
           </Select>
         </FormControl>
       )}
       {["all_active_push", "all_with_email"].includes(form.audience) ? (
         <Alert severity="warning">
           {form.audience === "all_with_email"
-            ? "A audiência será calculada pelo backend. Usuários sem e-mail válido e endereços duplicados serão ignorados."
+            ? (
+              <Stack spacing={0.5}>
+                <Typography variant="body2">Todos os usuários cadastrados com e-mail válido serão considerados. E-mails ausentes, inválidos ou duplicados serão ignorados pelo backend.</Typography>
+                <Typography variant="body2">A quantidade final será exibida na prévia antes do envio.</Typography>
+              </Stack>
+            )
             : "A audiência real será calculada pelo backend durante a prévia. Nenhum ID selecionado será enviado como audiência confiável."}
         </Alert>
       ) : (
@@ -695,7 +723,7 @@ export default function ManualNotificationComposer({ initialChannel = "", initia
       <Alert severity="info">A prévia consulta a audiência real no backend e não envia mensagens.</Alert>
       {previewError && <Alert severity="error">{previewError}</Alert>}
       {preview ? <PreviewPanel preview={preview} /> : <Alert severity="warning">Gere a prévia obrigatória antes de avançar para a confirmação.</Alert>}
-      <Button variant="contained" startIcon={previewing ? <CircularProgress size={16} /> : <RefreshRoundedIcon />} onClick={generatePreview} disabled={previewing || !modelValid || !recipientsValid} sx={{ alignSelf: "flex-start" }}>
+      <Button variant="contained" startIcon={previewing ? <CircularProgress size={16} /> : <RefreshRoundedIcon />} onClick={generatePreview} disabled={previewing || !recipientStepValid} sx={{ alignSelf: "flex-start" }}>
         {previewing ? "Gerando prévia..." : preview ? "Gerar nova prévia" : "Gerar prévia"}
       </Button>
     </Stack>
@@ -703,21 +731,24 @@ export default function ManualNotificationComposer({ initialChannel = "", initia
 
   const renderConfirmation = () => {
     if (result) return <ResultPanel result={result} channel={channel} audience={form.audience} onNew={() => { setResult(null); setPreview(null); setBulkConfirmed(false); setRecipients([]); setActiveStep(2); }} />;
+    const requiresBulkConfirmation = form.audience === "all_with_email" || preview?.requires_bulk_confirmation;
     const bulkText = form.audience === "all_active_push"
       ? `Confirmo o envio para ${preview?.eligible_users ?? 0} usuários e ${preview?.eligible_devices ?? 0} dispositivos.`
       : form.audience === "all_with_email"
-        ? `Confirmo o envio para ${preview?.valid_emails ?? 0} endereços de e-mail válidos.`
+        ? preview?.valid_emails == null
+          ? "Confirmo o envio para todos os usuários com e-mail válido."
+          : `Confirmo o envio para ${preview.valid_emails} endereços de e-mail válidos.`
       : `Confirmo o envio para ${preview?.eligible_users ?? 0} usuários.`;
     return (
       <Stack spacing={2}>
         {preview && <PreviewPanel preview={preview} />}
-        {preview?.requires_bulk_confirmation ? (
+        {requiresBulkConfirmation ? (
           <FormControlLabel control={<Checkbox checked={bulkConfirmed} onChange={(event) => setBulkConfirmed(event.target.checked)} disabled={sending} />} label={bulkText} />
         ) : (
           <Alert severity="info">Revise a prévia acima. Este envio é destinado a um único usuário e não exige confirmação de lote.</Alert>
         )}
         {sendError && <Alert severity="error">{sendError}</Alert>}
-        <Button variant="contained" size="large" startIcon={sending ? <CircularProgress size={18} /> : <SendRoundedIcon />} onClick={send} disabled={sending || !preview?.can_send || (preview?.requires_bulk_confirmation && !bulkConfirmed)} sx={{ alignSelf: { xs: "stretch", sm: "flex-start" } }}>
+        <Button variant="contained" size="large" startIcon={sending ? <CircularProgress size={18} /> : <SendRoundedIcon />} onClick={send} disabled={sending || !preview?.can_send || (requiresBulkConfirmation && !bulkConfirmed)} sx={{ alignSelf: { xs: "stretch", sm: "flex-start" } }}>
           {sending ? "Enviando..." : form.audience === "all_with_email" ? "Enviar e-mail para todos" : `Enviar ${CHANNEL_LABELS[channel]}`}
         </Button>
       </Stack>
