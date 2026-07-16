@@ -36,7 +36,21 @@ const catalog = {
         is_active: true,
       }],
     },
-    email: { enabled: true, templates: [] },
+    email: {
+      enabled: true,
+      audiences: ["selected", "all_with_email"],
+      templates: [75, 50, 30, 15].map((remaining) => ({
+        template_key: `EMAIL_DRAW_REMAINING_${remaining}`,
+        name: `Restam ${remaining} números`,
+        description: `Aviso por e-mail para divulgar que ainda existem ${remaining} números disponíveis.`,
+        subject_template: `Restam ${remaining} números no sorteio {{draw_name}}`,
+        text_template: `Olá, {{name}}! Restam ${remaining} números no sorteio {{draw_name}}. {{draw_url}}`,
+        html_template: `<p>Olá, {{name}}! Restam ${remaining} números no sorteio {{draw_name}}. {{draw_url}}</p>`,
+        default_params: { remaining_numbers: remaining, draw_name: "New Store", draw_url: "/" },
+        source: "builtin",
+        editable: false,
+      })),
+    },
   },
 };
 
@@ -152,4 +166,162 @@ test("all_active_push exige checkbox e evita envio duplicado", async () => {
     confirm_bulk_send: true,
   }));
   expect(sendManualNotification.mock.calls[0][0]).not.toHaveProperty("user_ids");
+});
+
+const emailPreview = {
+  ok: true,
+  can_send: true,
+  channel: "email",
+  provider: "brevo_smtp",
+  template: catalog.channels.email.templates[0],
+  subject_preview: "Restam 75 números no sorteio New Store",
+  text_preview: "Restam 75 números no sorteio New Store.",
+  html_preview: "<p>Restam 75 números no sorteio New Store.</p>",
+  requested_users: 127,
+  eligible_users: 120,
+  valid_emails: 120,
+  invalid_emails: 2,
+  missing_contact: 3,
+  duplicate_emails_removed: 2,
+  estimated_batches: 3,
+  warnings: [],
+  requires_bulk_confirmation: true,
+};
+
+async function reachBulkEmailPreview() {
+  previewManualNotification.mockResolvedValue(emailPreview);
+  render(
+    <ManualNotificationComposer
+      initialChannel="email"
+      initialPreset={{
+        channel: "email",
+        templateKey: "EMAIL_DRAW_REMAINING_75",
+        audience: "all_with_email",
+      }}
+    />
+  );
+  await screen.findByDisplayValue("75 números");
+  fireEvent.click(screen.getByRole("button", { name: "Continuar" }));
+  fireEvent.click(screen.getByRole("button", { name: "Continuar" }));
+  fireEvent.click(screen.getByRole("button", { name: "Gerar prévia" }));
+  expect(await screen.findByText("Pronto para confirmação")).toBeInTheDocument();
+}
+
+test("all_with_email oculta o seletor, usa parâmetros fixos e envia somente após confirmação", async () => {
+  previewManualNotification.mockResolvedValue(emailPreview);
+  sendManualNotification.mockResolvedValue({
+    ok: true,
+    campaign_id: 88,
+    requested_users: 127,
+    valid_emails: 120,
+    sent: 119,
+    accepted: 119,
+    failed: 1,
+    skipped: 7,
+    duplicate_emails_removed: 2,
+    batches_processed: 3,
+  });
+
+  render(
+    <ManualNotificationComposer
+      initialChannel="email"
+      initialPreset={{
+        channel: "email",
+        templateKey: "EMAIL_DRAW_REMAINING_75",
+        audience: "all_with_email",
+      }}
+    />
+  );
+
+  expect(await screen.findByDisplayValue("75 números")).toHaveAttribute("readonly");
+  expect(screen.getByRole("textbox", { name: /Assunto/ })).toHaveValue("Restam 75 números no sorteio {{draw_name}}");
+  expect(screen.getByRole("textbox", { name: /Nome do sorteio/ })).toHaveValue("New Store");
+  expect(screen.getByRole("textbox", { name: /Link do sorteio/ })).toHaveValue("/");
+  fireEvent.click(screen.getByRole("button", { name: "Continuar" }));
+
+  expect(screen.getByRole("combobox", { name: "Audiência" })).toHaveTextContent("Todos os usuários com e-mail válido");
+  expect(screen.queryByLabelText("Buscar destinatário")).not.toBeInTheDocument();
+  expect(screen.getByText(/a audiência será calculada pelo backend/i)).toBeInTheDocument();
+  expect(screen.queryByText(/consentimento de e-mail|autorização de e-mail|usuários autorizados/i)).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Continuar" }));
+  fireEvent.click(screen.getByRole("button", { name: "Gerar prévia" }));
+
+  await waitFor(() => expect(previewManualNotification).toHaveBeenCalledTimes(1));
+  expect(previewManualNotification).toHaveBeenCalledWith(expect.objectContaining({
+    channel: "email",
+    template_key: "EMAIL_DRAW_REMAINING_75",
+    audience: "all_with_email",
+    user_ids: [],
+    params: expect.objectContaining({
+      remaining_numbers: 75,
+      draw_name: "New Store",
+      draw_url: "/",
+    }),
+  }));
+  expect(await screen.findByText("E-mails inválidos")).toBeInTheDocument();
+  expect(screen.getByText("Duplicados removidos")).toBeInTheDocument();
+  expect(screen.getByText("Quantidade de lotes")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Continuar" }));
+
+  const sendButton = screen.getByRole("button", { name: "Enviar e-mail para todos" });
+  expect(sendButton).toBeDisabled();
+  fireEvent.click(screen.getByRole("checkbox", { name: /120 endereços de e-mail válidos/i }));
+  expect(sendButton).toBeEnabled();
+  fireEvent.click(sendButton);
+  fireEvent.click(sendButton);
+
+  await waitFor(() => expect(sendManualNotification).toHaveBeenCalledTimes(1));
+  expect(sendManualNotification).toHaveBeenCalledWith(expect.objectContaining({
+    audience: "all_with_email",
+    user_ids: [],
+    confirm_bulk_send: true,
+  }));
+  expect(await screen.findByText("Campanha de e-mail criada")).toBeInTheDocument();
+  expect(screen.getByText("Aceitos pelo SMTP")).toBeInTheDocument();
+  expect(screen.getByText("Lotes processados")).toBeInTheDocument();
+  expect(screen.queryByText(/entregue/i)).not.toBeInTheDocument();
+});
+
+test("audiência selected de e-mail mantém o seletor e não mostra consentimento", async () => {
+  render(
+    <ManualNotificationComposer
+      initialChannel="email"
+      initialPreset={{
+        channel: "email",
+        templateKey: "EMAIL_DRAW_REMAINING_50",
+        audience: "selected",
+      }}
+    />
+  );
+
+  await screen.findByDisplayValue("50 números");
+  fireEvent.click(screen.getByRole("button", { name: "Continuar" }));
+
+  expect(screen.getByLabelText("Buscar destinatário")).toBeInTheDocument();
+  expect(screen.queryByText(/consentimento de e-mail|autorização de e-mail|usuários autorizados/i)).not.toBeInTheDocument();
+});
+
+test("alterar o assunto invalida a prévia de e-mail", async () => {
+  await reachBulkEmailPreview();
+  fireEvent.click(screen.getByRole("button", { name: "Voltar" }));
+  fireEvent.click(screen.getByRole("button", { name: "Voltar" }));
+  fireEvent.change(screen.getByRole("textbox", { name: /Assunto/ }), { target: { value: "Novo assunto" } });
+  fireEvent.click(screen.getByRole("button", { name: "Continuar" }));
+  fireEvent.click(screen.getByRole("button", { name: "Continuar" }));
+
+  expect(screen.getByText(/gere a prévia obrigatória/i)).toBeInTheDocument();
+  expect(previewManualNotification).toHaveBeenCalledTimes(1);
+});
+
+test("alterar o modelo invalida a prévia de e-mail", async () => {
+  await reachBulkEmailPreview();
+  fireEvent.click(screen.getByRole("button", { name: "Voltar" }));
+  fireEvent.click(screen.getByRole("button", { name: "Voltar" }));
+  fireEvent.mouseDown(screen.getByRole("combobox", { name: "Modelo" }));
+  fireEvent.click(await screen.findByRole("option", { name: "Restam 50 números" }));
+  fireEvent.click(screen.getByRole("button", { name: "Continuar" }));
+  fireEvent.click(screen.getByRole("button", { name: "Continuar" }));
+
+  expect(screen.getByText(/gere a prévia obrigatória/i)).toBeInTheDocument();
+  expect(previewManualNotification).toHaveBeenCalledTimes(1);
 });

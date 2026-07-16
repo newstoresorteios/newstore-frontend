@@ -5,6 +5,24 @@ export const CHANNEL_LABELS = {
   inbound: "Mensagens recebidas",
 };
 
+export const REMAINING_EMAIL_TEMPLATE_KEYS = new Set([
+  "EMAIL_DRAW_REMAINING_75",
+  "EMAIL_DRAW_REMAINING_50",
+  "EMAIL_DRAW_REMAINING_30",
+  "EMAIL_DRAW_REMAINING_15",
+]);
+
+export function isRemainingEmailTemplate(template) {
+  return REMAINING_EMAIL_TEMPLATE_KEYS.has(templateKey(template));
+}
+
+export function remainingNumbersForEmailTemplate(template) {
+  if (!isRemainingEmailTemplate(template)) return null;
+  const parts = templateKey(template).split("_");
+  const value = Number(parts[parts.length - 1]);
+  return Number.isInteger(value) ? value : null;
+}
+
 export const ERROR_LABELS = {
   no_active_push_recipients: "Nenhum dispositivo Push ativo",
   "push_subscription_gone_or_expired:410": "Subscription expirada e desativada",
@@ -19,6 +37,8 @@ export const ERROR_LABELS = {
   manual_email_smtp_not_configured: "SMTP não configurado",
   manual_push_no_eligible_recipients: "Nenhum dispositivo Push elegível",
   manual_email_no_valid_recipients: "Nenhum e-mail válido",
+  manual_email_url_invalid: "O link deve começar com / ou https://",
+  manual_audience_too_large: "A audiência excede o limite de segurança do envio manual",
 };
 
 export function friendlyError(value, fallback = "Não foi possível concluir a operação.") {

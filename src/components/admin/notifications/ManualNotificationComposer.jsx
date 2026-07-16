@@ -40,6 +40,8 @@ import {
   CHANNEL_LABELS,
   connectedBrevoWhatsAppTemplates,
   friendlyError,
+  isRemainingEmailTemplate,
+  remainingNumbersForEmailTemplate,
   templateKey,
   templateLanguageLabel,
   templateName,
@@ -109,6 +111,26 @@ function templateParameters(template) {
   return Array.from(new Set([...Object.keys(defaults), ...names])).map((key) => ({ key, defaultValue: defaults[key] ?? "" }));
 }
 
+function formForTemplate(template, channel, audience = "selected") {
+  const defaultParams = parseObject(template?.default_params);
+  return {
+    ...EMPTY_FORM,
+    audience,
+    title: channel === "push" ? renderLocalTemplate(template?.title_template || "", defaultParams) : "",
+    message: channel === "push" ? renderLocalTemplate(template?.body_template || template?.default_message || "", defaultParams) : "",
+    url: channel === "push" ? renderLocalTemplate(template?.url_template || "/", defaultParams) : "/",
+    subject: channel === "email" ? String(template?.subject_template || "") : "",
+    text: channel === "email" ? String(template?.text_template || template?.default_message || "") : "",
+    html: channel === "email" ? String(template?.html_template || "") : "",
+    params: defaultParams,
+  };
+}
+
+function validEmailDrawUrl(value) {
+  const url = String(value || "").trim();
+  return (url.startsWith("/") && !url.startsWith("//")) || url.startsWith("https://");
+}
+
 function recipientId(recipient) {
   return Number(recipient?.user_id ?? recipient?.userId ?? recipient?.id);
 }
@@ -159,15 +181,32 @@ function Count({ label, value }) {
 }
 
 function PreviewPanel({ preview }) {
-  const counts = [
-    ["Usuários solicitados", preview.requested_users],
+  const commonCounts = [
+    ["Usuários encontrados", preview.requested_users],
     ["Usuários elegíveis", preview.eligible_users],
-    ["Dispositivos elegíveis", preview.eligible_devices],
-    ["Telefones válidos", preview.valid_phones],
+  ];
+  const emailCounts = [
     ["E-mails válidos", preview.valid_emails],
+    ["E-mails inválidos", preview.invalid_emails],
+    ["Sem e-mail", preview.missing_contact],
+    ["Duplicados removidos", preview.duplicate_emails_removed],
+    ["Quantidade de lotes", preview.estimated_batches],
+  ];
+  const pushCounts = [
+    ["Dispositivos elegíveis", preview.eligible_devices],
+    ["Bloqueados por consentimento", preview.blocked_by_consent],
+    ["Subscriptions inativas", preview.inactive_subscriptions],
+  ];
+  const whatsappCounts = [
+    ["Telefones válidos", preview.valid_phones],
     ["Bloqueados por consentimento", preview.blocked_by_consent],
     ["Contatos ausentes", preview.missing_contact],
-    ["Subscriptions inativas", preview.inactive_subscriptions],
+  ];
+  const counts = [
+    ...commonCounts,
+    ...(preview.channel === "email" ? emailCounts : []),
+    ...(preview.channel === "push" ? pushCounts : []),
+    ...(preview.channel === "whatsapp" ? whatsappCounts : []),
   ];
   return (
     <Stack spacing={2}>
@@ -193,23 +232,35 @@ function PreviewPanel({ preview }) {
   );
 }
 
-function ResultPanel({ result, channel, onNew }) {
+function ResultPanel({ result, channel, audience, onNew }) {
   const summary = result?.summary || {};
-  const values = [
+  const commonValues = [
     ["Campanha criada", result?.campaign_id || result?.campaign?.id || "-"],
-    ["Usuários solicitados", result?.requested_users ?? summary.requested_users],
+    ["Usuários encontrados", result?.requested_users ?? summary.requested_users],
+  ];
+  const emailValues = [
+    ["E-mails válidos", result?.valid_emails],
+    ["Enviados", result?.sent],
+    ["Aceitos pelo SMTP", result?.accepted ?? result?.sent],
+    ["Falhas", result?.failed],
+    ["Ignorados", result?.skipped],
+    ["Duplicados removidos", result?.duplicate_emails_removed],
+    ["Lotes processados", result?.batches_processed],
+  ];
+  const otherValues = [
     ["Usuários elegíveis", result?.eligible_users ?? summary.eligible_users],
     ["Dispositivos elegíveis", result?.eligible_devices ?? summary.eligible_devices],
     ["Enviados", result?.sent ?? summary.sent ?? summary.accepted_count],
     ["Falhas", result?.failed ?? summary.failed ?? summary.failed_count],
     ["Ignorados", result?.skipped ?? summary.skipped ?? summary.skipped_count],
   ];
+  const values = [...commonValues, ...(channel === "email" ? emailValues : otherValues)];
   const acceptedLabel = channel === "whatsapp" ? "WhatsApp aceito pela Brevo" : channel === "email" ? "E-mail aceito pelo SMTP" : "Push enviado";
   return (
     <Paper variant="outlined" sx={{ p: 2.5, borderRadius: 2 }}>
       <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 2 }}>
         <CheckCircleRoundedIcon color="success" />
-        <Typography variant="h6" sx={{ fontWeight: 900 }}>{acceptedLabel}</Typography>
+        <Typography variant="h6" sx={{ fontWeight: 900 }}>{audience === "all_with_email" ? "Campanha de e-mail criada" : acceptedLabel}</Typography>
       </Stack>
       <Alert severity="info" sx={{ mb: 2 }}>O provedor aceitou ou enviou a mensagem. Entrega e leitura, quando disponíveis, aparecem no histórico.</Alert>
       <Box sx={{ display: "grid", gridTemplateColumns: { xs: "repeat(2, minmax(0, 1fr))", md: "repeat(4, minmax(0, 1fr))" }, gap: 2 }}>
@@ -220,7 +271,7 @@ function ResultPanel({ result, channel, onNew }) {
   );
 }
 
-export default function ManualNotificationComposer({ initialChannel = "" }) {
+export default function ManualNotificationComposer({ initialChannel = "", initialPreset = null }) {
   const theme = useTheme();
   const mobile = useMediaQuery(theme.breakpoints.down("sm"));
   const [catalog, setCatalog] = React.useState(null);
@@ -288,6 +339,24 @@ export default function ManualNotificationComposer({ initialChannel = "" }) {
     setResult(null);
   }, []);
 
+  React.useEffect(() => {
+    const presetChannel = String(initialPreset?.channel || "");
+    const presetTemplateKey = String(initialPreset?.templateKey || "");
+    if (!catalog || !presetChannel || !presetTemplateKey) return;
+    const template = (catalog?.channels?.[presetChannel]?.templates || []).find(
+      (item) => templateKey(item) === presetTemplateKey
+    );
+    if (!template) return;
+
+    invalidatePreview();
+    setChannel(presetChannel);
+    setSelectedTemplate(template);
+    setRecipients([]);
+    setRecipientQuery("");
+    setForm(formForTemplate(template, presetChannel, initialPreset?.audience || "selected"));
+    setActiveStep(1);
+  }, [catalog, initialPreset, invalidatePreview]);
+
   const updateForm = (patch) => {
     invalidatePreview();
     setForm((current) => ({ ...current, ...patch }));
@@ -297,6 +366,7 @@ export default function ManualNotificationComposer({ initialChannel = "" }) {
     () => connectedBrevoWhatsAppTemplates(catalog?.channels?.whatsapp?.templates),
     [catalog]
   );
+  const emailAllWithEmailSupported = (catalog?.channels?.email?.audiences || []).includes("all_with_email");
   const templates = React.useMemo(() => {
     if (channel !== "whatsapp") return catalog?.channels?.[channel]?.templates || [];
     return connectedWhatsappTemplates.filter(
@@ -304,13 +374,23 @@ export default function ManualNotificationComposer({ initialChannel = "" }) {
     );
   }, [catalog, channel, connectedWhatsappTemplates]);
   const params = templateParameters(selectedTemplate);
+  const remainingEmailTemplate = channel === "email" && isRemainingEmailTemplate(selectedTemplate);
+  const remainingNumbers = remainingNumbersForEmailTemplate(selectedTemplate);
+  const editableParams = remainingEmailTemplate
+    ? params.filter(({ key }) => !["name", "remaining_numbers"].includes(key))
+    : params;
   const pushTitleError = channel === "push" && (!form.title.trim() || form.title.length > 80);
   const pushMessageError = channel === "push" && (!form.message.trim() || form.message.length > 180);
   const pushUrlError = channel === "push" && (!form.url.startsWith("/") || form.url.startsWith("//"));
   const whatsappParamsValid = channel !== "whatsapp" || params.every(({ key }) => String(form.params[key] ?? "").trim());
-  const emailFieldsValid = channel !== "email" || (form.subject.trim() && form.text.trim());
+  const emailDrawUrlError = remainingEmailTemplate && !validEmailDrawUrl(form.params.draw_url);
+  const emailFieldsValid = channel !== "email" || (
+    form.subject.trim() &&
+    form.text.trim() &&
+    (!remainingEmailTemplate || (String(form.params.draw_name || "").trim() && !emailDrawUrlError))
+  );
   const modelValid = Boolean(selectedTemplate) && !pushTitleError && !pushMessageError && !pushUrlError && whatsappParamsValid && emailFieldsValid;
-  const recipientsValid = form.audience === "all_active_push" || recipients.length > 0;
+  const recipientsValid = ["all_active_push", "all_with_email"].includes(form.audience) || recipients.length > 0;
 
   React.useEffect(() => {
     if (!selectedTemplate) return;
@@ -334,17 +414,15 @@ export default function ManualNotificationComposer({ initialChannel = "" }) {
     invalidatePreview();
     setSelectedTemplate(template);
     if (!template) return;
-    const defaultParams = parseObject(template.default_params);
-    setForm((current) => ({
-      ...current,
-      title: channel === "push" ? renderLocalTemplate(template.title_template || "", defaultParams) : current.title,
-      message: channel === "push" ? renderLocalTemplate(template.body_template || template.default_message || "", defaultParams) : current.message,
-      url: channel === "push" ? renderLocalTemplate(template.url_template || "/", defaultParams) : current.url,
-      subject: channel === "email" ? renderLocalTemplate(template.subject_template || "", defaultParams) : current.subject,
-      text: channel === "email" ? renderLocalTemplate(template.text_template || template.default_message || "", defaultParams) : current.text,
-      html: channel === "email" ? renderLocalTemplate(template.html_template || "", defaultParams) : current.html,
-      params: defaultParams,
-    }));
+    setForm((current) => formForTemplate(template, channel, current.audience));
+  };
+
+  const changeAudience = (audience) => {
+    updateForm({ audience });
+    if (audience !== "selected") {
+      setRecipients([]);
+      setRecipientQuery("");
+    }
   };
 
   const addRecipient = (recipient) => {
@@ -366,6 +444,7 @@ export default function ManualNotificationComposer({ initialChannel = "" }) {
     ...(selectedTemplate?.id != null ? { template_id: selectedTemplate.id } : {}),
     audience: form.audience,
     ...(form.audience === "selected" ? { user_ids: recipients.map(recipientId) } : {}),
+    ...(form.audience === "all_with_email" ? { user_ids: [] } : {}),
     title: channel === "push" ? form.title : null,
     message: channel === "push" ? form.message : null,
     subject: channel === "email" ? form.subject : null,
@@ -514,15 +593,38 @@ export default function ManualNotificationComposer({ initialChannel = "" }) {
       )}
       {channel === "email" && selectedTemplate && (
         <>
+          {remainingEmailTemplate && (
+            <Alert severity="info">
+              O nome é preenchido individualmente pelo backend e a quantidade pertence ao modelo escolhido.
+            </Alert>
+          )}
           <TextField label="Assunto" required value={form.subject} onChange={(event) => updateForm({ subject: event.target.value })} />
           <TextField label="Texto" required multiline minRows={4} value={form.text} onChange={(event) => updateForm({ text: event.target.value })} />
           <TextField label="HTML" multiline minRows={6} value={form.html} onChange={(event) => updateForm({ html: event.target.value })} helperText="O HTML será exibido como código seguro na prévia." />
+          {remainingEmailTemplate && (
+            <TextField
+              label="Quantidade restante"
+              value={`${remainingNumbers} números`}
+              InputProps={{ readOnly: true }}
+            />
+          )}
         </>
       )}
-      {selectedTemplate && params.length > 0 && (
+      {selectedTemplate && editableParams.length > 0 && (
         <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", md: "repeat(2, minmax(0, 1fr))" }, gap: 2 }}>
-          {params.map(({ key, defaultValue }) => (
-            <TextField key={key} required={channel === "whatsapp"} label={key} value={form.params[key] ?? defaultValue} error={channel === "whatsapp" && !String(form.params[key] ?? defaultValue).trim()} onChange={(event) => updateForm({ params: { ...form.params, [key]: event.target.value } })} />
+          {editableParams.map(({ key, defaultValue }) => (
+            <TextField
+              key={key}
+              required={channel === "whatsapp" || (remainingEmailTemplate && ["draw_name", "draw_url"].includes(key))}
+              label={key === "draw_name" ? "Nome do sorteio" : key === "draw_url" ? "Link do sorteio" : key}
+              value={form.params[key] ?? defaultValue}
+              error={
+                (channel === "whatsapp" && !String(form.params[key] ?? defaultValue).trim()) ||
+                (remainingEmailTemplate && key === "draw_url" && emailDrawUrlError)
+              }
+              helperText={remainingEmailTemplate && key === "draw_url" && emailDrawUrlError ? "Use um caminho iniciado por / ou uma URL https://." : undefined}
+              onChange={(event) => updateForm({ params: { ...form.params, [key]: event.target.value } })}
+            />
           ))}
         </Box>
       )}
@@ -531,17 +633,22 @@ export default function ManualNotificationComposer({ initialChannel = "" }) {
 
   const renderRecipients = () => (
     <Stack spacing={2}>
-      {channel === "push" && (
+      {["push", "email"].includes(channel) && (
         <FormControl fullWidth>
           <InputLabel id="manual-audience-label">Audiência</InputLabel>
-          <Select id="manual-audience" labelId="manual-audience-label" label="Audiência" value={form.audience} onChange={(event) => updateForm({ audience: event.target.value })}>
-            <MenuItem value="selected">Usuários selecionados</MenuItem>
-            <MenuItem value="all_active_push">Todos com Push ativo</MenuItem>
+          <Select id="manual-audience" labelId="manual-audience-label" label="Audiência" value={form.audience} onChange={(event) => changeAudience(event.target.value)}>
+            <MenuItem value="selected">{channel === "email" ? "Escolher usuários" : "Usuários selecionados"}</MenuItem>
+            {channel === "push" && <MenuItem value="all_active_push">Todos com Push ativo</MenuItem>}
+            {channel === "email" && emailAllWithEmailSupported && <MenuItem value="all_with_email">Todos os usuários com e-mail válido</MenuItem>}
           </Select>
         </FormControl>
       )}
-      {form.audience === "all_active_push" ? (
-        <Alert severity="warning">A audiência real será calculada pelo backend durante a prévia. Nenhum ID selecionado será enviado como audiência confiável.</Alert>
+      {["all_active_push", "all_with_email"].includes(form.audience) ? (
+        <Alert severity="warning">
+          {form.audience === "all_with_email"
+            ? "A audiência será calculada pelo backend. Usuários sem e-mail válido e endereços duplicados serão ignorados."
+            : "A audiência real será calculada pelo backend durante a prévia. Nenhum ID selecionado será enviado como audiência confiável."}
+        </Alert>
       ) : (
         <>
           <Autocomplete
@@ -560,8 +667,8 @@ export default function ManualNotificationComposer({ initialChannel = "" }) {
                   <Typography variant="body2" sx={{ fontWeight: 800 }}>{recipientName(option)}</Typography>
                   <Typography variant="caption" color="text.secondary">{option.email || "Sem e-mail"} · {option.phone || "Sem telefone"}</Typography>
                   <Stack direction="row" spacing={0.5} sx={{ mt: 0.5 }} flexWrap="wrap">
-                    <Chip size="small" label={hasPush(option) ? "Push disponível" : "Sem Push"} color={hasPush(option) ? "success" : "default"} />
-                    <Chip size="small" label={whatsappAllowed(option) ? "WhatsApp autorizado" : "WhatsApp bloqueado"} color={whatsappAllowed(option) ? "success" : "warning"} />
+                    {channel === "push" && <Chip size="small" label={hasPush(option) ? "Push disponível" : "Sem Push"} color={hasPush(option) ? "success" : "default"} />}
+                    {channel === "whatsapp" && <Chip size="small" label={whatsappAllowed(option) ? "WhatsApp autorizado" : "WhatsApp bloqueado"} color={whatsappAllowed(option) ? "success" : "warning"} />}
                   </Stack>
                 </Box>
               </li>
@@ -595,9 +702,11 @@ export default function ManualNotificationComposer({ initialChannel = "" }) {
   );
 
   const renderConfirmation = () => {
-    if (result) return <ResultPanel result={result} channel={channel} onNew={() => { setResult(null); setPreview(null); setBulkConfirmed(false); setRecipients([]); setActiveStep(2); }} />;
+    if (result) return <ResultPanel result={result} channel={channel} audience={form.audience} onNew={() => { setResult(null); setPreview(null); setBulkConfirmed(false); setRecipients([]); setActiveStep(2); }} />;
     const bulkText = form.audience === "all_active_push"
       ? `Confirmo o envio para ${preview?.eligible_users ?? 0} usuários e ${preview?.eligible_devices ?? 0} dispositivos.`
+      : form.audience === "all_with_email"
+        ? `Confirmo o envio para ${preview?.valid_emails ?? 0} endereços de e-mail válidos.`
       : `Confirmo o envio para ${preview?.eligible_users ?? 0} usuários.`;
     return (
       <Stack spacing={2}>
@@ -609,7 +718,7 @@ export default function ManualNotificationComposer({ initialChannel = "" }) {
         )}
         {sendError && <Alert severity="error">{sendError}</Alert>}
         <Button variant="contained" size="large" startIcon={sending ? <CircularProgress size={18} /> : <SendRoundedIcon />} onClick={send} disabled={sending || !preview?.can_send || (preview?.requires_bulk_confirmation && !bulkConfirmed)} sx={{ alignSelf: { xs: "stretch", sm: "flex-start" } }}>
-          {sending ? "Enviando..." : `Enviar ${CHANNEL_LABELS[channel]}`}
+          {sending ? "Enviando..." : form.audience === "all_with_email" ? "Enviar e-mail para todos" : `Enviar ${CHANNEL_LABELS[channel]}`}
         </Button>
       </Stack>
     );

@@ -40,6 +40,7 @@ import {
   connectedBrevoWhatsAppTemplates,
   formatDate,
   friendlyError,
+  isRemainingEmailTemplate,
   manualSendBlockReasonLabel,
   templateKey,
   templateLanguageLabel,
@@ -71,7 +72,7 @@ function parseParams(value) {
   }
 }
 
-function TemplateCard({ template, channel, onToggle, onEdit, busy }) {
+function TemplateCard({ template, channel, onToggle, onEdit, onUseTemplate, onSendAll, busy }) {
   const status = template.is_active === false ? "inactive" : "active";
   const origin = channel === "whatsapp" ? "Brevo" : channel === "push" ? "Regra Push" : template.source === "builtin" ? "Modelo padrão" : "Banco";
   const systemOnly = channel === "whatsapp" && template.manual_send_allowed === false;
@@ -84,6 +85,7 @@ function TemplateCard({ template, channel, onToggle, onEdit, busy }) {
           <Typography variant="caption" color="text.secondary" sx={{ fontFamily: "ui-monospace, Menlo, Consolas, monospace", overflowWrap: "anywhere" }}>{templateKey(template)}</Typography>
         </Box>
         <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" justifyContent="flex-end">
+          {channel === "email" && <Chip size="small" color="primary" variant="outlined" label="E-mail SMTP" />}
           {systemOnly && <Chip size="small" color="warning" label="Uso automático do sistema" />}
           <NotificationStatusChip status={status} />
         </Stack>
@@ -114,9 +116,11 @@ function TemplateCard({ template, channel, onToggle, onEdit, busy }) {
           {template.html_template && <Box component="pre" sx={{ m: 0, mt: 0.5, p: 1, borderRadius: 1, bgcolor: "action.hover", whiteSpace: "pre-wrap", overflowWrap: "anywhere", fontSize: 11 }}>{template.html_template}</Box>}
         </>}
       </Stack>
-      <Stack direction="row" justifyContent="space-between" alignItems="center" spacing={1} sx={{ mt: 2 }}>
+      <Stack direction={{ xs: "column", sm: "row" }} justifyContent="space-between" alignItems={{ xs: "stretch", sm: "center" }} spacing={1} sx={{ mt: 2 }}>
         <Typography variant="caption" color="text.secondary">Origem: {origin}</Typography>
-        <Stack direction="row" spacing={1}>
+        <Stack direction={{ xs: "column", sm: "row" }} spacing={1} sx={{ width: { xs: "100%", sm: "auto" } }}>
+          {onUseTemplate && <Button size="small" variant="outlined" onClick={() => onUseTemplate(template)} sx={{ width: { xs: "100%", sm: "auto" } }}>Usar modelo</Button>}
+          {onSendAll && <Button size="small" variant="contained" onClick={() => onSendAll(template)} sx={{ width: { xs: "100%", sm: "auto" } }}>Enviar para todos</Button>}
           {onEdit && <Button size="small" variant="outlined" startIcon={<EditRoundedIcon />} onClick={() => onEdit(template)}>Editar</Button>}
           {onToggle && <Button size="small" variant="outlined" disabled={busy} onClick={() => onToggle(template)}>{template.is_active === false ? "Ativar" : "Desativar"}</Button>}
         </Stack>
@@ -125,7 +129,7 @@ function TemplateCard({ template, channel, onToggle, onEdit, busy }) {
   );
 }
 
-export default function NotificationCatalog({ initialChannel = "whatsapp", focusEvent = "" }) {
+export default function NotificationCatalog({ initialChannel = "whatsapp", focusEvent = "", onUseTemplate, onSendAll }) {
   const [subtab, setSubtab] = React.useState(initialChannel);
   const [catalog, setCatalog] = React.useState(null);
   const [pushRules, setPushRules] = React.useState([]);
@@ -285,6 +289,10 @@ export default function NotificationCatalog({ initialChannel = "whatsapp", focus
       ? connectedBrevoWhatsAppTemplates(backendTemplates)
       : backendTemplates;
   }, [catalog, pushRules, subtab]);
+  const remainingEmailTemplates = React.useMemo(
+    () => channelTemplates.filter(isRemainingEmailTemplate),
+    [channelTemplates]
+  );
 
   return (
     <Stack spacing={2}>
@@ -301,6 +309,9 @@ export default function NotificationCatalog({ initialChannel = "whatsapp", focus
       </Paper>
       {subtab === "whatsapp" && <Alert severity="info">O conteúdo aprovado é administrado na Brevo e não pode ser editado diretamente nesta tela.</Alert>}
       {subtab === "push" && <Alert severity="warning">Salvar uma regra altera apenas os próximos eventos automáticos. Nenhuma notificação é enviada ao salvar.</Alert>}
+      {subtab === "email" && !loading && remainingEmailTemplates.length === 0 && (
+        <Alert severity="info">Nenhum modelo de aviso de números restantes foi encontrado.</Alert>
+      )}
       {error && <Alert severity="error">{error}</Alert>}
       {message && <Alert severity="success">{message}</Alert>}
       <Stack direction={{ xs: "column", sm: "row" }} justifyContent="space-between" spacing={1}>
@@ -313,7 +324,21 @@ export default function NotificationCatalog({ initialChannel = "whatsapp", focus
       </Stack>
       {loading ? <Stack alignItems="center" sx={{ py: 8 }}><CircularProgress /></Stack> : channelTemplates.length ? (
         <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", md: "repeat(2, minmax(0, 1fr))" }, gap: 2 }}>
-          {channelTemplates.map((template) => <TemplateCard key={templateKey(template)} template={template} channel={subtab} busy={busy} onToggle={subtab === "whatsapp" && template.id != null ? toggleTemplate : null} onEdit={subtab === "push" ? openRule : subtab === "email" && template.editable === true ? openEmail : null} />)}
+          {channelTemplates.map((template) => {
+            const remainingEmail = subtab === "email" && isRemainingEmailTemplate(template);
+            return (
+              <TemplateCard
+                key={templateKey(template)}
+                template={template}
+                channel={subtab}
+                busy={busy}
+                onToggle={subtab === "whatsapp" && template.id != null ? toggleTemplate : null}
+                onEdit={subtab === "push" ? openRule : subtab === "email" && template.editable === true ? openEmail : null}
+                onUseTemplate={remainingEmail ? onUseTemplate : null}
+                onSendAll={remainingEmail ? onSendAll : null}
+              />
+            );
+          })}
         </Box>
       ) : (
         <Alert severity="info">

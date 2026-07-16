@@ -39,12 +39,16 @@ export default function AdminNotificationsPage() {
   const navigate = useNavigate();
   const [tab, setTab] = React.useState("overview");
   const [composerChannel, setComposerChannel] = React.useState("");
+  const [composerPreset, setComposerPreset] = React.useState(null);
   const [modelsChannel, setModelsChannel] = React.useState("whatsapp");
   const [modelsEvent, setModelsEvent] = React.useState("");
   const [historyFilters, setHistoryFilters] = React.useState({});
 
   const goTo = React.useCallback((target, options = {}) => {
-    if (target === "send" && options.channel) setComposerChannel(options.channel);
+    if (target === "send" && options.channel) {
+      setComposerChannel(options.channel);
+      setComposerPreset({ ...options });
+    }
     if (target === "models" && options.channel) setModelsChannel(options.channel);
     if (target === "history") setHistoryFilters(options.event ? { event: options.event } : options.status ? { status: options.status } : {});
     setTab(target);
@@ -100,8 +104,23 @@ export default function AdminNotificationsPage() {
 
           <Paper variant="outlined" sx={{ p: { xs: 2, md: 3 }, borderRadius: 2, ...adminPanelPaperSx }}>
             {tab === "overview" && <NotificationsOverview onNavigate={goTo} />}
-            {tab === "send" && <ManualNotificationComposer initialChannel={composerChannel} />}
-            {tab === "models" && <NotificationCatalog initialChannel={modelsChannel} focusEvent={modelsEvent} />}
+            {tab === "send" && <ManualNotificationComposer initialChannel={composerChannel} initialPreset={composerPreset} />}
+            {tab === "models" && (
+              <NotificationCatalog
+                initialChannel={modelsChannel}
+                focusEvent={modelsEvent}
+                onUseTemplate={(template) => goTo("send", {
+                  channel: "email",
+                  templateKey: template?.template_key,
+                  audience: "selected",
+                })}
+                onSendAll={(template) => goTo("send", {
+                  channel: "email",
+                  templateKey: template?.template_key,
+                  audience: "all_with_email",
+                })}
+              />
+            )}
             {tab === "automations" && <NotificationAutomations onEditRule={editAutomation} onViewHistory={(event) => goTo("history", { event })} />}
             {tab === "history" && <NotificationHistory initialFilters={historyFilters} />}
           </Paper>
