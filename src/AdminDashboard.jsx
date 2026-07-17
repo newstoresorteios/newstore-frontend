@@ -6,10 +6,12 @@ import {
   Box,
   Button,
   ButtonBase,
+  Checkbox,
   Container,
   CssBaseline,
   Divider,
   Alert,
+  FormControlLabel,
   IconButton,
   Menu,
   MenuItem,
@@ -98,6 +100,13 @@ const EMPTY_ADDITIONAL_FORM = {
   banner_title: "",
   ticket_price_cents: "",
   max_numbers_per_selection: 25,
+};
+
+const EMPTY_NEW_PRINCIPAL_FORM = {
+  ticket_price_cents: "",
+  banner_title: "",
+  max_numbers_per_selection: "",
+  number_count: 100,
 };
 
 const normalizeAdditionalDraws = (payload) => {
@@ -198,6 +207,10 @@ export default function AdminDashboard() {
   const [principalLoading, setPrincipalLoading] = React.useState(true);
   const [principalSaving, setPrincipalSaving] = React.useState(false);
   const [principalCreating, setPrincipalCreating] = React.useState(false);
+  const [newPrincipalFormOpen, setNewPrincipalFormOpen] = React.useState(false);
+  const [newPrincipalForm, setNewPrincipalForm] = React.useState(EMPTY_NEW_PRINCIPAL_FORM);
+  const [newPrincipalConfirmed, setNewPrincipalConfirmed] = React.useState(false);
+  const [newPrincipalError, setNewPrincipalError] = React.useState("");
   const [principalClosing, setPrincipalClosing] = React.useState(false);
   const [drawMode, setDrawMode] = React.useState("principal");
   const [additionalDraws, setAdditionalDraws] = React.useState([]);
@@ -210,6 +223,7 @@ export default function AdminDashboard() {
   const [additionalError, setAdditionalError] = React.useState("");
   const selectedAdditionalDrawIdRef = React.useRef("");
   const principalSavingRef = React.useRef(false);
+  const principalCreatingRef = React.useRef(false);
 
   const loadSummary = React.useCallback(async () => {
     setPrincipalLoading(true);
@@ -467,6 +481,21 @@ export default function AdminDashboard() {
     }
   };
 
+  const openNewPrincipalForm = () => {
+    setNewPrincipalForm({ ...EMPTY_NEW_PRINCIPAL_FORM });
+    setNewPrincipalConfirmed(false);
+    setNewPrincipalError("");
+    setNewPrincipalFormOpen(true);
+  };
+
+  const closeNewPrincipalForm = () => {
+    if (principalCreatingRef.current) return;
+    setNewPrincipalForm({ ...EMPTY_NEW_PRINCIPAL_FORM });
+    setNewPrincipalConfirmed(false);
+    setNewPrincipalError("");
+    setNewPrincipalFormOpen(false);
+  };
+
   const onNewDraw = async () => {
     if (drawMode === "adicionais") {
       try {
@@ -503,18 +532,65 @@ export default function AdminDashboard() {
       return;
     }
 
+    if (principalCreatingRef.current) return;
+
+    const ticketPriceCents = Number(newPrincipalForm.ticket_price_cents);
+    if (!Number.isInteger(ticketPriceCents) || ticketPriceCents <= 0) {
+      setNewPrincipalError("Informe um valor válido para a cota.");
+      return;
+    }
+
+    const bannerTitle =
+      typeof newPrincipalForm.banner_title === "string"
+        ? newPrincipalForm.banner_title.trim()
+        : "";
+    if (!bannerTitle || bannerTitle.length > 255) {
+      setNewPrincipalError("Informe a frase promocional do novo sorteio.");
+      return;
+    }
+
+    const maxNumbersPerSelection = Number(newPrincipalForm.max_numbers_per_selection);
+    if (!Number.isInteger(maxNumbersPerSelection) || maxNumbersPerSelection <= 0) {
+      setNewPrincipalError("Informe um limite válido de números por seleção.");
+      return;
+    }
+
+    const numberCount = Number(newPrincipalForm.number_count);
+    if (!Number.isInteger(numberCount) || numberCount !== 100) {
+      setNewPrincipalError("Preencha o valor, a frase promocional, o limite e a quantidade de números.");
+      return;
+    }
+
+    if (!newPrincipalConfirmed) {
+      setNewPrincipalError("Confirme a criação do novo sorteio principal.");
+      return;
+    }
+
+    principalCreatingRef.current = true;
+    setNewPrincipalError("");
     try {
       setPrincipalCreating(true);
-      const ticketPriceCents = Number(principalForm.ticket_price_cents);
-      if (!Number.isInteger(ticketPriceCents) || ticketPriceCents <= 0) {
-        alert("Informe um valor válido para a cota antes de criar o sorteio.");
-        return;
-      }
-      await postJSON("/admin/dashboard/new", {
-        draw_type: "principal",
-        number_count: 100,
+      const response = await postJSON("/admin/dashboard/new", {
         ticket_price_cents: ticketPriceCents,
+        banner_title: bannerTitle,
+        max_numbers_per_selection: maxNumbersPerSelection,
+        number_count: numberCount,
       });
+
+      const createdDrawId = Number(response?.draw?.id ?? response?.draw_id);
+      if (
+        response?.ok !== true ||
+        response?.sync?.global !== true ||
+        response?.sync?.draw !== true ||
+        !Number.isInteger(createdDrawId) ||
+        createdDrawId <= 0
+      ) {
+        throw new Error("invalid_new_principal_response");
+      }
+
+      setNewPrincipalForm({ ...EMPTY_NEW_PRINCIPAL_FORM });
+      setNewPrincipalConfirmed(false);
+      setNewPrincipalFormOpen(false);
       await loadSummary();
       // Notifica o frontend para refetch imediato de config/numbers (reservados) sem esperar polling
       try {
@@ -523,7 +599,26 @@ export default function AdminDashboard() {
       } catch {}
     } catch (e) {
       console.error("[AdminDashboard] POST /new failed:", e);
+      const errorCode = String(e?.message || "");
+      if (errorCode === "principal_draw_already_open") {
+        setNewPrincipalError(
+          "Já existe um sorteio principal em andamento. Nenhum sorteio foi criado e o atual não foi alterado."
+        );
+      } else if (errorCode === "principal_draw_config_required") {
+        setNewPrincipalError(
+          "Preencha o valor, a frase promocional, o limite e a quantidade de números."
+        );
+      } else if (errorCode === "draw_config_sync_failed") {
+        setNewPrincipalError(
+          "Não foi possível salvar a configuração do novo sorteio. Nenhum sorteio foi criado."
+        );
+      } else {
+        setNewPrincipalError(
+          "Não foi possível criar o novo sorteio. Nenhuma alteração foi realizada."
+        );
+      }
     } finally {
+      principalCreatingRef.current = false;
       setPrincipalCreating(false);
     }
   };
@@ -576,6 +671,18 @@ export default function AdminDashboard() {
   const principalRealized = Boolean(principalDraw?.realized_at) || principalStatus === "sorteado";
   const principalClosed = !principalRealized && principalStatus === "closed";
   const showClosePrincipal = !isAdditionalMode && principalDraw?.id && principalStatus === "open";
+  const newPrincipalPrice = Number(newPrincipalForm.ticket_price_cents);
+  const newPrincipalBanner = String(newPrincipalForm.banner_title || "").trim();
+  const newPrincipalLimit = Number(newPrincipalForm.max_numbers_per_selection);
+  const newPrincipalNumberCount = Number(newPrincipalForm.number_count);
+  const newPrincipalFormValid =
+    Number.isInteger(newPrincipalPrice) &&
+    newPrincipalPrice > 0 &&
+    newPrincipalBanner.length > 0 &&
+    newPrincipalBanner.length <= 255 &&
+    Number.isInteger(newPrincipalLimit) &&
+    newPrincipalLimit > 0 &&
+    newPrincipalNumberCount === 100;
 
   return (
     <ThemeProvider theme={theme}>
@@ -700,8 +807,8 @@ export default function AdminDashboard() {
                 )}
 
                 <Button
-                  onClick={onNewDraw}
-                  disabled={currentCreating}
+                  onClick={isAdditionalMode ? onNewDraw : openNewPrincipalForm}
+                  disabled={currentCreating || (!isAdditionalMode && newPrincipalFormOpen)}
                   variant="outlined"
                   sx={{ borderRadius: 999, px: 3 }}
                 >
@@ -720,6 +827,109 @@ export default function AdminDashboard() {
               <Alert severity="success" sx={{ mt: 3, bgcolor: "rgba(46,125,50,0.14)" }}>
                 Sorteio realizado.
               </Alert>
+            )}
+
+            {!isAdditionalMode && newPrincipalFormOpen && (
+              <Paper variant="outlined" sx={{ mt: 3, p: { xs: 2, md: 3 }, borderRadius: 3 }}>
+                <Stack spacing={2.5}>
+                  <Typography variant="h6" sx={{ fontWeight: 900 }}>
+                    Novo sorteio principal
+                  </Typography>
+
+                  {newPrincipalError && (
+                    <Alert severity="error" sx={{ bgcolor: "rgba(211,47,47,0.12)" }}>
+                      {newPrincipalError}
+                    </Alert>
+                  )}
+
+                  <TextField
+                    label="Valor da cota em centavos"
+                    value={newPrincipalForm.ticket_price_cents}
+                    onChange={(event) => {
+                      setNewPrincipalError("");
+                      setNewPrincipalForm((form) => ({
+                        ...form,
+                        ticket_price_cents: event.target.value,
+                      }));
+                    }}
+                    required
+                    inputProps={{ inputMode: "numeric", pattern: "[0-9]*" }}
+                    helperText="Ex.: 5500 para R$ 55,00"
+                  />
+
+                  <TextField
+                    label="Frase promocional do novo sorteio"
+                    value={newPrincipalForm.banner_title}
+                    onChange={(event) => {
+                      setNewPrincipalError("");
+                      setNewPrincipalForm((form) => ({
+                        ...form,
+                        banner_title: event.target.value,
+                      }));
+                    }}
+                    required
+                    inputProps={{ maxLength: 255 }}
+                  />
+
+                  <TextField
+                    label="Limite de números por seleção"
+                    type="number"
+                    value={newPrincipalForm.max_numbers_per_selection}
+                    onChange={(event) => {
+                      setNewPrincipalError("");
+                      setNewPrincipalForm((form) => ({
+                        ...form,
+                        max_numbers_per_selection: event.target.value,
+                      }));
+                    }}
+                    required
+                    inputProps={{ min: 1, step: 1 }}
+                  />
+
+                  <TextField
+                    label="Quantidade de números"
+                    type="number"
+                    value={newPrincipalForm.number_count}
+                    disabled
+                    helperText="Padrão NewStore: números de 00 a 99"
+                  />
+
+                  <FormControlLabel
+                    control={
+                      <Checkbox
+                        checked={newPrincipalConfirmed}
+                        onChange={(event) => {
+                          setNewPrincipalError("");
+                          setNewPrincipalConfirmed(event.target.checked);
+                        }}
+                      />
+                    }
+                    label="Confirmo a criação deste novo sorteio principal com os dados informados."
+                  />
+
+                  <Stack direction={{ xs: "column", sm: "row" }} spacing={1.5}>
+                    <Button
+                      onClick={onNewDraw}
+                      disabled={
+                        !newPrincipalFormValid ||
+                        !newPrincipalConfirmed ||
+                        principalCreating
+                      }
+                      variant="contained"
+                      sx={{ borderRadius: 999, px: 3 }}
+                    >
+                      {principalCreating ? "Criando..." : "CRIAR NOVO SORTEIO"}
+                    </Button>
+                    <Button
+                      onClick={closeNewPrincipalForm}
+                      disabled={principalCreating}
+                      variant="text"
+                    >
+                      CANCELAR
+                    </Button>
+                  </Stack>
+                </Stack>
+              </Paper>
             )}
 
             <Divider sx={{ my: 3 }} />
