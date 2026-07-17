@@ -155,6 +155,31 @@ const safeFilename = (name) =>
     .replace(/_+/g, "_")
     .replace(/^_+|_+$/g, "");
 
+const isOpenAdditionalItem = (item) => {
+  const draw = item?.draw || {};
+  const type = String(draw.draw_type || "").toLowerCase();
+  return (
+    String(draw.status || "").toLowerCase() === "open" &&
+    (type === "adicional" || type === "secundario")
+  );
+};
+
+const newestAdditionalItem = (items, predicate = () => true) =>
+  items.reduce((newest, item) => {
+    if (!predicate(item)) return newest;
+    if (!newest || Number(item?.draw?.id || 0) > Number(newest?.draw?.id || 0)) {
+      return item;
+    }
+    return newest;
+  }, null);
+
+const sortAdditionalItems = (items) =>
+  [...items].sort((a, b) => {
+    const openDifference = Number(isOpenAdditionalItem(b)) - Number(isOpenAdditionalItem(a));
+    if (openDifference) return openDifference;
+    return Number(b?.draw?.id || 0) - Number(a?.draw?.id || 0);
+  });
+
 export default function AdminOpenDrawBuyers() {
   const navigate = useNavigate();
   useAuth();
@@ -205,25 +230,18 @@ export default function AdminOpenDrawBuyers() {
       }
 
       const payload = await getJSON("/admin/additional-draws");
-      const items = Array.isArray(payload?.draws) ? payload.draws : [];
-      const openItems = items
-        .filter((item) => {
-          const draw = item?.draw || {};
-          const type = String(draw.draw_type || "").toLowerCase();
-          const status = String(draw.status || "").toLowerCase();
-          return status === "open" && (type === "adicional" || type === "secundario");
-        })
-        .sort((a, b) => Number(b?.draw?.id || 0) - Number(a?.draw?.id || 0));
+      const items = sortAdditionalItems(Array.isArray(payload?.draws) ? payload.draws : []);
       const current =
-        openItems.find((item) => String(item?.draw?.id) === String(selectedAdditionalDrawId)) ||
-        openItems[0] ||
+        items.find((item) => String(item?.draw?.id) === String(selectedAdditionalDrawId)) ||
+        newestAdditionalItem(items, isOpenAdditionalItem) ||
+        newestAdditionalItem(items) ||
         null;
 
       if (sequence !== loadSequence.current) return;
-      setAdditionalDraws(openItems);
+      setAdditionalDraws(items);
       if (!current?.draw?.id) {
         setSelectedAdditionalDrawId("");
-        setEmptyMessage("Nenhum sorteio adicional aberto.");
+        setEmptyMessage("Nenhum sorteio adicional cadastrado.");
         return;
       }
       if (String(current.draw.id) !== String(selectedAdditionalDrawId)) {
@@ -990,7 +1008,7 @@ export default function AdminOpenDrawBuyers() {
             </Stack>
           </Stack>
 
-            {isAdditionalMode && additionalDraws.length > 1 && (
+            {isAdditionalMode && additionalDraws.length > 0 && (
               <TextField
                 select
                 size="small"
@@ -1002,10 +1020,20 @@ export default function AdminOpenDrawBuyers() {
                 {additionalDraws.map((item) => (
                   <MenuItem key={item.draw.id} value={String(item.draw.id)}>
                     #{item.draw.id} - {item.draw.product_name || item.draw.banner_title || "Sorteio adicional"}
+                    {String(item.draw.status || "").toLowerCase() === "open"
+                      ? " — Em andamento"
+                      : String(item.draw.status || "").toLowerCase() === "closed"
+                      ? " — Encerrado"
+                      : ` — ${item.draw.status || "-"}`}
                   </MenuItem>
                 ))}
               </TextField>
             )}
+          {isAdditionalMode && selectedAdditionalDrawId && (
+            <Typography variant="body2" sx={{ opacity: 0.8, fontWeight: 700 }}>
+              Números e compradores do sorteio adicional #{selectedAdditionalDrawId}.
+            </Typography>
+          )}
           {emptyMessage && <Alert severity="info">{emptyMessage}</Alert>}
           {loadError && <Alert severity="error">{loadError}</Alert>}
 
