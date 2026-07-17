@@ -1197,7 +1197,7 @@ export default function NewStorePage({
     (async () => {
       setAdditionalLoading(true);
       try {
-        const res = await fetch(`${API_BASE}/api/additional-draws/open`, {
+        const res = await fetch(`${API_BASE}/api/additional-draws/landing`, {
           credentials: "include",
           cache: "no-store",
         });
@@ -2035,6 +2035,7 @@ Baseado no resultado oficial da Lotomania (Caixa Econômica Federal).
 
           {additionalDraws.map((additionalDraw) => {
             const drawId = additionalDraw.id;
+            const isClosed = String(additionalDraw.status || "").toLowerCase() === "closed";
             const selectedNumbers = selectedAdditionalNumbersByDrawId[drawId] || [];
             const loadingNumbers =
               !!additionalLoadingByDrawId[drawId] ||
@@ -2114,6 +2115,14 @@ Baseado no resultado oficial da Lotomania (Caixa Econômica Federal).
                       >
                         {banner}
                       </Typography>
+                      {isClosed && (
+                        <Typography
+                          variant="caption"
+                          sx={{ display: "block", mt: 0.75, textAlign: "center", fontWeight: 800 }}
+                        >
+                          Sorteio encerrado
+                        </Typography>
+                      )}
                     </Box>
 
                     {additionalErrorByDrawId[drawId] && (
