@@ -209,6 +209,7 @@ export default function AdminDashboard() {
   const [additionalCreating, setAdditionalCreating] = React.useState(false);
   const [additionalError, setAdditionalError] = React.useState("");
   const selectedAdditionalDrawIdRef = React.useRef("");
+  const principalSavingRef = React.useRef(false);
 
   const loadSummary = React.useCallback(async () => {
     setPrincipalLoading(true);
@@ -337,7 +338,7 @@ export default function AdminDashboard() {
     if (drawMode === "adicionais") loadAdditionalDraws();
   }, [drawMode, loadAdditionalDraws]);
 
-  // SALVAR: mantém o fluxo do preço que já funciona e tenta salvar os novos campos
+  // SALVAR
   const onSaveAll = async () => {
     if (drawMode === "adicionais") {
       if (!selectedAdditionalItem?.draw?.id) {
@@ -373,38 +374,95 @@ export default function AdminDashboard() {
       return;
     }
 
-    setPrincipalSaving(true);
-    let msg = "Configurações atualizadas.";
-    try {
-      // 1) preço — usa a rota que já funciona hoje
-      const priceCents = Number(principalForm.ticket_price_cents);
-      if (!Number.isInteger(priceCents) || priceCents <= 0) {
-        alert("Informe um valor válido para a cota antes de salvar.");
-        return;
-      }
-      await postJSON("/admin/dashboard/ticket-price", { price_cents: priceCents });
+    if (principalSavingRef.current) return;
 
-      // 2) banner + max — tenta POST /config (se seu backend ainda não tiver, isso cairá no catch)
-      try {
-        await postJSON("/config", {
-          banner_title: String(principalForm.banner_title || ""),
-          max_numbers_per_selection: Math.max(
-            1,
-            Math.floor(Number(principalForm.max_numbers_per_selection || 1))
-          ),
-        });
-      } catch (e) {
-        console.warn("[AdminDashboard] POST /config falhou:", e?.message || e);
-        msg =
-          "Preço atualizado. Para salvar 'Frase promocional' e 'Máximo de tickets', habilite POST /api/config no backend.";
-      }
+    const drawId = Number(principalDraw?.id);
+    if (!Number.isInteger(drawId) || drawId <= 0) {
+      alert("Não foi possível identificar o sorteio principal atual.");
+      return;
+    }
+
+    const ticketPriceCents = Number(principalForm.ticket_price_cents);
+    if (!Number.isInteger(ticketPriceCents) || ticketPriceCents <= 0) {
+      alert("Informe um valor válido para a cota antes de salvar.");
+      return;
+    }
+
+    if (typeof principalForm.banner_title !== "string") {
+      alert("Informe uma frase promocional válida.");
+      return;
+    }
+    const bannerTitle = principalForm.banner_title.trim();
+    if (bannerTitle.length > 255) {
+      alert("A frase promocional deve ter no máximo 255 caracteres.");
+      return;
+    }
+
+    const maxNumbersPerSelection = Number(principalForm.max_numbers_per_selection);
+    if (!Number.isInteger(maxNumbersPerSelection) || maxNumbersPerSelection <= 0) {
+      alert("Informe um limite de tickets inteiro e maior que zero.");
+      return;
+    }
+
+    principalSavingRef.current = true;
+    setPrincipalSaving(true);
+    try {
+      const response = await postJSON(
+        `/admin/dashboard/draws/${drawId}/config`,
+        {
+          ticket_price_cents: ticketPriceCents,
+          banner_title: bannerTitle,
+          max_numbers_per_selection: maxNumbersPerSelection,
+        },
+        "PATCH"
+      );
+
+      const persistedPrice = Number(response?.config?.ticket_price_cents);
+      const persistedLimit = Number(response?.config?.max_numbers_per_selection);
+      const persistedBanner = response?.config?.banner_title;
+      const validResponse =
+        response?.ok === true &&
+        response?.sync?.global === true &&
+        response?.sync?.draw === true &&
+        Number.isInteger(persistedPrice) &&
+        persistedPrice > 0 &&
+        Number.isInteger(persistedLimit) &&
+        persistedLimit > 0 &&
+        typeof persistedBanner === "string" &&
+        persistedBanner.length <= 255;
+
+      if (!validResponse) throw new Error("invalid_draw_config_response");
+
+      setPrincipalForm({
+        ticket_price_cents: String(persistedPrice),
+        banner_title: persistedBanner,
+        max_numbers_per_selection: persistedLimit,
+      });
 
       await loadSummary();
-      alert(msg);
+      alert("Configurações atualizadas.");
     } catch (e) {
       console.error("[AdminDashboard] salvar configs falhou:", e);
-      alert("Não foi possível atualizar as configurações agora.");
+      const errorCode = String(e?.message || "");
+      if (errorCode === "draw_ticket_price_locked") {
+        alert(
+          "O valor da cota não pode ser alterado após o início das vendas. A frase promocional e o limite podem ser atualizados mantendo o preço atual."
+        );
+      } else if (errorCode === "principal_draw_required") {
+        alert("O sorteio selecionado não é o principal.");
+      } else if (errorCode === "draw_config_sync_failed") {
+        alert("Não foi possível sincronizar a configuração do sorteio. Nenhuma alteração foi salva.");
+      } else if (
+        errorCode === "404" ||
+        errorCode === "draw_not_found" ||
+        errorCode === "principal_draw_not_found"
+      ) {
+        alert("O sorteio principal não foi encontrado.");
+      } else {
+        alert("Não foi possível atualizar o sorteio. Nenhuma alteração foi salva.");
+      }
     } finally {
+      principalSavingRef.current = false;
       setPrincipalSaving(false);
     }
   };
