@@ -189,12 +189,6 @@ const formatAdminDrawDate = (value) => {
 
 const additionalRequestErrorMessage = (error) => {
   const code = String(error?.message || "");
-  if (code === "additional_draw_limit_reached") {
-    return "Já existem dois sorteios adicionais em andamento.";
-  }
-  if (code === "open_draw_limit_reached") {
-    return "O limite de três sorteios em andamento foi atingido.";
-  }
   if (code === "open_draw_state_inconsistent") {
     return "Não foi possível abrir o sorteio porque o estado dos sorteios principais está inconsistente.";
   }
@@ -582,11 +576,6 @@ export default function AdminDashboard() {
   };
 
   const openNewAdditionalForm = () => {
-    const openCount = additionalDraws.filter(isOpenAdditionalItem).length;
-    if (openCount >= 2) {
-      setNewAdditionalError("Já existem dois sorteios adicionais em andamento.");
-      return;
-    }
     setNewAdditionalForm({ ...EMPTY_NEW_ADDITIONAL_FORM });
     setNewAdditionalError("");
     setNewAdditionalFormOpen(true);
@@ -932,7 +921,7 @@ export default function AdminDashboard() {
 
             {isAdditionalMode && (
               <Typography sx={{ mb: 2, fontWeight: 800 }}>
-                Sorteios adicionais em andamento: {openAdditionalCount} de 2
+                Sorteios adicionais em andamento: {openAdditionalCount}
               </Typography>
             )}
 
@@ -1055,7 +1044,7 @@ export default function AdminDashboard() {
                   disabled={
                     currentCreating ||
                     (isAdditionalMode
-                      ? openAdditionalCount >= 2 || newAdditionalFormOpen
+                      ? newAdditionalFormOpen
                       : newPrincipalFormOpen)
                   }
                   variant="outlined"
@@ -1065,12 +1054,6 @@ export default function AdminDashboard() {
                 </Button>
               </Stack>
             </Stack>
-
-            {isAdditionalMode && openAdditionalCount >= 2 && (
-              <Alert severity="warning" sx={{ mt: 3, bgcolor: "rgba(181,137,0,0.14)" }}>
-                Já existem dois sorteios adicionais em andamento.
-              </Alert>
-            )}
 
             {!isAdditionalMode && principalClosed && (
               <Alert severity="info" sx={{ mt: 3, bgcolor: "rgba(2,136,209,0.12)" }}>
@@ -1177,8 +1160,7 @@ export default function AdminDashboard() {
                       onClick={onCreateAdditionalDraw}
                       disabled={
                         !newAdditionalFormValid ||
-                        additionalCreating ||
-                        openAdditionalCount >= 2
+                        additionalCreating
                       }
                       variant="contained"
                       sx={{ borderRadius: 999, px: 3 }}
