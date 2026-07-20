@@ -162,6 +162,8 @@ const isOpenAdditionalItem = (item) => {
   return status === "open" && (type === "adicional" || type === "secundario");
 };
 
+const isRealizedAdditionalItem = (item) => item?.draw?.realized_at != null;
+
 const newestAdditionalItem = (items, predicate = () => true) =>
   items.reduce((newest, item) => {
     if (!predicate(item)) return newest;
@@ -283,6 +285,10 @@ export default function AdminDashboard() {
   const additionalClosingRef = React.useRef(false);
   const principalSavingRef = React.useRef(false);
   const principalCreatingRef = React.useRef(false);
+  const visibleAdditionalDraws = React.useMemo(
+    () => additionalDraws.filter((item) => !isRealizedAdditionalItem(item)),
+    [additionalDraws]
+  );
 
   const loadSummary = React.useCallback(async () => {
     setPrincipalLoading(true);
@@ -385,11 +391,12 @@ export default function AdminDashboard() {
       const payload = await response.json().catch(() => ({}));
       const draws = sortAdditionalItems(normalizeAdditionalDraws(payload));
       setAdditionalDraws(draws);
+      const visibleDraws = draws.filter((item) => !isRealizedAdditionalItem(item));
       const wantedId = preferredId ?? selectedAdditionalDrawIdRef.current;
       const selected =
-        draws.find((item) => String(item.draw.id) === String(wantedId)) ||
-        newestAdditionalItem(draws, isOpenAdditionalItem) ||
-        newestAdditionalItem(draws) ||
+        visibleDraws.find((item) => String(item.draw.id) === String(wantedId)) ||
+        newestAdditionalItem(visibleDraws, isOpenAdditionalItem) ||
+        newestAdditionalItem(visibleDraws) ||
         null;
       selectAdditionalItem(selected);
     } catch (e) {
@@ -414,7 +421,7 @@ export default function AdminDashboard() {
     if (drawMode === "adicionais") {
       if (additionalSavingRef.current) return;
       const drawId = Number(selectedAdditionalDrawId);
-      const selectedItem = additionalDraws.find(
+      const selectedItem = visibleAdditionalDraws.find(
         (item) => String(item?.draw?.id) === String(selectedAdditionalDrawId)
       );
       if (!Number.isInteger(drawId) || drawId <= 0 || !selectedItem) {
@@ -768,7 +775,7 @@ export default function AdminDashboard() {
   const onCloseAdditionalDraw = async () => {
     if (additionalClosingRef.current) return;
     const drawId = Number(selectedAdditionalDrawId);
-    const selectedItem = additionalDraws.find(
+    const selectedItem = visibleAdditionalDraws.find(
       (item) => String(item?.draw?.id) === String(selectedAdditionalDrawId)
     );
     if (!Number.isInteger(drawId) || drawId <= 0 || !selectedItem) return;
@@ -820,7 +827,7 @@ export default function AdminDashboard() {
     : principalStats.remaining ?? principalStats.available ?? 0;
   const currentCreating = isAdditionalMode ? additionalCreating : principalCreating;
   const currentSaving = isAdditionalMode ? additionalSaving : principalSaving;
-  const openAdditionalCount = additionalDraws.filter(isOpenAdditionalItem).length;
+  const openAdditionalCount = visibleAdditionalDraws.filter(isOpenAdditionalItem).length;
   const selectedAdditionalStatus = String(selectedAdditionalItem?.draw?.status || "").toLowerCase();
   const selectedAdditionalIsOpen = selectedAdditionalStatus === "open";
   const principalStatus = String(principalDraw?.status || "").toLowerCase();
@@ -900,7 +907,7 @@ export default function AdminDashboard() {
               </Tabs>
             </Box>
 
-            {isAdditionalMode && !additionalLoading && additionalDraws.length === 0 && (
+            {isAdditionalMode && !additionalLoading && visibleAdditionalDraws.length === 0 && (
               <Alert severity="info" sx={{ mb: 3, bgcolor: "rgba(2,136,209,0.12)" }}>
                 Nenhum sorteio adicional cadastrado.
               </Alert>
@@ -918,9 +925,9 @@ export default function AdminDashboard() {
               </Typography>
             )}
 
-            {isAdditionalMode && additionalDraws.length > 0 && (
+            {isAdditionalMode && visibleAdditionalDraws.length > 0 && (
               <Stack spacing={1.5} sx={{ mb: 3 }}>
-                {additionalDraws.map((item) => {
+                {visibleAdditionalDraws.map((item) => {
                   const draw = item.draw;
                   const selected = String(draw.id) === String(selectedAdditionalDrawId);
                   const status = String(draw.status || "").toLowerCase();
