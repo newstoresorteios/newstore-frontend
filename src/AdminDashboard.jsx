@@ -107,11 +107,8 @@ const EMPTY_ADDITIONAL_FORM = {
 
 const EMPTY_NEW_ADDITIONAL_FORM = {
   product_name: "",
-  product_link: "",
-  banner_title: "",
   ticket_price_cents: "",
   max_numbers_per_selection: 25,
-  number_count: 100,
   status: "open",
 };
 
@@ -592,15 +589,14 @@ export default function AdminDashboard() {
     if (additionalCreatingRef.current) return;
 
     const productName = String(newAdditionalForm.product_name || "").trim();
-    const bannerTitle = String(newAdditionalForm.banner_title || "").trim();
-    const productLink = String(newAdditionalForm.product_link || "").trim();
+    const bannerTitle = productName;
     const ticketPriceCents = Number(newAdditionalForm.ticket_price_cents);
     const maxNumbersPerSelection = Number(newAdditionalForm.max_numbers_per_selection);
-    const numberCount = Number(newAdditionalForm.number_count);
+    const numberCount = 100;
     const status = String(newAdditionalForm.status || "open").trim();
 
-    if (!productName || !bannerTitle) {
-      setNewAdditionalError("Informe o nome e o banner do novo sorteio adicional.");
+    if (!productName) {
+      setNewAdditionalError("Informe o nome do novo sorteio adicional.");
       return;
     }
     if (!Number.isInteger(ticketPriceCents) || ticketPriceCents <= 0) {
@@ -627,7 +623,6 @@ export default function AdminDashboard() {
       const created = await postJSON("/admin/additional-draws", {
         draw_type: "adicional",
         product_name: productName,
-        product_link: productLink || null,
         banner_title: bannerTitle,
         ticket_price_cents: ticketPriceCents,
         max_numbers_per_selection: maxNumbersPerSelection,
@@ -846,12 +841,10 @@ export default function AdminDashboard() {
     newPrincipalNumberCount === 100;
   const newAdditionalFormValid =
     String(newAdditionalForm.product_name || "").trim().length > 0 &&
-    String(newAdditionalForm.banner_title || "").trim().length > 0 &&
     Number.isInteger(Number(newAdditionalForm.ticket_price_cents)) &&
     Number(newAdditionalForm.ticket_price_cents) > 0 &&
     Number.isInteger(Number(newAdditionalForm.max_numbers_per_selection)) &&
     Number(newAdditionalForm.max_numbers_per_selection) > 0 &&
-    Number(newAdditionalForm.number_count) === 100 &&
     ["draft", "open", "closed", "cancelled"].includes(String(newAdditionalForm.status));
 
   return (
@@ -1091,25 +1084,6 @@ export default function AdminDashboard() {
                     inputProps={{ maxLength: 255 }}
                   />
                   <TextField
-                    label="Link"
-                    value={newAdditionalForm.product_link}
-                    onChange={(event) => {
-                      setNewAdditionalError("");
-                      setNewAdditionalForm((form) => ({ ...form, product_link: event.target.value }));
-                    }}
-                    inputProps={{ maxLength: 1024 }}
-                  />
-                  <TextField
-                    label="Banner"
-                    value={newAdditionalForm.banner_title}
-                    onChange={(event) => {
-                      setNewAdditionalError("");
-                      setNewAdditionalForm((form) => ({ ...form, banner_title: event.target.value }));
-                    }}
-                    required
-                    inputProps={{ maxLength: 255 }}
-                  />
-                  <TextField
                     label="Valor da cota em centavos"
                     value={newAdditionalForm.ticket_price_cents}
                     onChange={(event) => {
@@ -1132,13 +1106,6 @@ export default function AdminDashboard() {
                     }}
                     required
                     inputProps={{ min: 1, step: 1 }}
-                  />
-                  <TextField
-                    label="Quantidade de números"
-                    type="number"
-                    value={newAdditionalForm.number_count}
-                    disabled
-                    helperText="Padrão atual: números de 00 a 99"
                   />
                   <TextField
                     select
