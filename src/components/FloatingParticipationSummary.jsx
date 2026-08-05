@@ -1,5 +1,5 @@
 import * as React from "react";
-import { Box, Button, Chip, Divider, IconButton, Paper, Stack, Typography } from "@mui/material";
+import { Box, Button, Chip, Divider, IconButton, Paper, Stack, Typography, useMediaQuery } from "@mui/material";
 import CloseRoundedIcon from "@mui/icons-material/CloseRounded";
 import ExpandLessRoundedIcon from "@mui/icons-material/ExpandLessRounded";
 import ExpandMoreRoundedIcon from "@mui/icons-material/ExpandMoreRounded";
@@ -9,6 +9,8 @@ export default function FloatingParticipationSummary({
   items = [], pendingBatch, expanded, disabled, onToggle, onContinue, onReview,
   onRemoveNumber, onClearDraw, onOpenPix,
 }) {
+  const isDesktop = useMediaQuery("(min-width:900px)", { noSsr: true });
+  const effectiveExpanded = isDesktop || expanded;
   const effectiveItems = pendingBatch?.items || items;
   const selectedDrawGroupCount = getSelectedDrawGroups(items).length;
   const totalNumbers = pendingBatch?.total_numbers ?? effectiveItems.reduce((sum, item) => sum + item.numbers.length, 0);
@@ -25,20 +27,22 @@ export default function FloatingParticipationSummary({
         right: { xs: 8, md: 24 }, left: { xs: 8, md: "auto" },
         bottom: { xs: "calc(8px + env(safe-area-inset-bottom))", md: 24 },
         width: { xs: "auto", md: 370 }, maxHeight: { xs: "72vh", md: "75vh" },
-        overflowY: expanded ? "auto" : "hidden", border: "1px solid rgba(103,194,58,.5)",
+        overflowY: effectiveExpanded ? "auto" : "hidden", border: "1px solid rgba(103,194,58,.5)",
         bgcolor: "rgba(18,18,18,.98)", backdropFilter: "blur(12px)",
       }}
     >
       <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ px: 2, py: 1.25 }}>
         <Box>
-          <Typography sx={{ fontWeight: 900 }}>{expanded ? "Suas participações" : `${totalNumbers} números • ${formatCheckoutMoney(totalCents)}`}</Typography>
-          {pending && !expanded && <Typography variant="caption">PIX aguardando pagamento</Typography>}
+          <Typography sx={{ fontWeight: 900 }}>{effectiveExpanded ? "Suas participações" : `${totalNumbers} números • ${formatCheckoutMoney(totalCents)}`}</Typography>
+          {pending && !effectiveExpanded && <Typography variant="caption">PIX aguardando pagamento</Typography>}
         </Box>
-        <IconButton size="small" onClick={onToggle} aria-label={expanded ? "Recolher" : "Expandir"}>
-          {expanded ? <ExpandMoreRoundedIcon /> : <ExpandLessRoundedIcon />}
-        </IconButton>
+        {!isDesktop && (
+          <IconButton size="small" onClick={onToggle} aria-label={expanded ? "Recolher" : "Expandir"}>
+            {expanded ? <ExpandMoreRoundedIcon /> : <ExpandLessRoundedIcon />}
+          </IconButton>
+        )}
       </Stack>
-      {expanded && (
+      {effectiveExpanded && (
         <Stack spacing={1.5} sx={{ px: 2, pb: 2 }}>
           {pending && (
             <Box>

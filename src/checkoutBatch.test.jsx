@@ -227,6 +227,31 @@ test("recolhe e expande por callback", () => {
   expect(onToggle).toHaveBeenCalledTimes(1);
 });
 
+test("desktop permanece expandido e não mostra controle de minimizar", () => {
+  const originalMatchMedia = window.matchMedia;
+  Object.defineProperty(window, "matchMedia", {
+    configurable: true,
+    writable: true,
+    value: jest.fn().mockImplementation(() => ({
+      matches: true,
+      addEventListener: jest.fn(),
+      removeEventListener: jest.fn(),
+    })),
+  });
+
+  render(<FloatingParticipationSummary items={build({ principal: [3], additional: { 142: [8] } })} expanded={false} />);
+
+  expect(screen.getByText("Suas participações")).toBeInTheDocument();
+  expect(screen.queryByLabelText("Expandir")).not.toBeInTheDocument();
+  expect(screen.queryByLabelText("Recolher")).not.toBeInTheDocument();
+
+  Object.defineProperty(window, "matchMedia", {
+    configurable: true,
+    writable: true,
+    value: originalMatchMedia,
+  });
+});
+
 test("13. login preserva o contrato de retorno do checkout", () => {
   expect({ from: "/", wantBatchCheckout: true }).toEqual(expect.objectContaining({ wantBatchCheckout: true }));
 });
