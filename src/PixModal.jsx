@@ -33,6 +33,27 @@ export default function PixModal({ open, onClose, loading, data, onCopy, onRefre
   // URL atual da imagem (começa no base64, depois qrserver, depois quickchart)
   const initialSrc = b64Src || qrServerSrc || '';
   const [imgSrc, setImgSrc] = React.useState(initialSrc);
+  const expiresAtMs = React.useMemo(() => {
+    const explicit = Date.parse(data?.expires_at || "");
+    if (Number.isFinite(explicit)) return explicit;
+    const expiresIn = Number(data?.expires_in);
+    return Number.isFinite(expiresIn) && expiresIn > 0 ? Date.now() + expiresIn * 1000 : null;
+  }, [data]);
+  const [nowMs, setNowMs] = React.useState(Date.now());
+
+  React.useEffect(() => {
+    if (!open || !expiresAtMs) return undefined;
+    setNowMs(Date.now());
+    const intervalId = window.setInterval(() => setNowMs(Date.now()), 1000);
+    return () => window.clearInterval(intervalId);
+  }, [open, expiresAtMs]);
+
+  const remainingSeconds = expiresAtMs == null
+    ? null
+    : Math.max(0, Math.ceil((expiresAtMs - nowMs) / 1000));
+  const remainingLabel = remainingSeconds == null
+    ? ""
+    : `${String(Math.floor(remainingSeconds / 60)).padStart(2, "0")}:${String(remainingSeconds % 60).padStart(2, "0")}`;
 
   // se os dados mudarem, recalcula a imagem inicial
   React.useEffect(() => {
@@ -75,6 +96,11 @@ export default function PixModal({ open, onClose, loading, data, onCopy, onRefre
             <Typography>
               Valor: <strong>{formattedAmount}</strong>
             </Typography>
+            {remainingSeconds != null && (
+              <Typography variant="body2" color={remainingSeconds > 0 ? "text.secondary" : "error.main"}>
+                {remainingSeconds > 0 ? `Expira em ${remainingLabel}` : "PIX expirado"}
+              </Typography>
+            )}
 
             {/* --- QR Code --- */}
             {(rawB64 || copyPaste) && imgSrc && (

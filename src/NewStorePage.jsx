@@ -7,6 +7,23 @@ import logoNewStore from "./Logo-branca-sem-fundo-768x132.png";
 import { SelectionContext } from "./selectionContext";
 import PixModal from "./PixModal";
 import { createPixPayment, checkPixStatus } from "./services/pix";
+import FloatingParticipationSummary from "./components/FloatingParticipationSummary";
+import BatchCheckoutReviewDialog from "./components/BatchCheckoutReviewDialog";
+import {
+  createCheckoutBatchPix,
+  getCheckoutBatchStatus,
+  reserveCheckoutBatch,
+} from "./services/checkoutBatch";
+import {
+  buildCheckoutSelection,
+  checkoutSelectionFingerprint,
+  createCheckoutIdempotencyKey,
+  getSelectedDrawGroups,
+  isCheckoutBatchSettled,
+  normalizeCheckoutBatchPayment,
+  toCheckoutPayload,
+  validateCheckoutBatchPaymentResponse,
+} from "./utils/checkoutSelection";
 import { useAuth } from "./authContext";
 
 import {
@@ -433,6 +450,70 @@ export default function NewStorePage({
   const [additionalNoticeByDrawId, setAdditionalNoticeByDrawId] = React.useState({});
   const [additionalPixOpenDrawId, setAdditionalPixOpenDrawId] = React.useState(null);
 
+  // Checkout agrupado: as seleções acima continuam sendo a única fonte de verdade.
+  const [batchReviewOpen, setBatchReviewOpen] = React.useState(false);
+  const [batchSummaryExpanded, setBatchSummaryExpanded] = React.useState(true);
+  const [batchCheckoutBusy, setBatchCheckoutBusy] = React.useState(false);
+  const [batchCheckout, setBatchCheckout] = React.useState(null);
+  const [batchSelectionSnapshot, setBatchSelectionSnapshot] = React.useState(null);
+  const [batchPixOpen, setBatchPixOpen] = React.useState(false);
+  const [batchMessage, setBatchMessage] = React.useState("");
+  const [batchError, setBatchError] = React.useState("");
+  const batchAttemptRef = React.useRef({ fingerprint: "", idempotencyKey: "" });
+  const batchSubmitInFlightRef = React.useRef(false);
+  const batchPollInFlightRef = React.useRef(false);
+  const batchSuccessHandledRef = React.useRef(false);
+  const batchMountedRef = React.useRef(true);
+
+  React.useEffect(() => {
+    batchMountedRef.current = true;
+    return () => {
+      batchMountedRef.current = false;
+    };
+  }, []);
+
+  const checkoutSelection = React.useMemo(
+    () => buildCheckoutSelection({
+      currentDrawId,
+      principalNumbers: selecionados,
+      principalUnitPriceCents: Math.round(unitPrice * 100),
+      additionalDraws,
+      additionalNumbersByDrawId: selectedAdditionalNumbersByDrawId,
+    }),
+    [currentDrawId, selecionados, unitPrice, additionalDraws, selectedAdditionalNumbersByDrawId]
+  );
+  const checkoutFingerprint = React.useMemo(
+    () => checkoutSelectionFingerprint(checkoutSelection),
+    [checkoutSelection]
+  );
+  const selectedDrawGroups = React.useMemo(
+    () => getSelectedDrawGroups(checkoutSelection),
+    [checkoutSelection]
+  );
+  const shouldShowMultiDrawCheckout = selectedDrawGroups.length >= 2;
+  const isCreatingBatch = batchCheckoutBusy;
+  const normalizedBatchPayment = React.useMemo(
+    () =>
+      batchCheckout
+        ? normalizeCheckoutBatchPayment(batchCheckout)
+        : null,
+    [batchCheckout]
+  );
+
+  React.useEffect(() => {
+    if (batchCheckout?.batch_id) return;
+    if (batchAttemptRef.current.fingerprint !== checkoutFingerprint) {
+      batchAttemptRef.current = { fingerprint: checkoutFingerprint, idempotencyKey: "" };
+    }
+  }, [checkoutFingerprint, batchCheckout?.batch_id]);
+
+  React.useEffect(() => {
+    if (!shouldShowMultiDrawCheckout && !batchCheckout?.batch_id) {
+      setBatchReviewOpen(false);
+      setBatchSummaryExpanded(false);
+    }
+  }, [shouldShowMultiDrawCheckout, batchCheckout?.batch_id]);
+
   // Limite acumulado do usuário
   const [limitUsage, setLimitUsage] = React.useState({
     current: null,
@@ -675,7 +756,8 @@ export default function NewStorePage({
       return;
     }
 
-    const addCount = selecionados.length || 1;
+    const principalNumbersToPay = selecionados.slice().sort((a, b) => a - b);
+    const addCount = principalNumbersToPay.length || 1;
 
     try {
       const { blocked, current, max } = await checkUserPurchaseLimit({
@@ -699,18 +781,20 @@ export default function NewStorePage({
       console.warn("[limit-check] falhou, seguindo fluxo]:", e);
     }
 
-    const amount = selecionados.length * unitPrice;
+    const amount = principalNumbersToPay.length * unitPrice;
     setPixAmount(amount);
     setPixOpen(true);
     setPixLoading(true);
     setPixApproved(false);
 
     try {
-      const { reservationId } = await reserveNumbers(selecionados);
+      const { reservationId } = await reserveNumbers(principalNumbersToPay);
+      const reservedSet = new Set(principalNumbersToPay.map(Number));
+      setSelecionados((previous) => previous.filter((number) => !reservedSet.has(Number(number))));
       const data = await createPixPayment({
         orderId: String(Date.now()),
         amount,
-        numbers: selecionados,
+        numbers: principalNumbersToPay,
         reservationId,
       });
       setPixData(data);
@@ -745,6 +829,7 @@ export default function NewStorePage({
   const isIndisponivel = (n) => indisponiveisAll.includes(n);
   const isSelecionado = (n) => selecionados.includes(n);
   const handleClickNumero = (n) => {
+    if (batchCheckoutBusy) return;
     if (principalOpen !== true) return;
     if (isIndisponivel(n)) return;
     setSelecionados((prev) => {
@@ -1322,6 +1407,7 @@ export default function NewStorePage({
     (selectedAdditionalNumbersByDrawId[drawId] || []).includes(n);
 
   const handleAdditionalNumberClick = (drawId, n) => {
+    if (batchCheckoutBusy) return;
     if (additionalReserveLoadingByDrawId[drawId] || additionalPixLoadingByDrawId[drawId]) return;
     const status = getAdditionalNumberStatus(drawId, n);
     if (status !== "available" && !isAdditionalSelected(drawId, n)) return;
@@ -1553,6 +1639,318 @@ export default function NewStorePage({
     if (reservation) await handleAdditionalPix(draw, reservation);
   };
 
+  const batchItemsWithTitles = React.useCallback((payload, sourceItems = checkoutSelection) => {
+    const titles = new Map(sourceItems.map((item) => [Number(item.drawId), item.title]));
+    return {
+      ...payload,
+      items: (payload?.items || []).map((item) => ({
+        ...item,
+        title:
+          titles.get(Number(item.draw_id)) ||
+          (item.draw_type === "principal"
+            ? "Sorteio principal"
+            : item.draw_type === "secundario" ? `Secundário ${item.draw_id}` : `Adicional ${item.draw_id}`),
+      })),
+    };
+  }, [checkoutSelection]);
+
+  const reloadBatchDraws = React.useCallback(async (snapshot) => {
+    const items = snapshot?.items || [];
+    const tasks = [];
+    if (items.some((item) => item.draw_type === "principal")) tasks.push(reloadSrvNumbers());
+    for (const item of items) {
+      if (item.draw_type !== "principal") tasks.push(reloadAdditionalNumbers(item.draw_id));
+    }
+    await Promise.allSettled(tasks);
+  }, [reloadSrvNumbers, reloadAdditionalNumbers]);
+
+  const removeBatchConflictSelections = React.useCallback((conflicts) => {
+    const principalNumbers = new Set();
+    const additionalByDraw = new Map();
+    for (const conflict of conflicts || []) {
+      const drawId = Number(conflict.draw_id);
+      const numbers = new Set((conflict.numbers || []).map(Number));
+      if (Number(currentDrawId) === drawId) for (const number of numbers) principalNumbers.add(number);
+      else additionalByDraw.set(drawId, numbers);
+    }
+    if (principalNumbers.size) {
+      setSelecionados((previous) => previous.filter((number) => !principalNumbers.has(Number(number))));
+    }
+    if (additionalByDraw.size) {
+      setSelectedAdditionalNumbersByDrawId((previous) => {
+        const next = { ...previous };
+        for (const [drawId, numbers] of additionalByDraw) {
+          next[drawId] = (next[drawId] || []).filter((number) => !numbers.has(Number(number)));
+        }
+        return next;
+      });
+    }
+  }, [currentDrawId, setSelecionados]);
+
+  const formatBatchConflicts = React.useCallback((conflicts) => {
+    const lines = (conflicts || []).map((conflict) => {
+      const drawId = Number(conflict.draw_id);
+      const item = checkoutSelection.find((selection) => Number(selection.drawId) === drawId);
+      const title = item?.drawType === "principal"
+        ? "Sorteio principal"
+        : item?.title || (item?.drawType === "secundario" ? `Sorteio secundário ${drawId}` : `Sorteio adicional ${drawId}`);
+      return `${title}: ${(conflict.numbers || []).map(pad2).join(", ")}`;
+    });
+    return `Alguns números ficaram indisponíveis:\n\n${lines.join("\n")}\n\nRevise suas escolhas para continuar.`;
+  }, [checkoutSelection]);
+
+  const clearReservedSelections = React.useCallback((reservedBatch) => {
+    const principal = reservedBatch.items?.find((item) => item.draw_type === "principal");
+    if (principal) {
+      const reserved = new Set(principal.numbers.map(Number));
+      setSelecionados((previous) => previous.filter((number) => !reserved.has(Number(number))));
+    }
+    setSelectedAdditionalNumbersByDrawId((previous) => {
+      const next = { ...previous };
+      for (const item of reservedBatch.items || []) {
+        if (item.draw_type === "principal") continue;
+        const reserved = new Set(item.numbers.map(Number));
+        next[item.draw_id] = (next[item.draw_id] || []).filter((number) => !reserved.has(Number(number)));
+      }
+      return next;
+    });
+  }, [setSelecionados]);
+
+  const applyBatchStatus = React.useCallback(async (latest, snapshot = batchSelectionSnapshot) => {
+    if (!batchMountedRef.current) return true;
+    const status = String(latest?.status || "").toLowerCase();
+    if (status === "approved" && !latest?.settled) {
+      setBatchMessage("Pagamento confirmado. Finalizando suas participações.");
+      return false;
+    }
+    if (status === "manual_review") {
+      setBatchPixOpen(false);
+      setBatchMessage("Pagamento recebido, mas a confirmação das participações precisa de revisão.");
+      return true;
+    }
+    if (status === "failed") {
+      setBatchPixOpen(false);
+      setBatchError("Não foi possível concluir o pagamento PIX. Consulte a reserva antes de tentar novamente.");
+      return true;
+    }
+    if (status === "expired") {
+      setBatchPixOpen(false);
+      setBatchCheckout(null);
+      setBatchSelectionSnapshot(null);
+      setBatchError("O tempo da reserva terminou. Os números foram liberados.");
+      await reloadBatchDraws(snapshot || latest);
+      if (!batchMountedRef.current) return true;
+      return true;
+    }
+    if (isCheckoutBatchSettled(latest)) {
+      if (batchSuccessHandledRef.current) return true;
+      batchSuccessHandledRef.current = true;
+      setBatchPixOpen(false);
+      await reloadBatchDraws(snapshot || latest);
+      if (!batchMountedRef.current) return true;
+      window.dispatchEvent(new CustomEvent("ns:numbers:reload"));
+      try {
+        const principal = (snapshot?.items || latest?.items || []).find((item) => item.draw_type === "principal");
+        if (principal) {
+          const info = await checkUserPurchaseLimit({ addCount: 0, drawId: principal.draw_id || currentDrawId });
+          setLimitUsage({ current: info.current, max: info.max });
+        }
+      } catch {}
+      setBatchCheckout(null);
+      setBatchSelectionSnapshot(null);
+      setBatchSummaryExpanded(false);
+      setBatchMessage("Pagamento aprovado. Suas participações foram confirmadas.");
+      batchAttemptRef.current = { fingerprint: "", idempotencyKey: "" };
+      return true;
+    }
+    if (status === "pending") setBatchMessage("Aguardando confirmação do PIX.");
+    if (status === "creating_payment") setBatchMessage("Estamos finalizando a criação do seu PIX.");
+    return false;
+  }, [batchSelectionSnapshot, currentDrawId, reloadBatchDraws]);
+
+  const openBatchPix = React.useCallback(async (batch = batchCheckout) => {
+    if (!batch?.batch_id || batchSubmitInFlightRef.current) return;
+    if (batch.payment_id && (batch.qr_code || batch.qr_code_base64)) {
+      const terminal = await applyBatchStatus(batch, batchSelectionSnapshot || batch);
+      if (!terminal) setBatchPixOpen(true);
+      return;
+    }
+    batchSubmitInFlightRef.current = true;
+    batchSuccessHandledRef.current = false;
+    setBatchCheckoutBusy(true);
+    setBatchError("");
+    try {
+      const rawPixResponse = validateCheckoutBatchPaymentResponse(
+        await createCheckoutBatchPix(batch.batch_id)
+      );
+      const pixResponse = batchItemsWithTitles(
+        rawPixResponse,
+        batchSelectionSnapshot?.items || []
+      );
+      if (!batchMountedRef.current) return;
+      const next = { ...batch, ...pixResponse, items: pixResponse.items?.length ? pixResponse.items : batch.items };
+      setBatchCheckout(next);
+      const terminal = await applyBatchStatus(next, batchSelectionSnapshot || batch);
+      if (!terminal && next.payment_id && (next.qr_code || next.qr_code_base64)) setBatchPixOpen(true);
+    } catch (error) {
+      if (error?.body?.error === "batch_expired") {
+        setBatchPixOpen(false);
+        setBatchCheckout(null);
+        setBatchSelectionSnapshot(null);
+        setBatchError("O tempo da reserva terminou. Os números foram liberados.");
+        await reloadBatchDraws(batchSelectionSnapshot || batch);
+      } else if (error?.status === 401) {
+        setBatchPixOpen(false);
+        navigate("/login", { state: { from: "/", wantBatchCheckout: true } });
+      } else {
+        setBatchError("Não foi possível abrir o PIX agora. Tente novamente usando esta mesma reserva.");
+      }
+    } finally {
+      if (batchMountedRef.current) setBatchCheckoutBusy(false);
+      batchSubmitInFlightRef.current = false;
+    }
+  }, [batchCheckout, batchItemsWithTitles, batchSelectionSnapshot, reloadBatchDraws, applyBatchStatus, navigate]);
+
+  const confirmBatchCheckout = React.useCallback(async () => {
+    if (batchSubmitInFlightRef.current) return;
+    if (!shouldShowMultiDrawCheckout || selectedDrawGroups.length < 2) {
+      setBatchReviewOpen(false);
+      setBatchError("O pagamento agrupado exige seleções em pelo menos dois sorteios diferentes.");
+      return;
+    }
+    if (!isAuthenticated) {
+      setBatchReviewOpen(false);
+      navigate("/login", { state: { from: "/", wantBatchCheckout: true } });
+      return;
+    }
+    batchSubmitInFlightRef.current = true;
+    batchSuccessHandledRef.current = false;
+    setBatchCheckoutBusy(true);
+    setBatchError("");
+    setBatchMessage("");
+    const logicalSelection = checkoutSelection;
+    const fingerprint = checkoutSelectionFingerprint(logicalSelection);
+    if (
+      batchAttemptRef.current.fingerprint !== fingerprint ||
+      !batchAttemptRef.current.idempotencyKey
+    ) {
+      batchAttemptRef.current = {
+        fingerprint,
+        idempotencyKey: createCheckoutIdempotencyKey(),
+      };
+    }
+    try {
+      const payload = toCheckoutPayload(logicalSelection);
+      const reserved = batchItemsWithTitles(await reserveCheckoutBatch({
+        items: payload.items,
+        idempotencyKey: batchAttemptRef.current.idempotencyKey,
+      }), logicalSelection);
+      if (!batchMountedRef.current) return;
+      setBatchCheckout(reserved);
+      setBatchSelectionSnapshot(reserved);
+      setBatchReviewOpen(false);
+      setBatchSummaryExpanded(true);
+      clearReservedSelections(reserved);
+      await reloadBatchDraws(reserved);
+
+      try {
+        const rawPixResponse = validateCheckoutBatchPaymentResponse(
+          await createCheckoutBatchPix(reserved.batch_id)
+        );
+        const pix = batchItemsWithTitles(rawPixResponse, logicalSelection);
+        if (!batchMountedRef.current) return;
+        const next = { ...reserved, ...pix, items: pix.items?.length ? pix.items : reserved.items };
+        setBatchCheckout(next);
+        const terminal = await applyBatchStatus(next, reserved);
+        if (!terminal && next.payment_id && (next.qr_code || next.qr_code_base64)) setBatchPixOpen(true);
+      } catch (error) {
+        if (error?.status === 401) {
+          navigate("/login", { state: { from: "/", wantBatchCheckout: true } });
+        } else {
+          setBatchError("A reserva foi criada, mas o PIX ainda não. Use ABRIR PIX para tentar novamente.");
+        }
+      }
+    } catch (error) {
+      const code = error?.body?.error || error?.message;
+      if (code === "batch_numbers_unavailable") {
+        const conflicts = error.body?.conflicts || [];
+        removeBatchConflictSelections(conflicts);
+        setBatchError(formatBatchConflicts(conflicts));
+        await reloadBatchDraws({
+          items: checkoutSelection
+            .filter((item) => conflicts.some((conflict) => Number(conflict.draw_id) === Number(item.drawId)))
+            .map((item) => ({ draw_id: item.drawId, draw_type: item.drawType })),
+        });
+      } else if (code === "multi_draw_checkout_requires_multiple_draws") {
+        setBatchReviewOpen(false);
+        setBatchError(error?.body?.message || "O pagamento agrupado exige seleções em pelo menos dois sorteios diferentes.");
+      } else if (error?.status === 401) {
+        navigate("/login", { state: { from: "/", wantBatchCheckout: true } });
+      } else {
+        setBatchError("Não foi possível validar todas as participações. Nenhum número foi reservado.");
+      }
+    } finally {
+      if (batchMountedRef.current) setBatchCheckoutBusy(false);
+      batchSubmitInFlightRef.current = false;
+    }
+  }, [
+    checkoutSelection, selectedDrawGroups, shouldShowMultiDrawCheckout, isAuthenticated, navigate, batchItemsWithTitles,
+    clearReservedSelections, reloadBatchDraws, removeBatchConflictSelections, formatBatchConflicts, applyBatchStatus,
+  ]);
+
+  const removeCheckoutNumber = React.useCallback((drawId, number) => {
+    if (batchCheckoutBusy) return;
+    if (Number(drawId) === Number(currentDrawId)) {
+      setSelecionados((previous) => previous.filter((item) => Number(item) !== Number(number)));
+      return;
+    }
+    setSelectedAdditionalNumbersByDrawId((previous) => ({
+      ...previous,
+      [drawId]: (previous[drawId] || []).filter((item) => Number(item) !== Number(number)),
+    }));
+  }, [batchCheckoutBusy, currentDrawId, setSelecionados]);
+
+  const clearCheckoutDraw = React.useCallback((drawId) => {
+    if (batchCheckoutBusy) return;
+    if (Number(drawId) === Number(currentDrawId)) setSelecionados([]);
+    else setSelectedAdditionalNumbersByDrawId((previous) => ({ ...previous, [drawId]: [] }));
+  }, [batchCheckoutBusy, currentDrawId, setSelecionados]);
+
+  React.useEffect(() => {
+    const batchId = batchCheckout?.batch_id;
+    const status = String(batchCheckout?.status || "").toLowerCase();
+    if (!batchId || !["reserved", "creating_payment", "pending", "approved"].includes(status) || batchCheckout?.settled) {
+      return undefined;
+    }
+    let stopped = false;
+    const poll = async () => {
+      if (batchPollInFlightRef.current || stopped) return;
+      batchPollInFlightRef.current = true;
+      try {
+        const latest = batchItemsWithTitles(await getCheckoutBatchStatus(batchId), batchSelectionSnapshot?.items || []);
+        if (stopped) return;
+        setBatchCheckout((current) => ({ ...current, ...latest, items: latest.items?.length ? latest.items : current?.items }));
+        await applyBatchStatus(latest, batchSelectionSnapshot || latest);
+      } catch (error) {
+        if (!stopped && error?.status === 401) {
+          setBatchPixOpen(false);
+          navigate("/login", { state: { from: "/", wantBatchCheckout: true } });
+        }
+      } finally {
+        batchPollInFlightRef.current = false;
+      }
+    };
+    poll();
+    const interval = setInterval(poll, 3500);
+    return () => {
+      stopped = true;
+      clearInterval(interval);
+    };
+  }, [
+    batchCheckout?.batch_id, batchCheckout?.status, batchCheckout?.settled,
+    batchItemsWithTitles, batchSelectionSnapshot, applyBatchStatus, navigate,
+  ]);
+
   const renderNumberContent = ({ number, initials, sold, closedInitials = false }) => {
     const showSoldOverlay = sold && !closedInitials;
 
@@ -1750,6 +2148,19 @@ export default function NewStorePage({
       {/* Conteúdo */}
       <Container maxWidth="lg" sx={{ py: { xs: 4, md: 6 } }}>
         <Stack spacing={4}>
+          {batchError && (
+            <Alert severity="error" onClose={() => setBatchError("")} sx={{ whiteSpace: "pre-line" }}>
+              {batchError}
+            </Alert>
+          )}
+          {batchMessage && (
+            <Alert
+              severity={batchCheckout?.status === "manual_review" ? "warning" : "success"}
+              onClose={() => setBatchMessage("")}
+            >
+              {batchMessage}
+            </Alert>
+          )}
           <Paper variant="outlined" sx={{ p: { xs: 2, md: 3 } }}>
             <Stack spacing={2}>
               <Typography variant="h3" fontWeight={900}>
@@ -3009,6 +3420,29 @@ Baseado no resultado oficial da Lotomania (Caixa Econômica Federal).
         </Stack>
       </Container>
 
+      {(shouldShowMultiDrawCheckout || batchCheckout?.batch_id) && (
+        <FloatingParticipationSummary
+          items={selectedDrawGroups}
+          pendingBatch={batchCheckout}
+          expanded={batchSummaryExpanded}
+          disabled={isCreatingBatch}
+          onToggle={() => setBatchSummaryExpanded((value) => !value)}
+          onContinue={() => setBatchSummaryExpanded(false)}
+          onReview={() => setBatchReviewOpen(true)}
+          onRemoveNumber={removeCheckoutNumber}
+          onClearDraw={clearCheckoutDraw}
+          onOpenPix={() => openBatchPix()}
+        />
+      )}
+
+      <BatchCheckoutReviewDialog
+        open={batchReviewOpen && shouldShowMultiDrawCheckout}
+        items={selectedDrawGroups}
+        busy={isCreatingBatch}
+        onBack={() => setBatchReviewOpen(false)}
+        onConfirm={confirmBatchCheckout}
+      />
+
       {/* Modal de confirmação */}
       <Dialog open={open} onClose={handleFechar} maxWidth="xs" fullWidth PaperProps={{ sx: { borderRadius: 3 } }}>
         <DialogTitle sx={{ fontSize: 22, fontWeight: 800, textAlign: "center" }}>
@@ -3076,6 +3510,41 @@ Baseado no resultado oficial da Lotomania (Caixa Econômica Federal).
       </Dialog>
 
       {/* Modal PIX (QR) */}
+      {normalizedBatchPayment && (
+        <PixModal
+          open={Boolean(batchPixOpen && normalizedBatchPayment)}
+          onClose={() => setBatchPixOpen(false)}
+          loading={batchCheckoutBusy}
+          data={normalizedBatchPayment}
+          amount={normalizedBatchPayment.amount}
+          inlineMessage={batchMessage || "Aguardando confirmação do PIX."}
+          onCopy={() => {
+            navigator.clipboard.writeText(normalizedBatchPayment.copy_paste_code || "");
+          }}
+          onRefresh={async () => {
+            if (!batchCheckout?.batch_id || batchPollInFlightRef.current) return;
+            batchPollInFlightRef.current = true;
+            try {
+              const latest = batchItemsWithTitles(
+                await getCheckoutBatchStatus(batchCheckout.batch_id),
+                batchSelectionSnapshot?.items || []
+              );
+              setBatchCheckout((current) => ({ ...current, ...latest }));
+              await applyBatchStatus(latest, batchSelectionSnapshot || latest);
+            } catch (error) {
+              if (error?.status === 401) {
+                setBatchPixOpen(false);
+                navigate("/login", { state: { from: "/", wantBatchCheckout: true } });
+              } else {
+                setBatchError("Não foi possível consultar o pagamento agora.");
+              }
+            } finally {
+              batchPollInFlightRef.current = false;
+            }
+          }}
+        />
+      )}
+
       <PixModal
         open={pixOpen}
         onClose={() => {
