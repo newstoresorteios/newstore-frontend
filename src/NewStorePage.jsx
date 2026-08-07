@@ -1339,6 +1339,24 @@ export default function NewStorePage({
     };
   }, [fetchAdditionalNumbers]);
 
+  React.useEffect(() => {
+    const closedDrawIds = additionalDraws
+      .filter((draw) => String(draw?.status || "").toLowerCase() === "closed")
+      .map((draw) => draw.id);
+    if (!closedDrawIds.length) return;
+    setSelectedAdditionalNumbersByDrawId((prev) => {
+      let changed = false;
+      const next = { ...prev };
+      for (const drawId of closedDrawIds) {
+        if ((prev[drawId] || []).length) {
+          next[drawId] = [];
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [additionalDraws]);
+
   const getAdditionalNumberItem = (drawId, n) => {
     const numbers = additionalNumbersByDrawId[drawId] || [];
     return numbers.find((item) => Number(item.n) === Number(n)) || null;
@@ -1354,7 +1372,20 @@ export default function NewStorePage({
     return item?.status || "blocked";
   };
 
-  const getAdditionalCellSx = (drawId, n) => {
+  const getAdditionalCellSx = (drawId, n, isClosed = false) => {
+    if (isClosed) {
+      // Sorteio encerrado: verde ainda passaria a impressão de que dá para
+      // comprar, então todo número fica visualmente indisponível/vermelho,
+      // independentemente do status real gravado no backend.
+      return {
+        border: "2px solid",
+        borderColor: "error.main",
+        bgcolor: "rgba(211,47,47,0.15)",
+        color: "rgba(255,255,255,0.65)",
+        cursor: "not-allowed",
+      };
+    }
+
     const status = getAdditionalNumberStatus(drawId, n);
     const selected = isAdditionalSelected(drawId, n);
 
@@ -1407,13 +1438,14 @@ export default function NewStorePage({
     (selectedAdditionalNumbersByDrawId[drawId] || []).includes(n);
 
   const handleAdditionalNumberClick = (drawId, n) => {
+    const draw = additionalDraws.find((item) => String(item.id) === String(drawId));
+    if (String(draw?.status || "").toLowerCase() === "closed") return;
     if (batchCheckoutBusy) return;
     if (additionalReserveLoadingByDrawId[drawId] || additionalPixLoadingByDrawId[drawId]) return;
     const status = getAdditionalNumberStatus(drawId, n);
     if (status !== "available" && !isAdditionalSelected(drawId, n)) return;
     const current = selectedAdditionalNumbersByDrawId[drawId] || [];
     const alreadySelected = current.includes(n);
-    const draw = additionalDraws.find((item) => String(item.id) === String(drawId));
     const maxNumbers = Number(draw?.max_numbers_per_selection ?? draw?.max_tickets ?? 0);
     if (!alreadySelected && Number.isFinite(maxNumbers) && maxNumbers > 0 && current.length >= maxNumbers) {
       setAdditionalErrorByDrawId((prev) => ({
@@ -1635,6 +1667,7 @@ export default function NewStorePage({
     handleAdditionalPixApproved,
   ]);
   const handleContinueAdditional = async (draw) => {
+    if (String(draw?.status || "").toLowerCase() === "closed") return;
     const reservation = await handleReserveAdditionalNumbers(draw);
     if (reservation) await handleAdditionalPix(draw, reservation);
   };
@@ -1951,7 +1984,35 @@ export default function NewStorePage({
     batchItemsWithTitles, batchSelectionSnapshot, applyBatchStatus, navigate,
   ]);
 
-  const renderNumberContent = ({ number, initials, sold, closedInitials = false }) => {
+  const renderNumberContent = ({ number, initials, sold, closedInitials = false, closedBoard = false }) => {
+    if (closedBoard) {
+      // Grade de sorteio encerrado: número sempre visível, iniciais do
+      // comprador (quando existirem) abaixo dele. Sem overlay de "sold" do
+      // desktop e sem esconder o número — layout fixo, independente do
+      // status real do número.
+      return (
+        <Box
+          sx={{
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            justifyContent: "center",
+            lineHeight: 1.1,
+          }}
+        >
+          <Box component="span">{pad2(number)}</Box>
+          {initials && (
+            <Box
+              component="span"
+              sx={{ fontSize: 11, fontWeight: 900, mt: 0.25, letterSpacing: 0.5 }}
+            >
+              {initials}
+            </Box>
+          )}
+        </Box>
+      );
+    }
+
     const showSoldOverlay = sold && !closedInitials;
 
     return (
@@ -2588,7 +2649,7 @@ Baseado no resultado oficial da Lotomania (Caixa Econômica Federal).
                         <Button
                           variant="outlined"
                           color="inherit"
-                          disabled={!selectedNumbers.length || isAdditionalPixLoadingThisDraw}
+                          disabled={isClosed || !selectedNumbers.length || isAdditionalPixLoadingThisDraw}
                           onClick={() =>
                             setSelectedAdditionalNumbersByDrawId((prev) => ({
                               ...prev,
@@ -2601,7 +2662,7 @@ Baseado no resultado oficial da Lotomania (Caixa Econômica Federal).
                         <Button
                           variant="contained"
                           color="success"
-                          disabled={!selectedNumbers.length || isAdditionalPixLoadingThisDraw}
+                          disabled={isClosed || !selectedNumbers.length || isAdditionalPixLoadingThisDraw}
                           onClick={() => handleContinueAdditional(additionalDraw)}
                         >
                           CONTINUAR
@@ -2650,15 +2711,15 @@ Baseado no resultado oficial da Lotomania (Caixa Econômica Federal).
                               component="button"
                               type="button"
                               key={number}
-                              disabled={status !== "available" && !selected}
+                              disabled={isClosed || (status !== "available" && !selected)}
                               aria-pressed={selected ? "true" : "false"}
                               onClick={() => handleAdditionalNumberClick(drawId, number)}
                               sx={{
-                                ...getAdditionalCellSx(drawId, number),
+                                ...getAdditionalCellSx(drawId, number, isClosed),
                                 borderRadius: 1.2,
                                 userSelect: "none",
                                 cursor:
-                                  status !== "available" && !selected
+                                  isClosed || (status !== "available" && !selected)
                                     ? "not-allowed"
                                     : "pointer",
                                 aspectRatio: "1 / 1",
@@ -2675,6 +2736,7 @@ Baseado no resultado oficial da Lotomania (Caixa Econômica Federal).
                                 number,
                                 initials,
                                 sold,
+                                closedBoard: isClosed,
                               })}
                             </Box>
                           );
