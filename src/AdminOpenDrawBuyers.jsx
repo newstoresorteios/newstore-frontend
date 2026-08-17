@@ -4,7 +4,7 @@ import { useNavigate, Link as RouterLink } from "react-router-dom";
 import {
   Alert, AppBar, Box, Button, Chip, Container, CssBaseline, Divider, IconButton,
   Paper, Stack, Tab, Tabs, TextField, ThemeProvider, Toolbar, Typography,
-  Table, TableBody, TableCell, TableContainer, TableHead, TableRow
+  Table, TableBody, TableCell, TableContainer, TableHead, TableRow, MenuItem
 } from "@mui/material";
 import ArrowBackIosNewRoundedIcon from "@mui/icons-material/ArrowBackIosNewRounded";
 import AccountCircleRoundedIcon from "@mui/icons-material/AccountCircleRounded";
@@ -46,7 +46,14 @@ const authHeaders = () => {
 
 async function getJSON(path) {
   const r = await fetch(apiJoin(path), { headers: { "Content-Type": "application/json", ...authHeaders() }, credentials: "omit", cache: "no-store" });
-  if (!r.ok) throw new Error(String(r.status));
+  if (!r.ok) {
+    let message = String(r.status);
+    try {
+      const body = await r.json();
+      message = body?.message || body?.error || message;
+    } catch {}
+    throw new Error(message);
+  }
   return r.json();
 }
 
@@ -148,11 +155,38 @@ const safeFilename = (name) =>
     .replace(/_+/g, "_")
     .replace(/^_+|_+$/g, "");
 
+const isOpenAdditionalItem = (item) => {
+  const draw = item?.draw || {};
+  const type = String(draw.draw_type || "").toLowerCase();
+  return (
+    String(draw.status || "").toLowerCase() === "open" &&
+    (type === "adicional" || type === "secundario")
+  );
+};
+
+const newestAdditionalItem = (items, predicate = () => true) =>
+  items.reduce((newest, item) => {
+    if (!predicate(item)) return newest;
+    if (!newest || Number(item?.draw?.id || 0) > Number(newest?.draw?.id || 0)) {
+      return item;
+    }
+    return newest;
+  }, null);
+
+const sortAdditionalItems = (items) =>
+  [...items].sort((a, b) => {
+    const openDifference = Number(isOpenAdditionalItem(b)) - Number(isOpenAdditionalItem(a));
+    if (openDifference) return openDifference;
+    return Number(b?.draw?.id || 0) - Number(a?.draw?.id || 0);
+  });
+
 export default function AdminOpenDrawBuyers() {
   const navigate = useNavigate();
   useAuth();
 
   const [drawMode, setDrawMode] = React.useState("principal");
+  const [additionalDraws, setAdditionalDraws] = React.useState([]);
+  const [selectedAdditionalDrawId, setSelectedAdditionalDrawId] = React.useState("");
   const [tab, setTab] = React.useState(0);
   const [loading, setLoading] = React.useState(true);
   const [drawId, setDrawId] = React.useState(null);
@@ -196,21 +230,22 @@ export default function AdminOpenDrawBuyers() {
       }
 
       const payload = await getJSON("/admin/additional-draws");
-      const items = Array.isArray(payload?.draws) ? payload.draws : [];
-      const openItems = items
-        .filter((item) => {
-          const draw = item?.draw || {};
-          const type = String(draw.draw_type || "").toLowerCase();
-          const status = String(draw.status || "").toLowerCase();
-          return status === "open" && (type === "adicional" || type === "secundario");
-        })
-        .sort((a, b) => Number(b?.draw?.id || 0) - Number(a?.draw?.id || 0));
-      const current = openItems[0] || null;
+      const items = sortAdditionalItems(Array.isArray(payload?.draws) ? payload.draws : []);
+      const current =
+        items.find((item) => String(item?.draw?.id) === String(selectedAdditionalDrawId)) ||
+        newestAdditionalItem(items, isOpenAdditionalItem) ||
+        newestAdditionalItem(items) ||
+        null;
 
       if (sequence !== loadSequence.current) return;
+      setAdditionalDraws(items);
       if (!current?.draw?.id) {
-        setEmptyMessage("Nenhum sorteio adicional aberto encontrado.");
+        setSelectedAdditionalDrawId("");
+        setEmptyMessage("Nenhum sorteio adicional cadastrado.");
         return;
+      }
+      if (String(current.draw.id) !== String(selectedAdditionalDrawId)) {
+        setSelectedAdditionalDrawId(String(current.draw.id));
       }
 
       const additionalDrawId = Number(current.draw.id);
@@ -260,7 +295,9 @@ export default function AdminOpenDrawBuyers() {
     } catch (error) {
       if (sequence === loadSequence.current) {
         setLoadError(
-          drawMode === "adicional"
+          error?.message && !/^\d+$/.test(String(error.message))
+            ? String(error.message)
+            : drawMode === "adicional"
             ? "Não foi possível carregar os compradores do sorteio adicional."
             : "Não foi possível carregar os compradores do sorteio principal."
         );
@@ -268,14 +305,12 @@ export default function AdminOpenDrawBuyers() {
     } finally {
       if (sequence === loadSequence.current) setLoading(false);
     }
-  }, [drawMode]);
+  }, [drawMode, selectedAdditionalDrawId]);
   React.useEffect(() => { load(); }, [load]);
 
   const isAdditionalMode = drawMode === "adicional";
   const drawTypeSlug = isAdditionalMode ? "adicional" : "principal";
-  const screenTitle = isAdditionalMode
-    ? "Sorteio Adicional — Compradores"
-    : "Sorteio Ativo — Compradores";
+  const screenTitle = "Sorteio Ativo — Compradores";
 
   // Map de user_id -> idx/color
   const idToIdx = React.useMemo(() => {
@@ -493,12 +528,10 @@ export default function AdminOpenDrawBuyers() {
       const innerW = cardW - innerPadX * 2;
 
       const NAME_FONT = "900 34px Inter, system-ui, Segoe UI, Roboto, Arial";
-      const EMAIL_FONT = "600 22px Inter, system-ui, Segoe UI, Roboto, Arial";
       const META_FONT = "800 25px Inter, system-ui, Segoe UI, Roboto, Arial";
       const NUM_FONT = "700 28px Inter, system-ui, Segoe UI, Roboto, Arial";
 
       const NAME_LH = 38;
-      const EMAIL_LH = 27;
       const META_LH = 30;
       const NUM_LH = 32;
 
@@ -620,9 +653,6 @@ export default function AdminOpenDrawBuyers() {
             titleLines[1] = fitSingleLine(mctx, titleLines[1], innerW);
           }
 
-          mctx.font = EMAIL_FONT;
-          const emailLine = buyer.email ? fitSingleLine(mctx, buyer.email, innerW) : "";
-
           mctx.font = NUM_FONT;
           const allNumLines = numbersToLines(mctx, buyer.numbers, innerW);
           const numberLineChunks = chunkArray(allNumLines, MAX_NUM_LINES_PER_CARD);
@@ -638,7 +668,6 @@ export default function AdminOpenDrawBuyers() {
             const h =
               30 +
               titleLines.length * NAME_LH +
-              (emailLine ? EMAIL_LH + 4 : 0) +
               META_LH +
               (partLabel ? 24 : 0) +
               16 +
@@ -649,7 +678,6 @@ export default function AdminOpenDrawBuyers() {
               buyerIndex: idx,
               user_id: buyer.user_id,
               name: buyer.name,
-              emailLine,
               qty: buyer.qty,
               total_cents: buyer.total_cents,
               titleLines,
@@ -792,13 +820,6 @@ export default function AdminOpenDrawBuyers() {
         for (const line of item.titleLines) {
           ctx.fillText(line, innerX, cy);
           cy += NAME_LH;
-        }
-
-        if (item.emailLine) {
-          ctx.font = EMAIL_FONT;
-          ctx.fillStyle = "rgba(255,255,255,.62)";
-          ctx.fillText(item.emailLine, innerX, cy);
-          cy += EMAIL_LH + 4;
         }
 
         ctx.font = META_FONT;
@@ -974,27 +995,45 @@ export default function AdminOpenDrawBuyers() {
               <Typography variant="caption" sx={{ opacity: 0.72, fontWeight: 800 }}>
                 Tipo de sorteio
               </Typography>
-              <Stack direction="row" spacing={1}>
-                <Button
-                  size="small"
-                  variant={!isAdditionalMode ? "contained" : "outlined"}
-                  onClick={() => setDrawMode("principal")}
-                  sx={{ borderRadius: 999, fontWeight: 800 }}
-                >
-                  Principal
-                </Button>
-                <Button
-                  size="small"
-                  variant={isAdditionalMode ? "contained" : "outlined"}
-                  onClick={() => setDrawMode("adicional")}
-                  sx={{ borderRadius: 999, fontWeight: 800 }}
-                >
-                  Adicional
-                </Button>
-              </Stack>
+              <Tabs
+                value={drawMode}
+                onChange={(_, value) => setDrawMode(value)}
+                textColor="primary"
+                indicatorColor="primary"
+                sx={{ minHeight: 36 }}
+              >
+                <Tab value="principal" label="Principal" sx={{ minHeight: 36, fontWeight: 900 }} />
+                <Tab value="adicional" label="Adicional" sx={{ minHeight: 36, fontWeight: 900 }} />
+              </Tabs>
             </Stack>
           </Stack>
 
+            {isAdditionalMode && additionalDraws.length > 0 && (
+              <TextField
+                select
+                size="small"
+                label="Sorteio adicional"
+                value={selectedAdditionalDrawId}
+                onChange={(event) => setSelectedAdditionalDrawId(event.target.value)}
+                sx={{ minWidth: { xs: "100%", sm: 280 } }}
+              >
+                {additionalDraws.map((item) => (
+                  <MenuItem key={item.draw.id} value={String(item.draw.id)}>
+                    #{item.draw.id} - {item.draw.product_name || item.draw.banner_title || "Sorteio adicional"}
+                    {String(item.draw.status || "").toLowerCase() === "open"
+                      ? " — Em andamento"
+                      : String(item.draw.status || "").toLowerCase() === "closed"
+                      ? " — Encerrado"
+                      : ` — ${item.draw.status || "-"}`}
+                  </MenuItem>
+                ))}
+              </TextField>
+            )}
+          {isAdditionalMode && selectedAdditionalDrawId && (
+            <Typography variant="body2" sx={{ opacity: 0.8, fontWeight: 700 }}>
+              Números e compradores do sorteio adicional #{selectedAdditionalDrawId}.
+            </Typography>
+          )}
           {emptyMessage && <Alert severity="info">{emptyMessage}</Alert>}
           {loadError && <Alert severity="error">{loadError}</Alert>}
 
@@ -1079,7 +1118,7 @@ export default function AdminOpenDrawBuyers() {
                     </TableHead>
                     <TableBody>
                       {filteredBuyers.length === 0 && (
-                        <TableRow><TableCell colSpan={5} sx={{ color: "#bbb" }}>Nenhum comprador.</TableCell></TableRow>
+                        <TableRow><TableCell colSpan={5} sx={{ color: "#bbb" }}>Não há compradores para este sorteio.</TableCell></TableRow>
                       )}
                       {filteredBuyers.map((b, i) => (
                         <TableRow key={b.user_id || i}>

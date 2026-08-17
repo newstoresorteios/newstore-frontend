@@ -4,7 +4,6 @@ import { useAuth } from "../authContext";
 import {
   getNotificationPermission,
   getPushAccess,
-  hasActiveBrowserSubscription,
   isPushSupported,
   subscribeToPush,
 } from "../services/pushNotifications";
@@ -12,6 +11,9 @@ import {
 const DISMISSED_KEY = "push_permission_prompt_dismissed_until";
 const DEBUG_KEY = "push_prompt_debug";
 const DISMISS_DAYS = 7;
+const BLOCKED_MESSAGE =
+  "As notificações estão bloqueadas neste navegador. Ative-as nas configurações do site.";
+const GENERIC_ERROR_MESSAGE = "Não foi possível verificar as notificações agora.";
 
 function isDebugEnabled() {
   try {
@@ -56,8 +58,9 @@ function getDeviceLabel() {
 
 export default function PushPermissionPrompt() {
   const { loading } = useAuth();
-  const syncAttemptedRef = React.useRef(false);
-  const [visible, setVisible] = React.useState(false);
+  const [permissionChecked, setPermissionChecked] = React.useState(false);
+  const [shouldShowPrompt, setShouldShowPrompt] = React.useState(false);
+  const [permission, setPermission] = React.useState("unsupported");
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState("");
 
@@ -66,7 +69,8 @@ export default function PushPermissionPrompt() {
 
     function finish(nextVisible, reason, extra = {}) {
       if (!mounted) return;
-      setVisible(nextVisible);
+      setPermissionChecked(true);
+      setShouldShowPrompt(nextVisible);
       debugPrompt("check", {
         finalVisible: nextVisible,
         reason,
@@ -75,10 +79,12 @@ export default function PushPermissionPrompt() {
     }
 
     async function check() {
-      setVisible(false);
+      setPermissionChecked(false);
+      setShouldShowPrompt(false);
       setError("");
 
-      const permission = getNotificationPermission();
+      const currentPermission = getNotificationPermission();
+      setPermission(currentPermission);
       const support = {
         hasNotification: typeof window !== "undefined" && "Notification" in window,
         hasServiceWorker: typeof navigator !== "undefined" && "serviceWorker" in navigator,
@@ -86,20 +92,53 @@ export default function PushPermissionPrompt() {
       };
       const dismissedUntil = getDismissedUntil();
 
+      if (!support.hasNotification) {
+        finish(false, "notification_not_supported", {
+          permission: currentPermission,
+          dismissedUntil,
+          ...support,
+        });
+        return;
+      }
+      if (currentPermission === "granted") {
+        finish(false, "permission_granted", {
+          permission: currentPermission,
+          dismissedUntil,
+          ...support,
+        });
+        return;
+      }
       if (loading) {
-        finish(false, "auth_loading", { permission, dismissedUntil, ...support });
+        finish(false, "auth_loading", {
+          permission: currentPermission,
+          dismissedUntil,
+          ...support,
+        });
         return;
       }
       if (!isPushSupported()) {
-        finish(false, "push_not_supported", { permission, dismissedUntil, ...support });
+        finish(false, "push_not_supported", {
+          permission: currentPermission,
+          dismissedUntil,
+          ...support,
+        });
         return;
       }
-      if (permission === "denied") {
-        finish(false, "permission_denied", { permission, dismissedUntil, ...support });
+      if (currentPermission === "denied") {
+        setError(BLOCKED_MESSAGE);
+        finish(true, "permission_denied", {
+          permission: currentPermission,
+          dismissedUntil,
+          ...support,
+        });
         return;
       }
       if (dismissedUntil > Date.now()) {
-        finish(false, "dismissed", { permission, dismissedUntil, ...support });
+        finish(false, "dismissed", {
+          permission: currentPermission,
+          dismissedUntil,
+          ...support,
+        });
         return;
       }
 
@@ -108,7 +147,7 @@ export default function PushPermissionPrompt() {
         access = await getPushAccess();
       } catch (err) {
         finish(false, "access_error", {
-          permission,
+          permission: currentPermission,
           dismissedUntil,
           error: err?.code || err?.message || String(err),
           ...support,
@@ -120,46 +159,18 @@ export default function PushPermissionPrompt() {
       if (!access?.can_subscribe) {
         finish(false, access?.reason || access?.error || "access_denied", {
           access,
-          permission,
+          permission: currentPermission,
           dismissedUntil,
           ...support,
         });
         return;
       }
 
-      const hasExistingSubscription = await hasActiveBrowserSubscription();
-      if (permission === "granted" && hasExistingSubscription && !syncAttemptedRef.current) {
-        syncAttemptedRef.current = true;
-        try {
-          const result = await subscribeToPush({ deviceLabel: getDeviceLabel() });
-          finish(false, "existing_subscription_resynced", {
-            access,
-            permission,
-            dismissedUntil,
-            hasExistingSubscription,
-            subscribeOk: result?.ok === true,
-            ...support,
-          });
-          return;
-        } catch (err) {
-          finish(true, "existing_subscription_resync_failed", {
-            access,
-            permission,
-            dismissedUntil,
-            hasExistingSubscription,
-            error: err?.code || err?.message || String(err),
-            ...support,
-          });
-          return;
-        }
-      }
-
-      if (permission === "default" || permission === "granted") {
-        finish(true, permission === "granted" ? "granted_without_synced_subscription" : "permission_default", {
+      if (currentPermission === "default") {
+        finish(true, "permission_default", {
           access,
-          permission,
+          permission: currentPermission,
           dismissedUntil,
-          hasExistingSubscription,
           ...support,
         });
         return;
@@ -167,16 +178,14 @@ export default function PushPermissionPrompt() {
 
       finish(false, "permission_unavailable", {
         access,
-        permission,
+        permission: currentPermission,
         dismissedUntil,
-        hasExistingSubscription,
         ...support,
       });
     }
 
     check();
     function handlePromptRecheck() {
-      syncAttemptedRef.current = false;
       check();
     }
     if (typeof window !== "undefined") {
@@ -190,20 +199,47 @@ export default function PushPermissionPrompt() {
     };
   }, [loading]);
 
-  if (!visible) return null;
+  if (!permissionChecked || !shouldShowPrompt) return null;
 
   async function allowNotifications() {
+    const currentPermission = getNotificationPermission();
+    setPermission(currentPermission);
+
+    if (currentPermission === "granted") {
+      setError("");
+      setShouldShowPrompt(false);
+      return;
+    }
+    if (currentPermission === "denied") {
+      setError(BLOCKED_MESSAGE);
+      return;
+    }
+
     setBusy(true);
     setError("");
     try {
-      await subscribeToPush({ deviceLabel: getDeviceLabel() });
-      setVisible(false);
-    } catch (err) {
-      setError(
-        err?.code ||
-          err?.message ||
-          "N\u00e3o foi poss\u00edvel ativar notifica\u00e7\u00f5es neste navegador."
-      );
+      const nextPermission = await Notification.requestPermission();
+      setPermission(nextPermission);
+
+      if (nextPermission === "granted") {
+        setShouldShowPrompt(false);
+        setBusy(false);
+        subscribeToPush({ deviceLabel: getDeviceLabel() }).catch((err) => {
+          debugPrompt("background_sync_failed", {
+            error: err?.code || err?.message || String(err),
+          });
+        });
+        return;
+      }
+
+      if (nextPermission === "denied") {
+        setError(BLOCKED_MESSAGE);
+        return;
+      }
+
+      setError(GENERIC_ERROR_MESSAGE);
+    } catch {
+      setError(GENERIC_ERROR_MESSAGE);
     } finally {
       setBusy(false);
     }
@@ -211,7 +247,7 @@ export default function PushPermissionPrompt() {
 
   function dismiss() {
     dismissForAWeek();
-    setVisible(false);
+    setShouldShowPrompt(false);
     debugPrompt("dismissed", { days: DISMISS_DAYS });
   }
 
@@ -237,7 +273,9 @@ export default function PushPermissionPrompt() {
           {error && <Alert severity="warning">{String(error)}</Alert>}
           <Stack direction="row" spacing={1} justifyContent="flex-end">
             <Button size="small" variant="text" onClick={dismiss} disabled={busy}>{"Agora n\u00e3o"}</Button>
-            <Button size="small" variant="contained" onClick={allowNotifications} disabled={busy}>{"Permitir notifica\u00e7\u00f5es"}</Button>
+            {permission !== "denied" && (
+              <Button size="small" variant="contained" onClick={allowNotifications} disabled={busy}>{"Permitir notifica\u00e7\u00f5es"}</Button>
+            )}
           </Stack>
         </Stack>
       </Paper>

@@ -7,6 +7,23 @@ import logoNewStore from "./Logo-branca-sem-fundo-768x132.png";
 import { SelectionContext } from "./selectionContext";
 import PixModal from "./PixModal";
 import { createPixPayment, checkPixStatus } from "./services/pix";
+import FloatingParticipationSummary from "./components/FloatingParticipationSummary";
+import BatchCheckoutReviewDialog from "./components/BatchCheckoutReviewDialog";
+import {
+  createCheckoutBatchPix,
+  getCheckoutBatchStatus,
+  reserveCheckoutBatch,
+} from "./services/checkoutBatch";
+import {
+  buildCheckoutSelection,
+  checkoutSelectionFingerprint,
+  createCheckoutIdempotencyKey,
+  getSelectedDrawGroups,
+  isCheckoutBatchSettled,
+  normalizeCheckoutBatchPayment,
+  toCheckoutPayload,
+  validateCheckoutBatchPaymentResponse,
+} from "./utils/checkoutSelection";
 import { useAuth } from "./authContext";
 
 import {
@@ -42,6 +59,7 @@ import {
   ThemeProvider,
   Toolbar,
   Typography,
+  LinearProgress,
   createTheme,
 } from "@mui/material";
 import AccountCircleRoundedIcon from "@mui/icons-material/AccountCircleRounded";
@@ -71,6 +89,57 @@ const theme = createTheme({
 // Helpers
 const pad2 = (n) => n.toString().padStart(2, "0");
 
+const normalizeStatusToken = (status) =>
+  String(status || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+
+const isPrincipalUnavailableStatus = (status) =>
+  ["taken", "sold", "unavailable", "indisponivel", "blocked", "closed"].includes(
+    normalizeStatusToken(status)
+  );
+
+const getInitialsFromName = (name) =>
+  String(name || "")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0])
+    .join("")
+    .toUpperCase();
+
+const getNumberOwnerInitials = (item) => {
+  const rawInitials =
+    item?.initials ||
+    item?.buyer_initials ||
+    item?.buyerInitials ||
+    item?.owner_initials ||
+    item?.ownerInitials ||
+    item?.oi;
+
+  if (rawInitials) {
+    return String(rawInitials).slice(0, 3).toUpperCase();
+  }
+
+  const rawName =
+    item?.buyer_name ||
+    item?.user_name ||
+    item?.customer_name ||
+    item?.comprador ||
+    item?.reserved_by ||
+    item?.owner_name ||
+    item?.user?.name ||
+    item?.customer?.name ||
+    (typeof item?.owner === "string" ? item.owner : item?.owner?.name) ||
+    item?.name;
+
+  return getInitialsFromName(rawName).slice(0, 3);
+};
+
+const getPrincipalSoldInitials = getNumberOwnerInitials;
+
 // Mocks
 const MOCK_RESERVADOS = [];
 const MOCK_INDISPONIVEIS = [];
@@ -92,6 +161,7 @@ function sanitizeToken(t) {
   )
     s = s.slice(1, -1);
   if (/^Bearer\s+/i.test(s)) s = s.replace(/^Bearer\s+/i, "").trim();
+  if (!s || /^(null|undefined)$/i.test(s)) return "";
   return s.replace(/\s+/g, "");
 }
 function getAuthToken() {
@@ -134,28 +204,22 @@ async function reserveNumbers(numbers) {
   return r.json(); // { reservationId, drawId, expiresAt, numbers }
 }
 
-// Checagem do limite no backend (evita preflight; re-tenta com Authorization se 401)
+// Checagem do limite no backend: só chama quando há token.
 async function checkUserPurchaseLimit({ addCount = 0, drawId } = {}) {
+  const token = getAuthToken();
+  if (!token) {
+    return { blocked: false, current: null, max: null, unauthenticated: true };
+  }
+
   const qs = new URLSearchParams();
   qs.set("add", String(addCount));
   if (drawId != null) qs.set("draw_id", String(drawId));
 
-  // 1ª tentativa: sem headers (sem preflight)
   let res = await fetch(`${API_BASE}/api/purchase-limit/check?${qs}`, {
     credentials: "include",
     cache: "no-store",
+    headers: { Authorization: `Bearer ${token}` },
   });
-
-  // 2ª tentativa (se precisar header Authorization)
-  if (res.status === 401) {
-    const token = getAuthToken();
-    const headers = token ? { Authorization: `Bearer ${token}` } : undefined;
-    res = await fetch(`${API_BASE}/api/purchase-limit/check?${qs}`, {
-      credentials: "include",
-      cache: "no-store",
-      headers,
-    });
-  }
 
   if (res.status === 401) throw new Error("unauthorized");
   if (!res.ok) throw new Error(`limit_check_${res.status}`);
@@ -228,6 +292,7 @@ const getSecondaryNumbersFromPayload = (payload) => {
         ...item,
         n,
         status: normalizeSecondaryStatus(item?.status),
+        owner_initials: getNumberOwnerInitials(item) || null,
       };
     })
     .filter(Boolean);
@@ -245,6 +310,30 @@ const formatSecondaryMoney = (cents) => {
 const getSecondaryReservationId = (reservation) =>
   reservation?.reservation_id ?? reservation?.reservationId ?? reservation?.id;
 
+const ADDITIONAL_LOGIN_REQUIRED_MESSAGE =
+  "Faça login ou crie sua conta para reservar números no sorteio adicional.";
+
+function getAdditionalReserveErrorMessage(error) {
+  const code = String(error || "");
+  if (code === "numbers_reserved") return "Esse numero ja esta reservado temporariamente.";
+  if (code === "numbers_unavailable") return "Esse numero nao esta mais disponivel.";
+  if (code === "draw_not_open") return "Esse sorteio adicional nao esta mais disponivel.";
+  if (code && !/^[a-z0-9_:-]+$/i.test(code)) return code;
+  const messages = {
+    unauthorized: ADDITIONAL_LOGIN_REQUIRED_MESSAGE,
+    numbers_unavailable: "Alguns números ficaram indisponíveis. Atualize a seleção.",
+    reservation_expired: "Reserva expirada. Selecione os números novamente.",
+    purchase_limit_exceeded: "Limite de compra excedido para este sorteio.",
+    additional_config_not_found: "Configuração do sorteio adicional indisponível.",
+    draw_not_open: "Este sorteio adicional não está aberto.",
+    draw_not_found: "Sorteio adicional não encontrado.",
+  };
+  return messages[code] || "Falha ao reservar números do adicional.";
+}
+function getRequestAuthToken(contextToken) {
+  return getAuthToken() || sanitizeToken(contextToken);
+}
+
 const getSecondaryPixErrorMessage = (error) => {
   const code = String(error || "");
   const messages = {
@@ -256,6 +345,12 @@ const getSecondaryPixErrorMessage = (error) => {
   };
   return messages[code] || "Falha ao gerar PIX do secundário.";
 };
+
+const ADDITIONAL_PIX_PENDING_MESSAGE = "Aguardando confirmação do pagamento...";
+const ADDITIONAL_PIX_SUCCESS_MESSAGE = "Pagamento confirmado com sucesso!";
+const ADDITIONAL_PIX_FAILED_MESSAGE = "Não foi possível confirmar o pagamento. Tente novamente ou entre em contato com o suporte.";
+const ADDITIONAL_PIX_PAID_STATUSES = new Set(["approved", "paid", "pago"]);
+const ADDITIONAL_PIX_FINAL_ERROR_STATUSES = new Set(["failed", "rejected", "cancelled", "canceled", "expired"]);
 
 const normalizeAdditionalPixPayment = (payload) => {
   const source =
@@ -322,6 +417,7 @@ export default function NewStorePage({
 
   // Draw atual (se o backend expuser)
   const [currentDrawId, setCurrentDrawId] = React.useState(null);
+  const [principalOpen, setPrincipalOpen] = React.useState(null);
 
   const [secondaryDraw, setSecondaryDraw] = React.useState(null);
   const [secondaryNumbers, setSecondaryNumbers] = React.useState([]);
@@ -349,9 +445,75 @@ export default function NewStorePage({
   const [additionalNumbersLoadingByDrawId, setAdditionalNumbersLoadingByDrawId] = React.useState({});
   const [additionalReserveLoadingByDrawId, setAdditionalReserveLoadingByDrawId] = React.useState({});
   const [additionalPixLoadingByDrawId, setAdditionalPixLoadingByDrawId] = React.useState({});
+  const [additionalPixStatusByDrawId, setAdditionalPixStatusByDrawId] = React.useState({});
+  const [additionalPixMessageByDrawId, setAdditionalPixMessageByDrawId] = React.useState({});
   const [additionalErrorByDrawId, setAdditionalErrorByDrawId] = React.useState({});
   const [additionalNoticeByDrawId, setAdditionalNoticeByDrawId] = React.useState({});
   const [additionalPixOpenDrawId, setAdditionalPixOpenDrawId] = React.useState(null);
+
+  // Checkout agrupado: as seleções acima continuam sendo a única fonte de verdade.
+  const [batchReviewOpen, setBatchReviewOpen] = React.useState(false);
+  const [batchSummaryExpanded, setBatchSummaryExpanded] = React.useState(true);
+  const [batchCheckoutBusy, setBatchCheckoutBusy] = React.useState(false);
+  const [batchCheckout, setBatchCheckout] = React.useState(null);
+  const [batchSelectionSnapshot, setBatchSelectionSnapshot] = React.useState(null);
+  const [batchPixOpen, setBatchPixOpen] = React.useState(false);
+  const [batchMessage, setBatchMessage] = React.useState("");
+  const [batchError, setBatchError] = React.useState("");
+  const batchAttemptRef = React.useRef({ fingerprint: "", idempotencyKey: "" });
+  const batchSubmitInFlightRef = React.useRef(false);
+  const batchPollInFlightRef = React.useRef(false);
+  const batchSuccessHandledRef = React.useRef(false);
+  const batchMountedRef = React.useRef(true);
+
+  React.useEffect(() => {
+    batchMountedRef.current = true;
+    return () => {
+      batchMountedRef.current = false;
+    };
+  }, []);
+
+  const checkoutSelection = React.useMemo(
+    () => buildCheckoutSelection({
+      currentDrawId,
+      principalNumbers: selecionados,
+      principalUnitPriceCents: Math.round(unitPrice * 100),
+      additionalDraws,
+      additionalNumbersByDrawId: selectedAdditionalNumbersByDrawId,
+    }),
+    [currentDrawId, selecionados, unitPrice, additionalDraws, selectedAdditionalNumbersByDrawId]
+  );
+  const checkoutFingerprint = React.useMemo(
+    () => checkoutSelectionFingerprint(checkoutSelection),
+    [checkoutSelection]
+  );
+  const selectedDrawGroups = React.useMemo(
+    () => getSelectedDrawGroups(checkoutSelection),
+    [checkoutSelection]
+  );
+  const shouldShowMultiDrawCheckout = selectedDrawGroups.length >= 2;
+  const isCreatingBatch = batchCheckoutBusy;
+  const normalizedBatchPayment = React.useMemo(
+    () =>
+      batchCheckout
+        ? normalizeCheckoutBatchPayment(batchCheckout)
+        : null,
+    [batchCheckout]
+  );
+
+  React.useEffect(() => {
+    if (batchCheckout?.batch_id) return;
+    if (batchAttemptRef.current.fingerprint !== checkoutFingerprint) {
+      batchAttemptRef.current = { fingerprint: checkoutFingerprint, idempotencyKey: "" };
+    }
+  }, [checkoutFingerprint, batchCheckout?.batch_id]);
+
+  React.useEffect(() => {
+    if (!shouldShowMultiDrawCheckout && !batchCheckout?.batch_id) {
+      setBatchReviewOpen(false);
+      setBatchSummaryExpanded(false);
+    }
+  }, [shouldShowMultiDrawCheckout, batchCheckout?.batch_id]);
 
   // Limite acumulado do usuário
   const [limitUsage, setLimitUsage] = React.useState({
@@ -451,24 +613,34 @@ export default function NewStorePage({
       });
       if (!res.ok) return;
       const j = await res.json();
+      const nextDrawId = j?.drawId ?? j?.draw_id ?? null;
+      const hasOpenPrincipal = nextDrawId != null && !j?.error;
+      setPrincipalOpen(hasOpenPrincipal);
+      setCurrentDrawId(hasOpenPrincipal ? nextDrawId : null);
+      if (!hasOpenPrincipal) limparSelecao();
+
+      const numbersFromApi = Array.isArray(j?.numbers) ? j.numbers : [];
+      if (!numbersFromApi.length) {
+        if (hasOpenPrincipal) {
+          setSrvReservados([]);
+          setSrvIndisponiveis([]);
+          setSoldInitials({});
+        }
+        return;
+      }
 
       const reserv = [];
       const indis = [];
       const initials = {};
 
-      for (const it of j?.numbers || []) {
+      for (const it of numbersFromApi) {
         const st = String(it.status || "").toLowerCase();
         const num = Number(it.n);
+        const soldInitial = getPrincipalSoldInitials(it);
+        if (soldInitial) initials[num] = soldInitial;
         if (st === "reserved") reserv.push(num);
-        if (st === "taken" || st === "sold") {
+        if (isPrincipalUnavailableStatus(st)) {
           indis.push(num);
-          const rawInit =
-            it.initials ||
-            it.owner_initials ||
-            it.ownerInitials ||
-            it.owner ||
-            it.oi;
-          if (rawInit) initials[num] = String(rawInit).slice(0, 3).toUpperCase();
         }
       }
 
@@ -478,7 +650,7 @@ export default function NewStorePage({
     } catch {
       /* silencioso */
     }
-  }, []);
+  }, [limparSelecao]);
 
   React.useEffect(() => {
     let alive = true;
@@ -536,7 +708,10 @@ export default function NewStorePage({
 
   // modal (confirmação)
   const [open, setOpen] = React.useState(false);
-  const handleAbrirConfirmacao = () => setOpen(true);
+  const handleAbrirConfirmacao = () => {
+    if (principalOpen !== true) return;
+    setOpen(true);
+  };
   const handleFechar = () => setOpen(false);
 
   // PIX modal
@@ -572,12 +747,18 @@ export default function NewStorePage({
   const handleIrPagamento = async () => {
     setOpen(false);
 
+    if (principalOpen !== true) {
+      alert("Rodada encerrada. Em breve abriremos o próximo sorteio.");
+      return;
+    }
+
     if (!isAuthenticated) {
       navigate("/login", { replace: false, state: { from: "/", wantPay: true } });
       return;
     }
 
-    const addCount = selecionados.length || 1;
+    const principalNumbersToPay = selecionados.slice().sort((a, b) => a - b);
+    const addCount = principalNumbersToPay.length || 1;
 
     try {
       const { blocked, current, max } = await checkUserPurchaseLimit({
@@ -601,18 +782,20 @@ export default function NewStorePage({
       console.warn("[limit-check] falhou, seguindo fluxo]:", e);
     }
 
-    const amount = selecionados.length * unitPrice;
+    const amount = principalNumbersToPay.length * unitPrice;
     setPixAmount(amount);
     setPixOpen(true);
     setPixLoading(true);
     setPixApproved(false);
 
     try {
-      const { reservationId } = await reserveNumbers(selecionados);
+      const { reservationId } = await reserveNumbers(principalNumbersToPay);
+      const reservedSet = new Set(principalNumbersToPay.map(Number));
+      setSelecionados((previous) => previous.filter((number) => !reservedSet.has(Number(number))));
       const data = await createPixPayment({
         orderId: String(Date.now()),
         amount,
-        numbers: selecionados,
+        numbers: principalNumbersToPay,
         reservationId,
       });
       setPixData(data);
@@ -647,6 +830,8 @@ export default function NewStorePage({
   const isIndisponivel = (n) => indisponiveisAll.includes(n);
   const isSelecionado = (n) => selecionados.includes(n);
   const handleClickNumero = (n) => {
+    if (batchCheckoutBusy) return;
+    if (principalOpen !== true) return;
     if (isIndisponivel(n)) return;
     setSelecionados((prev) => {
       const already = prev.includes(n);
@@ -675,6 +860,16 @@ export default function NewStorePage({
   };
 
   const getCellSx = (n) => {
+    if (principalOpen !== true) {
+      return {
+        border: "2px solid",
+        borderColor: "error.main",
+        bgcolor: "rgba(211,47,47,0.15)",
+        color: "grey.300",
+        cursor: "not-allowed",
+        opacity: 0.95,
+      };
+    }
     if (isIndisponivel(n)) {
       return {
         border: "2px solid",
@@ -701,7 +896,10 @@ export default function NewStorePage({
     };
   };
 
+  const principalClosedForPurchase = principalOpen === false;
+
   const continuarDisabled =
+    principalOpen !== true ||
     !selecionados.length ||
     (Number.isFinite(remainingFromServer) &&
       selecionados.length > Math.max(0, remainingFromServer));
@@ -709,7 +907,7 @@ export default function NewStorePage({
   const getSecondaryHeaders = React.useCallback(
     (withJson = false) => {
       const headers = withJson ? { "Content-Type": "application/json" } : {};
-      const authToken = sanitizeToken(token) || getAuthToken();
+      const authToken = getRequestAuthToken(token);
       if (authToken) headers.Authorization = `Bearer ${authToken}`;
       return headers;
     },
@@ -1085,7 +1283,7 @@ export default function NewStorePage({
     (async () => {
       setAdditionalLoading(true);
       try {
-        const res = await fetch(`${API_BASE}/api/additional-draws/open`, {
+        const res = await fetch(`${API_BASE}/api/additional-draws/landing`, {
           credentials: "include",
           cache: "no-store",
         });
@@ -1142,20 +1340,113 @@ export default function NewStorePage({
     };
   }, [fetchAdditionalNumbers]);
 
-  const getAdditionalNumberStatus = (drawId, n) => {
+  React.useEffect(() => {
+    const closedDrawIds = additionalDraws
+      .filter((draw) => String(draw?.status || "").toLowerCase() === "closed")
+      .map((draw) => draw.id);
+    if (!closedDrawIds.length) return;
+    setSelectedAdditionalNumbersByDrawId((prev) => {
+      let changed = false;
+      const next = { ...prev };
+      for (const drawId of closedDrawIds) {
+        if ((prev[drawId] || []).length) {
+          next[drawId] = [];
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [additionalDraws]);
+
+  const getAdditionalNumberItem = (drawId, n) => {
     const numbers = additionalNumbersByDrawId[drawId] || [];
-    return numbers.find((item) => item.n === n)?.status || "blocked";
+    return numbers.find((item) => Number(item.n) === Number(n)) || null;
+  };
+
+  const getAdditionalNumberInitials = (drawId, n) => {
+    const item = getAdditionalNumberItem(drawId, n);
+    return getNumberOwnerInitials(item);
+  };
+
+  const getAdditionalNumberStatus = (drawId, n) => {
+    const item = getAdditionalNumberItem(drawId, n);
+    return item?.status || "blocked";
+  };
+
+  const getAdditionalCellSx = (drawId, n, isClosed = false) => {
+    if (isClosed) {
+      // Sorteio encerrado: verde ainda passaria a impressão de que dá para
+      // comprar, então todo número fica visualmente indisponível/vermelho,
+      // independentemente do status real gravado no backend.
+      return {
+        border: "2px solid",
+        borderColor: "error.main",
+        bgcolor: "rgba(211,47,47,0.15)",
+        color: "rgba(255,255,255,0.65)",
+        cursor: "not-allowed",
+      };
+    }
+
+    const status = getAdditionalNumberStatus(drawId, n);
+    const selected = isAdditionalSelected(drawId, n);
+
+    if (selected) {
+      return {
+        border: "2px solid",
+        borderColor: "secondary.main",
+        bgcolor: "rgba(255,193,7,0.16)",
+        color: "secondary.main",
+        cursor: "pointer",
+      };
+    }
+    if (status === "available") {
+      return {
+        border: "2px solid rgba(255,255,255,0.08)",
+        bgcolor: "primary.main",
+        color: "#0E0E0E",
+        cursor: "pointer",
+        "&:hover": { filter: "brightness(0.95)" },
+      };
+    }
+    if (status === "reserved") {
+      return {
+        border: "2px solid",
+        borderColor: "secondary.main",
+        bgcolor: "rgba(255,193,7,0.12)",
+        color: "rgba(255,255,255,0.72)",
+        cursor: "not-allowed",
+      };
+    }
+    if (status === "sold") {
+      return {
+        border: "2px solid",
+        borderColor: "error.main",
+        bgcolor: "rgba(211,47,47,0.15)",
+        color: "rgba(255,255,255,0.55)",
+        cursor: "not-allowed",
+      };
+    }
+    return {
+      border: "2px solid",
+      borderColor: "error.main",
+      bgcolor: "rgba(211,47,47,0.15)",
+      color: "rgba(255,255,255,0.55)",
+      cursor: "not-allowed",
+    };
   };
 
   const isAdditionalSelected = (drawId, n) =>
     (selectedAdditionalNumbersByDrawId[drawId] || []).includes(n);
 
   const handleAdditionalNumberClick = (drawId, n) => {
+    const draw = additionalDraws.find((item) => String(item.id) === String(drawId));
+    if (String(draw?.status || "").toLowerCase() === "closed") return;
+    if (batchCheckoutBusy) return;
+    if (additionalReserveLoadingByDrawId[drawId] || additionalPixLoadingByDrawId[drawId]) return;
     const status = getAdditionalNumberStatus(drawId, n);
     if (status !== "available" && !isAdditionalSelected(drawId, n)) return;
     const current = selectedAdditionalNumbersByDrawId[drawId] || [];
     const alreadySelected = current.includes(n);
-    const draw = additionalDraws.find((item) => String(item.id) === String(drawId));
     const maxNumbers = Number(draw?.max_numbers_per_selection ?? draw?.max_tickets ?? 0);
     if (!alreadySelected && Number.isFinite(maxNumbers) && maxNumbers > 0 && current.length >= maxNumbers) {
       setAdditionalErrorByDrawId((prev) => ({
@@ -1182,6 +1473,14 @@ export default function NewStorePage({
     const drawId = draw?.id;
     const selected = selectedAdditionalNumbersByDrawId[drawId] || [];
     if (!drawId || !selected.length) return null;
+    const authToken = getRequestAuthToken(token);
+    if (!authToken) {
+      setAdditionalErrorByDrawId((prev) => ({
+        ...prev,
+        [drawId]: ADDITIONAL_LOGIN_REQUIRED_MESSAGE,
+      }));
+      return null;
+    }
     setAdditionalReserveLoadingByDrawId((prev) => ({ ...prev, [drawId]: true }));
     setAdditionalErrorByDrawId((prev) => ({ ...prev, [drawId]: "" }));
     try {
@@ -1208,7 +1507,7 @@ export default function NewStorePage({
       }
       const payload = await res.json().catch(() => ({}));
       if (!res.ok) {
-        throw new Error(payload?.error || payload?.message || "Falha ao reservar números do adicional.");
+        throw new Error(getAdditionalReserveErrorMessage(payload?.message || payload?.error));
       }
       const reservation = { ...payload, numbers: payload?.numbers || numbersToReserve };
       setAdditionalReservationsByDrawId((prev) => ({ ...prev, [drawId]: reservation }));
@@ -1222,7 +1521,7 @@ export default function NewStorePage({
     } catch (e) {
       setAdditionalErrorByDrawId((prev) => ({
         ...prev,
-        [drawId]: e.message || "Falha ao reservar números do adicional.",
+        [drawId]: getAdditionalReserveErrorMessage(e.message),
       }));
       return null;
     } finally {
@@ -1256,6 +1555,8 @@ export default function NewStorePage({
         throw new Error(getSecondaryPixErrorMessage(payload?.error || payload?.message));
       }
       const payment = normalizeAdditionalPixPayment(payload);
+      setAdditionalPixStatusByDrawId((prev) => ({ ...prev, [drawId]: payment.status || "pending" }));
+      setAdditionalPixMessageByDrawId((prev) => ({ ...prev, [drawId]: ADDITIONAL_PIX_PENDING_MESSAGE }));
       setAdditionalPaymentByDrawId((prev) => ({ ...prev, [drawId]: payment }));
       setAdditionalPixOpenDrawId(drawId);
       return payment;
@@ -1270,9 +1571,569 @@ export default function NewStorePage({
     }
   };
 
+  const checkAdditionalPixStatus = React.useCallback(
+    async (paymentId) => {
+      const res = await fetch(
+        `${API_BASE}/api/additional-payments/${encodeURIComponent(paymentId)}/status`,
+        {
+          method: "GET",
+          headers: getSecondaryHeaders(false),
+          credentials: "include",
+          cache: "no-store",
+        }
+      );
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(payload?.error || payload?.message || `additional_status_${res.status}`);
+      }
+      return payload;
+    },
+    [getSecondaryHeaders]
+  );
+
+  const handleAdditionalPixApproved = React.useCallback(
+    async (drawId) => {
+      if (drawId == null) return;
+      setAdditionalPixStatusByDrawId((prev) => ({ ...prev, [drawId]: "approved" }));
+      setAdditionalPixMessageByDrawId((prev) => ({ ...prev, [drawId]: ADDITIONAL_PIX_SUCCESS_MESSAGE }));
+      setAdditionalNoticeByDrawId((prev) => ({ ...prev, [drawId]: ADDITIONAL_PIX_SUCCESS_MESSAGE }));
+      setAdditionalPixLoadingByDrawId((prev) => ({ ...prev, [drawId]: false }));
+      setAdditionalPaymentByDrawId((prev) => ({
+        ...prev,
+        [drawId]: prev[drawId] ? { ...prev[drawId], status: "approved" } : prev[drawId],
+      }));
+      await reloadAdditionalNumbers(drawId);
+      setSelectedAdditionalNumbersByDrawId((prev) => ({ ...prev, [drawId]: [] }));
+      setAdditionalPixOpenDrawId((current) => (String(current) === String(drawId) ? null : current));
+    },
+    [reloadAdditionalNumbers]
+  );
+
+  React.useEffect(() => {
+    const drawId = additionalPixOpenDrawId;
+    if (drawId == null) return undefined;
+
+    const payment = additionalPaymentByDrawId[drawId];
+    const paymentId = payment?.paymentId ?? payment?.payment_id ?? payment?.id;
+    if (!paymentId) return undefined;
+
+    const currentStatus = String(additionalPixStatusByDrawId[drawId] || payment?.status || "").toLowerCase();
+    if (ADDITIONAL_PIX_PAID_STATUSES.has(currentStatus)) return undefined;
+    if (ADDITIONAL_PIX_FINAL_ERROR_STATUSES.has(currentStatus)) return undefined;
+
+    let stopped = false;
+    let intervalId;
+
+    const poll = async () => {
+      try {
+        const statusPayload = await checkAdditionalPixStatus(paymentId);
+        if (stopped) return;
+
+        const nextStatus = String(statusPayload?.status || "pending").toLowerCase();
+        setAdditionalPixStatusByDrawId((prev) => (prev[drawId] === nextStatus ? prev : { ...prev, [drawId]: nextStatus }));
+
+        if (statusPayload?.paid || ADDITIONAL_PIX_PAID_STATUSES.has(nextStatus)) {
+          if (intervalId) clearInterval(intervalId);
+          await handleAdditionalPixApproved(drawId);
+          return;
+        }
+
+        if (ADDITIONAL_PIX_FINAL_ERROR_STATUSES.has(nextStatus)) {
+          if (intervalId) clearInterval(intervalId);
+          setAdditionalPixMessageByDrawId((prev) => ({ ...prev, [drawId]: ADDITIONAL_PIX_FAILED_MESSAGE }));
+          setAdditionalPixLoadingByDrawId((prev) => ({ ...prev, [drawId]: false }));
+          return;
+        }
+
+        setAdditionalPixMessageByDrawId((prev) => ({ ...prev, [drawId]: ADDITIONAL_PIX_PENDING_MESSAGE }));
+      } catch {
+        if (!stopped) {
+          setAdditionalPixMessageByDrawId((prev) => ({ ...prev, [drawId]: ADDITIONAL_PIX_PENDING_MESSAGE }));
+        }
+      }
+    };
+
+    poll();
+    intervalId = setInterval(poll, 3500);
+
+    return () => {
+      stopped = true;
+      if (intervalId) clearInterval(intervalId);
+    };
+  }, [
+    additionalPaymentByDrawId,
+    additionalPixOpenDrawId,
+    additionalPixStatusByDrawId,
+    checkAdditionalPixStatus,
+    handleAdditionalPixApproved,
+  ]);
   const handleContinueAdditional = async (draw) => {
+    if (String(draw?.status || "").toLowerCase() === "closed") return;
     const reservation = await handleReserveAdditionalNumbers(draw);
     if (reservation) await handleAdditionalPix(draw, reservation);
+  };
+
+  const batchItemsWithTitles = React.useCallback((payload, sourceItems = checkoutSelection) => {
+    const titles = new Map(sourceItems.map((item) => [Number(item.drawId), item.title]));
+    return {
+      ...payload,
+      items: (payload?.items || []).map((item) => ({
+        ...item,
+        title:
+          titles.get(Number(item.draw_id)) ||
+          (item.draw_type === "principal"
+            ? "Sorteio principal"
+            : item.draw_type === "secundario" ? `Secundário ${item.draw_id}` : `Adicional ${item.draw_id}`),
+      })),
+    };
+  }, [checkoutSelection]);
+
+  const reloadBatchDraws = React.useCallback(async (snapshot) => {
+    const items = snapshot?.items || [];
+    const tasks = [];
+    if (items.some((item) => item.draw_type === "principal")) tasks.push(reloadSrvNumbers());
+    for (const item of items) {
+      if (item.draw_type !== "principal") tasks.push(reloadAdditionalNumbers(item.draw_id));
+    }
+    await Promise.allSettled(tasks);
+  }, [reloadSrvNumbers, reloadAdditionalNumbers]);
+
+  const removeBatchConflictSelections = React.useCallback((conflicts) => {
+    const principalNumbers = new Set();
+    const additionalByDraw = new Map();
+    for (const conflict of conflicts || []) {
+      const drawId = Number(conflict.draw_id);
+      const numbers = new Set((conflict.numbers || []).map(Number));
+      if (Number(currentDrawId) === drawId) for (const number of numbers) principalNumbers.add(number);
+      else additionalByDraw.set(drawId, numbers);
+    }
+    if (principalNumbers.size) {
+      setSelecionados((previous) => previous.filter((number) => !principalNumbers.has(Number(number))));
+    }
+    if (additionalByDraw.size) {
+      setSelectedAdditionalNumbersByDrawId((previous) => {
+        const next = { ...previous };
+        for (const [drawId, numbers] of additionalByDraw) {
+          next[drawId] = (next[drawId] || []).filter((number) => !numbers.has(Number(number)));
+        }
+        return next;
+      });
+    }
+  }, [currentDrawId, setSelecionados]);
+
+  const formatBatchConflicts = React.useCallback((conflicts) => {
+    const lines = (conflicts || []).map((conflict) => {
+      const drawId = Number(conflict.draw_id);
+      const item = checkoutSelection.find((selection) => Number(selection.drawId) === drawId);
+      const title = item?.drawType === "principal"
+        ? "Sorteio principal"
+        : item?.title || (item?.drawType === "secundario" ? `Sorteio secundário ${drawId}` : `Sorteio adicional ${drawId}`);
+      return `${title}: ${(conflict.numbers || []).map(pad2).join(", ")}`;
+    });
+    return `Alguns números ficaram indisponíveis:\n\n${lines.join("\n")}\n\nRevise suas escolhas para continuar.`;
+  }, [checkoutSelection]);
+
+  const clearReservedSelections = React.useCallback((reservedBatch) => {
+    const principal = reservedBatch.items?.find((item) => item.draw_type === "principal");
+    if (principal) {
+      const reserved = new Set(principal.numbers.map(Number));
+      setSelecionados((previous) => previous.filter((number) => !reserved.has(Number(number))));
+    }
+    setSelectedAdditionalNumbersByDrawId((previous) => {
+      const next = { ...previous };
+      for (const item of reservedBatch.items || []) {
+        if (item.draw_type === "principal") continue;
+        const reserved = new Set(item.numbers.map(Number));
+        next[item.draw_id] = (next[item.draw_id] || []).filter((number) => !reserved.has(Number(number)));
+      }
+      return next;
+    });
+  }, [setSelecionados]);
+
+  const applyBatchStatus = React.useCallback(async (latest, snapshot = batchSelectionSnapshot) => {
+    if (!batchMountedRef.current) return true;
+    const status = String(latest?.status || "").toLowerCase();
+    if (status === "approved" && !latest?.settled) {
+      setBatchMessage("Pagamento confirmado. Finalizando suas participações.");
+      return false;
+    }
+    if (status === "manual_review") {
+      setBatchPixOpen(false);
+      setBatchMessage("Pagamento recebido, mas a confirmação das participações precisa de revisão.");
+      return true;
+    }
+    if (status === "failed") {
+      setBatchPixOpen(false);
+      setBatchError("Não foi possível concluir o pagamento PIX. Consulte a reserva antes de tentar novamente.");
+      return true;
+    }
+    if (status === "expired") {
+      setBatchPixOpen(false);
+      setBatchCheckout(null);
+      setBatchSelectionSnapshot(null);
+      setBatchError("O tempo da reserva terminou. Os números foram liberados.");
+      await reloadBatchDraws(snapshot || latest);
+      if (!batchMountedRef.current) return true;
+      return true;
+    }
+    if (isCheckoutBatchSettled(latest)) {
+      if (batchSuccessHandledRef.current) return true;
+      batchSuccessHandledRef.current = true;
+      setBatchPixOpen(false);
+      await reloadBatchDraws(snapshot || latest);
+      if (!batchMountedRef.current) return true;
+      window.dispatchEvent(new CustomEvent("ns:numbers:reload"));
+      try {
+        const principal = (snapshot?.items || latest?.items || []).find((item) => item.draw_type === "principal");
+        if (principal) {
+          const info = await checkUserPurchaseLimit({ addCount: 0, drawId: principal.draw_id || currentDrawId });
+          setLimitUsage({ current: info.current, max: info.max });
+        }
+      } catch {}
+      setBatchCheckout(null);
+      setBatchSelectionSnapshot(null);
+      setBatchSummaryExpanded(false);
+      setBatchMessage("Pagamento aprovado. Suas participações foram confirmadas.");
+      batchAttemptRef.current = { fingerprint: "", idempotencyKey: "" };
+      return true;
+    }
+    if (status === "pending") setBatchMessage("Aguardando confirmação do PIX.");
+    if (status === "creating_payment") setBatchMessage("Estamos finalizando a criação do seu PIX.");
+    return false;
+  }, [batchSelectionSnapshot, currentDrawId, reloadBatchDraws]);
+
+  const openBatchPix = React.useCallback(async (batch = batchCheckout) => {
+    if (!batch?.batch_id || batchSubmitInFlightRef.current) return;
+    if (batch.payment_id && (batch.qr_code || batch.qr_code_base64)) {
+      const terminal = await applyBatchStatus(batch, batchSelectionSnapshot || batch);
+      if (!terminal) setBatchPixOpen(true);
+      return;
+    }
+    batchSubmitInFlightRef.current = true;
+    batchSuccessHandledRef.current = false;
+    setBatchCheckoutBusy(true);
+    setBatchError("");
+    try {
+      const rawPixResponse = validateCheckoutBatchPaymentResponse(
+        await createCheckoutBatchPix(batch.batch_id)
+      );
+      const pixResponse = batchItemsWithTitles(
+        rawPixResponse,
+        batchSelectionSnapshot?.items || []
+      );
+      if (!batchMountedRef.current) return;
+      const next = { ...batch, ...pixResponse, items: pixResponse.items?.length ? pixResponse.items : batch.items };
+      setBatchCheckout(next);
+      const terminal = await applyBatchStatus(next, batchSelectionSnapshot || batch);
+      if (!terminal && next.payment_id && (next.qr_code || next.qr_code_base64)) setBatchPixOpen(true);
+    } catch (error) {
+      if (error?.body?.error === "batch_expired") {
+        setBatchPixOpen(false);
+        setBatchCheckout(null);
+        setBatchSelectionSnapshot(null);
+        setBatchError("O tempo da reserva terminou. Os números foram liberados.");
+        await reloadBatchDraws(batchSelectionSnapshot || batch);
+      } else if (error?.status === 401) {
+        setBatchPixOpen(false);
+        navigate("/login", { state: { from: "/", wantBatchCheckout: true } });
+      } else {
+        setBatchError("Não foi possível abrir o PIX agora. Tente novamente usando esta mesma reserva.");
+      }
+    } finally {
+      if (batchMountedRef.current) setBatchCheckoutBusy(false);
+      batchSubmitInFlightRef.current = false;
+    }
+  }, [batchCheckout, batchItemsWithTitles, batchSelectionSnapshot, reloadBatchDraws, applyBatchStatus, navigate]);
+
+  const confirmBatchCheckout = React.useCallback(async () => {
+    if (batchSubmitInFlightRef.current) return;
+    if (!shouldShowMultiDrawCheckout || selectedDrawGroups.length < 2) {
+      setBatchReviewOpen(false);
+      setBatchError("O pagamento agrupado exige seleções em pelo menos dois sorteios diferentes.");
+      return;
+    }
+    if (!isAuthenticated) {
+      setBatchReviewOpen(false);
+      navigate("/login", { state: { from: "/", wantBatchCheckout: true } });
+      return;
+    }
+    batchSubmitInFlightRef.current = true;
+    batchSuccessHandledRef.current = false;
+    setBatchCheckoutBusy(true);
+    setBatchError("");
+    setBatchMessage("");
+    const logicalSelection = checkoutSelection;
+    const fingerprint = checkoutSelectionFingerprint(logicalSelection);
+    if (
+      batchAttemptRef.current.fingerprint !== fingerprint ||
+      !batchAttemptRef.current.idempotencyKey
+    ) {
+      batchAttemptRef.current = {
+        fingerprint,
+        idempotencyKey: createCheckoutIdempotencyKey(),
+      };
+    }
+    try {
+      const payload = toCheckoutPayload(logicalSelection);
+      const reserved = batchItemsWithTitles(await reserveCheckoutBatch({
+        items: payload.items,
+        idempotencyKey: batchAttemptRef.current.idempotencyKey,
+      }), logicalSelection);
+      if (!batchMountedRef.current) return;
+      setBatchCheckout(reserved);
+      setBatchSelectionSnapshot(reserved);
+      setBatchReviewOpen(false);
+      setBatchSummaryExpanded(true);
+      clearReservedSelections(reserved);
+      await reloadBatchDraws(reserved);
+
+      try {
+        const rawPixResponse = validateCheckoutBatchPaymentResponse(
+          await createCheckoutBatchPix(reserved.batch_id)
+        );
+        const pix = batchItemsWithTitles(rawPixResponse, logicalSelection);
+        if (!batchMountedRef.current) return;
+        const next = { ...reserved, ...pix, items: pix.items?.length ? pix.items : reserved.items };
+        setBatchCheckout(next);
+        const terminal = await applyBatchStatus(next, reserved);
+        if (!terminal && next.payment_id && (next.qr_code || next.qr_code_base64)) setBatchPixOpen(true);
+      } catch (error) {
+        if (error?.status === 401) {
+          navigate("/login", { state: { from: "/", wantBatchCheckout: true } });
+        } else {
+          setBatchError("A reserva foi criada, mas o PIX ainda não. Use ABRIR PIX para tentar novamente.");
+        }
+      }
+    } catch (error) {
+      const code = error?.body?.error || error?.message;
+      if (code === "batch_numbers_unavailable") {
+        const conflicts = error.body?.conflicts || [];
+        removeBatchConflictSelections(conflicts);
+        setBatchError(formatBatchConflicts(conflicts));
+        await reloadBatchDraws({
+          items: checkoutSelection
+            .filter((item) => conflicts.some((conflict) => Number(conflict.draw_id) === Number(item.drawId)))
+            .map((item) => ({ draw_id: item.drawId, draw_type: item.drawType })),
+        });
+      } else if (code === "multi_draw_checkout_requires_multiple_draws") {
+        setBatchReviewOpen(false);
+        setBatchError(error?.body?.message || "O pagamento agrupado exige seleções em pelo menos dois sorteios diferentes.");
+      } else if (error?.status === 401) {
+        navigate("/login", { state: { from: "/", wantBatchCheckout: true } });
+      } else {
+        setBatchError("Não foi possível validar todas as participações. Nenhum número foi reservado.");
+      }
+    } finally {
+      if (batchMountedRef.current) setBatchCheckoutBusy(false);
+      batchSubmitInFlightRef.current = false;
+    }
+  }, [
+    checkoutSelection, selectedDrawGroups, shouldShowMultiDrawCheckout, isAuthenticated, navigate, batchItemsWithTitles,
+    clearReservedSelections, reloadBatchDraws, removeBatchConflictSelections, formatBatchConflicts, applyBatchStatus,
+  ]);
+
+  const removeCheckoutNumber = React.useCallback((drawId, number) => {
+    if (batchCheckoutBusy) return;
+    if (Number(drawId) === Number(currentDrawId)) {
+      setSelecionados((previous) => previous.filter((item) => Number(item) !== Number(number)));
+      return;
+    }
+    setSelectedAdditionalNumbersByDrawId((previous) => ({
+      ...previous,
+      [drawId]: (previous[drawId] || []).filter((item) => Number(item) !== Number(number)),
+    }));
+  }, [batchCheckoutBusy, currentDrawId, setSelecionados]);
+
+  const clearCheckoutDraw = React.useCallback((drawId) => {
+    if (batchCheckoutBusy) return;
+    if (Number(drawId) === Number(currentDrawId)) setSelecionados([]);
+    else setSelectedAdditionalNumbersByDrawId((previous) => ({ ...previous, [drawId]: [] }));
+  }, [batchCheckoutBusy, currentDrawId, setSelecionados]);
+
+  React.useEffect(() => {
+    const batchId = batchCheckout?.batch_id;
+    const status = String(batchCheckout?.status || "").toLowerCase();
+    if (!batchId || !["reserved", "creating_payment", "pending", "approved"].includes(status) || batchCheckout?.settled) {
+      return undefined;
+    }
+    let stopped = false;
+    const poll = async () => {
+      if (batchPollInFlightRef.current || stopped) return;
+      batchPollInFlightRef.current = true;
+      try {
+        const latest = batchItemsWithTitles(await getCheckoutBatchStatus(batchId), batchSelectionSnapshot?.items || []);
+        if (stopped) return;
+        setBatchCheckout((current) => ({ ...current, ...latest, items: latest.items?.length ? latest.items : current?.items }));
+        await applyBatchStatus(latest, batchSelectionSnapshot || latest);
+      } catch (error) {
+        if (!stopped && error?.status === 401) {
+          setBatchPixOpen(false);
+          navigate("/login", { state: { from: "/", wantBatchCheckout: true } });
+        }
+      } finally {
+        batchPollInFlightRef.current = false;
+      }
+    };
+    poll();
+    const interval = setInterval(poll, 3500);
+    return () => {
+      stopped = true;
+      clearInterval(interval);
+    };
+  }, [
+    batchCheckout?.batch_id, batchCheckout?.status, batchCheckout?.settled,
+    batchItemsWithTitles, batchSelectionSnapshot, applyBatchStatus, navigate,
+  ]);
+
+  const renderNumberContent = ({ number, initials, sold, closedInitials = false, closedBoard = false }) => {
+    if (closedBoard) {
+      // Grade de sorteio encerrado: número sempre visível, iniciais do
+      // comprador (quando existirem) abaixo dele. Sem overlay de "sold" do
+      // desktop e sem esconder o número — layout fixo, independente do
+      // status real do número.
+      return (
+        <Box
+          sx={{
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            justifyContent: "center",
+            lineHeight: 1.1,
+          }}
+        >
+          <Box component="span">{pad2(number)}</Box>
+          {initials && (
+            <Box
+              component="span"
+              sx={{ fontSize: 11, fontWeight: 900, mt: 0.25, letterSpacing: 0.5 }}
+            >
+              {initials}
+            </Box>
+          )}
+        </Box>
+      );
+    }
+
+    const showSoldOverlay = sold && !closedInitials;
+
+    return (
+      <>
+        <Box
+          component="span"
+          sx={{
+            display: { xs: showSoldOverlay ? "none" : "inline", md: "inline" },
+          }}
+        >
+          {closedInitials || pad2(number)}
+        </Box>
+
+        {showSoldOverlay && (
+          <Box
+            sx={{
+              display: { xs: "flex", md: "none" },
+              position: "absolute",
+              inset: 0,
+              alignItems: "center",
+              justifyContent: "center",
+              flexDirection: "column",
+              gap: 0.25,
+              pointerEvents: "none",
+            }}
+          >
+            <Box sx={{ fontWeight: 900, lineHeight: 1 }}>
+              {pad2(number)}
+            </Box>
+
+            {initials && (
+              <Box
+                sx={{
+                  mt: 0.25,
+                  px: 0.5,
+                  py: 0.1,
+                  borderRadius: 0.75,
+                  fontSize: 10,
+                  fontWeight: 900,
+                  lineHeight: 1,
+                  backgroundColor: "rgba(0,0,0,0.45)",
+                  color: "#fff",
+                  letterSpacing: 0.5,
+                }}
+              >
+                {initials}
+              </Box>
+            )}
+          </Box>
+        )}
+
+        {showSoldOverlay && initials && (
+          <Box
+            sx={{
+              display: { xs: "none", md: "block" },
+              position: "absolute",
+              right: 4,
+              bottom: 4,
+              px: 0.5,
+              py: 0.1,
+              borderRadius: 0.75,
+              fontSize: 10,
+              fontWeight: 900,
+              lineHeight: 1,
+              backgroundColor: "rgba(0,0,0,0.45)",
+              color: "#fff",
+              letterSpacing: 0.5,
+              pointerEvents: "none",
+              zIndex: 2,
+            }}
+          >
+            {initials}
+          </Box>
+        )}
+      </>
+    );
+  };
+
+  const renderPixLoadingOverlay = ({ open, title = "Pagamento via PIX" }) => {
+    if (!open) return null;
+
+    return (
+      <Box
+        sx={{
+          position: "absolute",
+          inset: 0,
+          zIndex: 20,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          bgcolor: "rgba(0,0,0,0.62)",
+          backdropFilter: "blur(1px)",
+          borderRadius: 2,
+        }}
+      >
+        <Box
+          sx={{
+            width: { xs: "calc(100% - 32px)", sm: 460 },
+            maxWidth: "100%",
+            bgcolor: "rgba(24,24,24,0.96)",
+            border: "1px solid rgba(255,255,255,0.08)",
+            borderRadius: 2,
+            p: { xs: 2, sm: 3 },
+            boxShadow: "0 18px 60px rgba(0,0,0,0.45)",
+          }}
+        >
+          <Typography
+            sx={{
+              fontWeight: 800,
+              color: "rgba(255,255,255,0.76)",
+              mb: 2,
+            }}
+          >
+            {title}
+          </Typography>
+
+          <LinearProgress />
+        </Box>
+      </Box>
+    );
   };
 
   return (
@@ -1349,6 +2210,19 @@ export default function NewStorePage({
       {/* Conteúdo */}
       <Container maxWidth="lg" sx={{ py: { xs: 4, md: 6 } }}>
         <Stack spacing={4}>
+          {batchError && (
+            <Alert severity="error" onClose={() => setBatchError("")} sx={{ whiteSpace: "pre-line" }}>
+              {batchError}
+            </Alert>
+          )}
+          {batchMessage && (
+            <Alert
+              severity={batchCheckout?.status === "manual_review" ? "warning" : "success"}
+              onClose={() => setBatchMessage("")}
+            >
+              {batchMessage}
+            </Alert>
+          )}
           <Paper variant="outlined" sx={{ p: { xs: 2, md: 3 } }}>
             <Stack spacing={2}>
               <Typography variant="h3" fontWeight={900}>
@@ -1459,7 +2333,7 @@ Baseado no resultado oficial da Lotomania (Caixa Econômica Federal).
                 <Button
                   variant="outlined"
                   color="inherit"
-                  disabled={!selecionados.length}
+                  disabled={!selecionados.length || principalOpen !== true}
                   onClick={limparSelecao}
                 >
                   LIMPAR SELEÇÃO
@@ -1467,13 +2341,19 @@ Baseado no resultado oficial da Lotomania (Caixa Econômica Federal).
                 <Button
                   variant="contained"
                   color="success"
-                  disabled={continuarDisabled}
+                  disabled={continuarDisabled || principalOpen !== true}
                   onClick={handleAbrirConfirmacao}
                 >
                   CONTINUAR
                 </Button>
               </Stack>
             </Stack>
+
+            {principalClosedForPurchase && (
+              <Alert severity="info" sx={{ mb: 2, bgcolor: "rgba(2,136,209,0.12)" }}>
+                Rodada encerrada. Em breve abriremos o próximo sorteio.
+              </Alert>
+            )}
 
             {/* Grid 10x10 */}
             <Box
@@ -1498,15 +2378,18 @@ Baseado no resultado oficial da Lotomania (Caixa Econômica Federal).
                 {Array.from({ length: 100 }).map((_, idx) => {
                   const sold = isIndisponivel(idx);
                   const initials = soldInitials[idx];
+                  const closedInitials = principalOpen !== true && initials;
+                  const showSoldOverlay = sold && !closedInitials;
                   return (
                     <Box
                       key={idx}
                       onClick={() => handleClickNumero(idx)}
+                      aria-disabled={principalOpen !== true ? "true" : undefined}
                       sx={{
                         ...getCellSx(idx),
                         borderRadius: 1.2,
                         userSelect: "none",
-                        cursor: sold ? "not-allowed" : "pointer",
+                        cursor: principalOpen !== true ? "not-allowed" : sold ? "not-allowed" : "pointer",
                         aspectRatio: "1 / 1",
                         display: "flex",
                         alignItems: "center",
@@ -1520,14 +2403,14 @@ Baseado no resultado oficial da Lotomania (Caixa Econômica Federal).
                       <Box
                         component="span"
                         sx={{
-                          display: { xs: sold ? "none" : "inline", md: "inline" },
+                          display: { xs: showSoldOverlay ? "none" : "inline", md: "inline" },
                         }}
                       >
-                        {pad2(idx)}
+                        {closedInitials || pad2(idx)}
                       </Box>
 
                       {/* >>> MOBILE (xs): NÚMERO EM CIMA + INICIAIS EMBAIXO, centralizados */}
-                      {sold && (
+                      {showSoldOverlay && (
                         <Box
                           sx={{
                             display: { xs: "flex", md: "none" },
@@ -1565,7 +2448,7 @@ Baseado no resultado oficial da Lotomania (Caixa Econômica Federal).
                       )}
 
                       {/* >>> DESKTOP (md+): iniciais no canto inferior direito quando vendido */}
-                      {sold && initials && (
+                      {showSoldOverlay && initials && (
                         <Box
                           sx={{
                             display: { xs: "none", md: "block" },
@@ -1625,12 +2508,14 @@ Baseado no resultado oficial da Lotomania (Caixa Econômica Federal).
 
           {additionalDraws.map((additionalDraw) => {
             const drawId = additionalDraw.id;
+            const isClosed = String(additionalDraw.status || "").toLowerCase() === "closed";
             const selectedNumbers = selectedAdditionalNumbersByDrawId[drawId] || [];
             const loadingNumbers =
               !!additionalLoadingByDrawId[drawId] ||
               !!additionalNumbersLoadingByDrawId[drawId];
             const reserveLoading = !!additionalReserveLoadingByDrawId[drawId];
             const pixLoading = !!additionalPixLoadingByDrawId[drawId];
+            const isAdditionalPixLoadingThisDraw = reserveLoading || pixLoading;
             const banner =
               additionalDraw.banner_title ||
               additionalDraw.product_name ||
@@ -1670,7 +2555,12 @@ Baseado no resultado oficial da Lotomania (Caixa Econômica Federal).
 
                 <Paper
                   variant="outlined"
-                  sx={{ p: { xs: 1.5, md: 3 }, bgcolor: "background.paper" }}
+                  sx={{
+                    p: { xs: 1.5, md: 3 },
+                    bgcolor: "background.paper",
+                    position: "relative",
+                    overflow: "hidden",
+                  }}
                 >
                   <Stack spacing={2}>
                     <Box
@@ -1698,11 +2588,41 @@ Baseado no resultado oficial da Lotomania (Caixa Econômica Federal).
                       >
                         {banner}
                       </Typography>
+                      {isClosed && (
+                        <Typography
+                          variant="caption"
+                          sx={{ display: "block", mt: 0.75, textAlign: "center", fontWeight: 800 }}
+                        >
+                          Sorteio encerrado
+                        </Typography>
+                      )}
                     </Box>
 
                     {additionalErrorByDrawId[drawId] && (
                       <Alert severity="error" sx={{ bgcolor: "rgba(211,47,47,0.12)" }}>
-                        {additionalErrorByDrawId[drawId]}
+                        <Stack spacing={1}>
+                          <span>{additionalErrorByDrawId[drawId]}</span>
+                          {additionalErrorByDrawId[drawId] === ADDITIONAL_LOGIN_REQUIRED_MESSAGE ? (
+                            <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+                              <Button
+                                size="small"
+                                variant="contained"
+                                color="success"
+                                onClick={() => navigate("/login", { state: { from: "/" } })}
+                              >
+                                Entrar
+                              </Button>
+                              <Button
+                                size="small"
+                                variant="outlined"
+                                color="inherit"
+                                onClick={() => navigate("/cadastro", { state: { from: "/" } })}
+                              >
+                                Criar conta
+                              </Button>
+                            </Stack>
+                          ) : null}
+                        </Stack>
                       </Alert>
                     )}
 
@@ -1730,7 +2650,7 @@ Baseado no resultado oficial da Lotomania (Caixa Econômica Federal).
                         <Button
                           variant="outlined"
                           color="inherit"
-                          disabled={!selectedNumbers.length || reserveLoading || pixLoading}
+                          disabled={isClosed || !selectedNumbers.length || isAdditionalPixLoadingThisDraw}
                           onClick={() =>
                             setSelectedAdditionalNumbersByDrawId((prev) => ({
                               ...prev,
@@ -1743,103 +2663,99 @@ Baseado no resultado oficial da Lotomania (Caixa Econômica Federal).
                         <Button
                           variant="contained"
                           color="success"
-                          disabled={!selectedNumbers.length || reserveLoading || pixLoading}
+                          disabled={isClosed || !selectedNumbers.length || isAdditionalPixLoadingThisDraw}
                           onClick={() => handleContinueAdditional(additionalDraw)}
                         >
                           CONTINUAR
                         </Button>
                       </Stack>
                     </Stack>
+                  </Stack>
 
+                  <Box
+                    sx={{
+                      width: "100%",
+                      display: "flex",
+                      justifyContent: "center",
+                      alignItems: "center",
+                    }}
+                  >
                     <Box
                       sx={{
-                        width: "100%",
-                        display: "flex",
-                        justifyContent: "center",
-                        alignItems: "center",
+                        width: { xs: "calc(100vw - 32px)", sm: "calc(100vw - 64px)", md: "100%" },
+                        maxWidth: 640,
+                        aspectRatio: "1 / 1",
+                        mx: "auto",
                         opacity: loadingNumbers ? 0.72 : 1,
+                        pointerEvents: isAdditionalPixLoadingThisDraw ? "none" : "auto",
+                        cursor: isAdditionalPixLoadingThisDraw ? "not-allowed" : "auto",
                       }}
                     >
                       <Box
                         sx={{
                           display: "grid",
-                          gridTemplateColumns: {
-                            xs: "repeat(5, 56px)",
-                            sm: "repeat(10, 56px)",
-                            md: "repeat(10, 64px)",
-                          },
-                          gap: { xs: "10px", sm: "12px" },
-                          justifyContent: "center",
-                          alignItems: "center",
-                          width: "fit-content",
-                          maxWidth: "100%",
-                          mx: "auto",
+                          gridTemplateColumns: "repeat(10, minmax(0, 1fr))",
+                          gridTemplateRows: "repeat(10, minmax(0, 1fr))",
+                          gap: { xs: 1, md: 1.2 },
+                          height: "100%",
+                          width: "100%",
                           boxSizing: "border-box",
                         }}
                       >
                         {secondaryPreviewNumbers.map((number) => {
                           const status = getAdditionalNumberStatus(drawId, number);
                           const selected = isAdditionalSelected(drawId, number);
+                          const sold = status === "sold";
+                          const initials = getAdditionalNumberInitials(drawId, number);
                           return (
                             <Box
                               component="button"
                               type="button"
                               key={number}
-                              disabled={status !== "available" && !selected}
+                              disabled={isClosed || (status !== "available" && !selected)}
                               aria-pressed={selected ? "true" : "false"}
                               onClick={() => handleAdditionalNumberClick(drawId, number)}
                               sx={{
-                                ...getSecondaryCellSx(number),
-                                ...(selected ? {
-                                  border: "2px solid",
-                                  borderColor: "secondary.main",
-                                  bgcolor: "rgba(255,193,7,0.16)",
-                                  color: "secondary.main",
-                                  cursor: "pointer",
-                                } : status === "available" ? {
-                                  border: "2px solid rgba(255,255,255,0.08)",
-                                  bgcolor: "primary.main",
-                                  color: "#0E0E0E",
-                                  cursor: "pointer",
-                                  "&:hover": { filter: "brightness(0.95)" },
-                                } : status === "reserved" ? {
-                                  border: "2px solid",
-                                  borderColor: "secondary.main",
-                                  bgcolor: "rgba(255,193,7,0.12)",
-                                  color: "rgba(255,255,255,0.72)",
-                                  cursor: "not-allowed",
-                                } : status === "sold" ? {
-                                  border: "2px solid",
-                                  borderColor: "error.main",
-                                  bgcolor: "rgba(211,47,47,0.15)",
-                                  color: "rgba(255,255,255,0.55)",
-                                  cursor: "not-allowed",
-                                } : {}),
+                                ...getAdditionalCellSx(drawId, number, isClosed),
                                 borderRadius: 1.2,
+                                userSelect: "none",
+                                cursor:
+                                  isClosed || (status !== "available" && !selected)
+                                    ? "not-allowed"
+                                    : "pointer",
                                 aspectRatio: "1 / 1",
                                 display: "flex",
                                 alignItems: "center",
                                 justifyContent: "center",
                                 fontWeight: 800,
                                 fontVariantNumeric: "tabular-nums",
-                                fontSize: { xs: 12, sm: 14, md: 16 },
+                                position: "relative",
                                 p: 0,
-                                userSelect: "none",
                               }}
                             >
-                              {pad2(number)}
+                              {renderNumberContent({
+                                number,
+                                initials,
+                                sold,
+                                closedBoard: isClosed,
+                              })}
                             </Box>
                           );
                         })}
                       </Box>
                     </Box>
+                  </Box>
 
-                    {additionalNoticeByDrawId[drawId] && (
-                      <Alert severity="warning" sx={{ bgcolor: "rgba(255,193,7,0.10)" }}>
-                        {additionalNoticeByDrawId[drawId]}
-                      </Alert>
-                    )}
-                  </Stack>
+                  {additionalNoticeByDrawId[drawId] && (
+                    <Alert severity="warning" sx={{ mt: 2, bgcolor: "rgba(255,193,7,0.10)" }}>
+                      {additionalNoticeByDrawId[drawId]}
+                    </Alert>
+                  )}
+
+                  {renderPixLoadingOverlay({
+                    open: isAdditionalPixLoadingThisDraw,
+                    title: "Pagamento via PIX",
+                  })}
                 </Paper>
               </React.Fragment>
             );
@@ -2571,6 +3487,29 @@ Baseado no resultado oficial da Lotomania (Caixa Econômica Federal).
         </Stack>
       </Container>
 
+      {(shouldShowMultiDrawCheckout || batchCheckout?.batch_id) && (
+        <FloatingParticipationSummary
+          items={selectedDrawGroups}
+          pendingBatch={batchCheckout}
+          expanded={batchSummaryExpanded}
+          disabled={isCreatingBatch}
+          onToggle={() => setBatchSummaryExpanded((value) => !value)}
+          onContinue={() => setBatchSummaryExpanded(false)}
+          onReview={() => setBatchReviewOpen(true)}
+          onRemoveNumber={removeCheckoutNumber}
+          onClearDraw={clearCheckoutDraw}
+          onOpenPix={() => openBatchPix()}
+        />
+      )}
+
+      <BatchCheckoutReviewDialog
+        open={batchReviewOpen && shouldShowMultiDrawCheckout}
+        items={selectedDrawGroups}
+        busy={isCreatingBatch}
+        onBack={() => setBatchReviewOpen(false)}
+        onConfirm={confirmBatchCheckout}
+      />
+
       {/* Propaganda da Loja de Prêmios nas BORDAS da página (telas largas).
           Fixa fora da área útil do conteúdo: não empurra nem cobre o sorteio. */}
       <LojaPromoRails />
@@ -2633,7 +3572,7 @@ Baseado no resultado oficial da Lotomania (Caixa Econômica Federal).
             variant="contained"
             color="success"
             onClick={handleIrPagamento}
-            disabled={continuarDisabled}
+            disabled={continuarDisabled || principalOpen !== true}
             sx={{ py: 1.2, fontWeight: 700 }}
           >
             IR PARA PAGAMENTO
@@ -2642,6 +3581,41 @@ Baseado no resultado oficial da Lotomania (Caixa Econômica Federal).
       </Dialog>
 
       {/* Modal PIX (QR) */}
+      {normalizedBatchPayment && (
+        <PixModal
+          open={Boolean(batchPixOpen && normalizedBatchPayment)}
+          onClose={() => setBatchPixOpen(false)}
+          loading={batchCheckoutBusy}
+          data={normalizedBatchPayment}
+          amount={normalizedBatchPayment.amount}
+          inlineMessage={batchMessage || "Aguardando confirmação do PIX."}
+          onCopy={() => {
+            navigator.clipboard.writeText(normalizedBatchPayment.copy_paste_code || "");
+          }}
+          onRefresh={async () => {
+            if (!batchCheckout?.batch_id || batchPollInFlightRef.current) return;
+            batchPollInFlightRef.current = true;
+            try {
+              const latest = batchItemsWithTitles(
+                await getCheckoutBatchStatus(batchCheckout.batch_id),
+                batchSelectionSnapshot?.items || []
+              );
+              setBatchCheckout((current) => ({ ...current, ...latest }));
+              await applyBatchStatus(latest, batchSelectionSnapshot || latest);
+            } catch (error) {
+              if (error?.status === 401) {
+                setBatchPixOpen(false);
+                navigate("/login", { state: { from: "/", wantBatchCheckout: true } });
+              } else {
+                setBatchError("Não foi possível consultar o pagamento agora.");
+              }
+            } finally {
+              batchPollInFlightRef.current = false;
+            }
+          }}
+        />
+      )}
+
       <PixModal
         open={pixOpen}
         onClose={() => {
@@ -2705,15 +3679,32 @@ Baseado no resultado oficial da Lotomania (Caixa Econômica Federal).
           const cents = Number(draw?.ticket_price_cents ?? draw?.price_cents ?? 0);
           return numbers.length * (cents / 100);
         })()}
-        inlineMessage="PIX do sorteio adicional."
+        inlineMessage={additionalPixOpenDrawId != null ? additionalPixMessageByDrawId[additionalPixOpenDrawId] || ADDITIONAL_PIX_PENDING_MESSAGE : ADDITIONAL_PIX_PENDING_MESSAGE}
         onCopy={() => {
           const payment = additionalPaymentByDrawId[additionalPixOpenDrawId];
           if (payment) {
             navigator.clipboard.writeText(payment.copy_paste_code || payment.qr_code || "");
           }
         }}
-        onRefresh={() => {
-          alert("A confirmação do PIX adicional será processada pelo backend.");
+        onRefresh={async () => {
+          const drawId = additionalPixOpenDrawId;
+          const payment = additionalPaymentByDrawId[drawId];
+          const paymentId = payment?.paymentId ?? payment?.payment_id ?? payment?.id;
+          if (!drawId || !paymentId) return;
+          try {
+            const statusPayload = await checkAdditionalPixStatus(paymentId);
+            const nextStatus = String(statusPayload?.status || "pending").toLowerCase();
+            setAdditionalPixStatusByDrawId((prev) => (prev[drawId] === nextStatus ? prev : { ...prev, [drawId]: nextStatus }));
+            if (statusPayload?.paid || ADDITIONAL_PIX_PAID_STATUSES.has(nextStatus)) {
+              await handleAdditionalPixApproved(drawId);
+            } else if (ADDITIONAL_PIX_FINAL_ERROR_STATUSES.has(nextStatus)) {
+              setAdditionalPixMessageByDrawId((prev) => ({ ...prev, [drawId]: ADDITIONAL_PIX_FAILED_MESSAGE }));
+            } else {
+              setAdditionalPixMessageByDrawId((prev) => ({ ...prev, [drawId]: ADDITIONAL_PIX_PENDING_MESSAGE }));
+            }
+          } catch {
+            setAdditionalPixMessageByDrawId((prev) => ({ ...prev, [drawId]: ADDITIONAL_PIX_FAILED_MESSAGE }));
+          }
         }}
       />
 
