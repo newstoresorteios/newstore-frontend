@@ -36,6 +36,7 @@ import HelpOutlineOutlinedIcon from "@mui/icons-material/HelpOutlineOutlined";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 
 import GiftCardSimulator from "./components/GiftCardSimulator.jsx";
+import { LojaPromoRails, LojaPromoStrip } from "./components/rewardStore/LojaPromo";
 
 import {
   AppBar,
@@ -3479,6 +3480,10 @@ Baseado no resultado oficial da Lotomania (Caixa Econômica Federal).
               SIM, EU QUERO PARTICIPAR!
             </Button>
           </Paper>
+
+          {/* Chamada da Loja de Prêmios para telas sem espaço lateral.
+              Fica no fim do conteúdo, nunca entre a introdução e a cartela. */}
+          <LojaPromoStrip />
         </Stack>
       </Container>
 
@@ -3504,6 +3509,10 @@ Baseado no resultado oficial da Lotomania (Caixa Econômica Federal).
         onBack={() => setBatchReviewOpen(false)}
         onConfirm={confirmBatchCheckout}
       />
+
+      {/* Propaganda da Loja de Prêmios nas BORDAS da página (telas largas).
+          Fixa fora da área útil do conteúdo: não empurra nem cobre o sorteio. */}
+      <LojaPromoRails />
 
       {/* Modal de confirmação */}
       <Dialog open={open} onClose={handleFechar} maxWidth="xs" fullWidth PaperProps={{ sx: { borderRadius: 3 } }}>
