@@ -1440,6 +1440,13 @@ export default function AdminDashboard() {
               LISTA DE VENCEDORES
               <br /> DOS SORTEIOS
             </BigCard>
+
+            <br />
+            <Divider sx={{ my: 3, borderColor: "rgba(255,255,255,0.18)", borderBottomWidth: 2 }} />
+            <br />
+            <BigCard color="primary.main" onClick={() => navigate("/admin/loja-premios")}>
+              LOJA DE PRÊMIOS NS
+            </BigCard>
           </Stack>
         </Stack>
       </Container>

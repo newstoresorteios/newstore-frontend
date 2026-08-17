@@ -1,5 +1,6 @@
 import * as React from "react";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import AdminDashboard from "./AdminDashboard";
 
 const mockNavigate = jest.fn();
@@ -297,4 +298,47 @@ test("resposta sem confirmação das duas fontes é tratada como falha", async (
     )
   );
   expect(window.alert).not.toHaveBeenCalledWith("Configurações atualizadas.");
+});
+
+// Testes do acesso ao módulo LOJA DE PRÊMIOS NS a partir do painel /admin.
+describe("módulo LOJA DE PRÊMIOS NS no painel /admin", () => {
+  test("o painel /admin oferece o módulo LOJA DE PRÊMIOS NS", async () => {
+    await renderDashboard();
+    expect(screen.getByText("LOJA DE PRÊMIOS NS")).toBeInTheDocument();
+  });
+
+  test("clicar abre o módulo dentro do /admin", async () => {
+    await renderDashboard();
+
+    const card = screen.getByText("LOJA DE PRÊMIOS NS");
+    userEvent.click(card);
+
+    await waitFor(() => {
+      expect(mockNavigate).toHaveBeenCalledWith("/admin/loja-premios");
+    });
+  });
+
+  test("não leva para um painel administrativo separado em /loja/admin", async () => {
+    await renderDashboard();
+
+    const card = screen.getByText("LOJA DE PRÊMIOS NS");
+    userEvent.click(card);
+
+    await waitFor(() => {
+      expect(mockNavigate).toHaveBeenCalled();
+    });
+    mockNavigate.mock.calls.forEach(([destino]) => {
+      expect(String(destino)).not.toBe("/loja/admin");
+    });
+  });
+
+  test("os módulos administrativos existentes continuam disponíveis", async () => {
+    await renderDashboard();
+
+    expect(screen.getByText(/CADASTRO E MANUTENÇÃO/)).toBeInTheDocument();
+    expect(screen.getByText(/SORTEIO ATIVO/)).toBeInTheDocument();
+    expect(screen.getByText("DASHBOARD - ANALISE")).toBeInTheDocument();
+    expect(screen.getByText("NOTIFICAÇÕES")).toBeInTheDocument();
+    expect(screen.getByText("CATIVOS")).toBeInTheDocument();
+  });
 });
