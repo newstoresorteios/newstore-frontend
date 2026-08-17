@@ -25,7 +25,7 @@
   "scripts": {
     "start": "react-scripts start",
     "build": "node scripts/build-with-local-assets.cjs",
-    "test": "react-scripts test",
+    "test": "react-scripts test --maxWorkers=50%",
     "eject": "react-scripts eject",
     "start:client": "react-scripts start"
   },
