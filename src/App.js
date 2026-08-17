@@ -26,6 +26,9 @@ import AdminNotificationsPage from "./AdminNotificationsPage";
 import AdminHistoricoSaldo from "./AdminHistoricoSaldo";
 import AdminCaptivesPage from "./AdminCaptivesPage";
 import AutorizacaoCativoPage from "./AutorizacaoCativoPage";
+import LojaPage from "./LojaPage";
+import LojaProdutoPage from "./LojaProdutoPage";
+import AdminLojaPremiosPage from "./AdminLojaPremiosPage";
 import PushPermissionPrompt from "./components/PushPermissionPrompt";
 
 export default function App() {
@@ -50,6 +53,10 @@ export default function App() {
             <Route path="/cadastro" element={<RegisterPage />} />
             <Route path="/login" element={<LoginPage />} />
             <Route path="/autorizacao-cativo" element={<AutorizacaoCativoPage />} />
+
+            {/* LOJA DE PRÊMIOS — catálogo e detalhe do produto */}
+            <Route path="/loja" element={<LojaPage />} />
+            <Route path="/loja/produto/:trayProductId" element={<LojaProdutoPage />} />
 
             {/* CONTA: autenticado e não-admin */}
             <Route
@@ -167,6 +174,15 @@ export default function App() {
               element={
                 <AdminRoute>
                   <AdminCaptivesPage />
+                </AdminRoute>
+              }
+            />
+            {/* Módulo LOJA DE PRÊMIOS NS dentro do painel /admin */}
+            <Route
+              path="/admin/loja-premios"
+              element={
+                <AdminRoute>
+                  <AdminLojaPremiosPage />
                 </AdminRoute>
               }
             />
