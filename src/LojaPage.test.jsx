@@ -2,7 +2,7 @@
 // Execute com: npm test
 
 import React from 'react';
-import { act, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 
 // react-router-dom v7 é ESM-only: o resolver do react-scripts 5 não o carrega
 // em ambiente de teste.
@@ -111,6 +111,42 @@ describe('catálogo', () => {
 
     await screen.findByText('Citizen Promaster');
     expect(listPublicProducts).toHaveBeenCalledTimes(1);
+  });
+
+  it('nao mostra CARREGAR MAIS quando so ha uma pagina', async () => {
+    listPublicProducts.mockResolvedValue({
+      items: [product()],
+      paging: { page: 1, limit: 24, total: 1, pages: 1 },
+    });
+
+    renderPage();
+
+    await screen.findByText('Citizen Promaster');
+    expect(screen.queryByRole('button', { name: 'CARREGAR MAIS' })).not.toBeInTheDocument();
+  });
+
+  it('CARREGAR MAIS busca a proxima pagina e acrescenta itens (A5)', async () => {
+    listPublicProducts
+      .mockResolvedValueOnce({
+        items: [product({ tray_product_id: '1', name: 'Produto 1' })],
+        paging: { page: 1, limit: 1, total: 2, pages: 2 },
+      })
+      .mockResolvedValueOnce({
+        items: [product({ tray_product_id: '2', name: 'Produto 2' })],
+        paging: { page: 2, limit: 1, total: 2, pages: 2 },
+      });
+
+    renderPage();
+
+    await screen.findByText('Produto 1');
+    const botao = screen.getByRole('button', { name: 'CARREGAR MAIS' });
+    fireEvent.click(botao);
+
+    expect(await screen.findByText('Produto 2')).toBeInTheDocument();
+    expect(screen.getByText('Produto 1')).toBeInTheDocument();
+    expect(listPublicProducts).toHaveBeenCalledTimes(2);
+    expect(listPublicProducts).toHaveBeenNthCalledWith(2, { page: 2, limit: 1 });
+    expect(screen.queryByRole('button', { name: 'CARREGAR MAIS' })).not.toBeInTheDocument();
   });
 
   it('produto indisponível na Tray continua no catálogo, marcado como INDISPONÍVEL', async () => {

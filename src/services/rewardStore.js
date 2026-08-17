@@ -88,9 +88,9 @@ export function syncProducts(trayProductIds = null) {
 
 /* ─────────────────────────── Publico ─────────────────────────── */
 
-/** Catalogo de `/loja`. Somente produtos publicados, direto do PostgreSQL. */
-export function listPublicProducts() {
-  return getJSON("/store/products");
+/** Catalogo de `/loja`. Somente produtos publicados, direto do PostgreSQL. Paginado. */
+export function listPublicProducts({ page, limit } = {}) {
+  return getJSON(`/store/products${buildQuery({ page, limit })}`);
 }
 
 /* ─────────────────────────── Erros ─────────────────────────── */

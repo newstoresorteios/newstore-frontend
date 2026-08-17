@@ -318,7 +318,9 @@ function LojaConteudo() {
   const { user, loading: authLoading } = useAuth();
   const [items, setItems] = React.useState([]);
   const [loading, setLoading] = React.useState(true);
+  const [loadingMore, setLoadingMore] = React.useState(false);
   const [error, setError] = React.useState("");
+  const [paging, setPaging] = React.useState(null);
 
   const load = React.useCallback(async () => {
     setLoading(true);
@@ -326,17 +328,35 @@ function LojaConteudo() {
     try {
       const payload = await listPublicProducts();
       setItems(Array.isArray(payload?.items) ? payload.items : []);
+      setPaging(payload?.paging || null);
     } catch (e) {
       setItems([]);
+      setPaging(null);
       setError(describeApiError(e, "Não foi possível carregar a loja agora."));
     } finally {
       setLoading(false);
     }
   }, []);
 
+  const loadMore = React.useCallback(async () => {
+    if (!paging || paging.page >= paging.pages) return;
+    setLoadingMore(true);
+    try {
+      const payload = await listPublicProducts({ page: paging.page + 1, limit: paging.limit });
+      setItems((current) => [...current, ...(Array.isArray(payload?.items) ? payload.items : [])]);
+      setPaging(payload?.paging || null);
+    } catch (e) {
+      setError(describeApiError(e, "Não foi possível carregar mais prêmios agora."));
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [paging]);
+
   React.useEffect(() => {
     load();
   }, [load]);
+
+  const hasMore = Boolean(paging && paging.page < paging.pages);
 
   // A carteira e o carrinho vivem no LojaShell.
   const wallet = useStoreWallet();
@@ -433,6 +453,19 @@ function LojaConteudo() {
                   />
                 ))}
               </Box>
+            )}
+
+            {hasMore && (
+              <Stack alignItems="center">
+                <Button
+                  variant="outlined"
+                  onClick={loadMore}
+                  disabled={loadingMore}
+                  sx={{ borderRadius: 999, px: 4, fontWeight: 800 }}
+                >
+                  {loadingMore ? "CARREGANDO…" : "CARREGAR MAIS"}
+                </Button>
+              </Stack>
             )}
 
             <Divider sx={{ borderColor: "rgba(255,255,255,0.08)" }} />
