@@ -233,7 +233,9 @@ describe('bloco de perfil do cliente', () => {
     expect(await screen.findByText('Olá, Joao')).toBeInTheDocument();
     expect(screen.getByText('ID 42')).toBeInTheDocument();
     expect(screen.getByText(/Membro desde/i)).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /MEUS PEDIDOS/i })).toBeInTheDocument();
+    const meusPedidos = screen.getByRole('link', { name: /MEUS PEDIDOS/i });
+    expect(meusPedidos).toBeInTheDocument();
+    expect(meusPedidos).toHaveAttribute('href', '/loja/pedidos');
   });
 
   it('mostra o saldo factual da carteira', async () => {
@@ -292,12 +294,46 @@ describe('bloco de perfil do cliente', () => {
     expect(container.textContent).not.toMatch(/você possui[\s\S]{0,20}nscréditos/i);
   });
 
-  it('MEUS PEDIDOS fica desabilitado enquanto não existe resgate', async () => {
+  it('MEUS PEDIDOS leva para a listagem de resgates (GET /api/store/redemptions)', async () => {
     listPublicProducts.mockResolvedValue({ items: [product()] });
     renderPage();
 
-    const botao = await screen.findByRole('button', { name: /MEUS PEDIDOS/i });
-    expect(botao).toBeDisabled();
+    const link = await screen.findByRole('link', { name: /MEUS PEDIDOS/i });
+    expect(link).toHaveAttribute('href', '/loja/pedidos');
+  });
+
+  it('mostra o codigo do cupom e a validade quando o backend informa', async () => {
+    getMyNsCredits.mockResolvedValue({
+      wallet: { balance: 381, coupon_code: 'NSU-0418-Q4', expires_at: '2027-01-18T00:00:00.000Z', is_expired: false },
+    });
+    listPublicProducts.mockResolvedValue({ items: [product()] });
+    renderPage();
+
+    await screen.findByText('Olá, Joao');
+    expect(await screen.findByText('381 NSCréditos')).toBeInTheDocument();
+    expect(screen.getByText(/Código: NSU-0418-Q4/)).toBeInTheDocument();
+    expect(screen.getByText(/Válidos até 18\/01\/27/)).toBeInTheDocument();
+  });
+
+  it('cupom vencido mostra estado explicito e nunca deixa parecer saldo usavel', async () => {
+    getMyNsCredits.mockResolvedValue({
+      wallet: { balance: 500, coupon_code: 'NSU-0418-Q4', expires_at: '2020-01-01T00:00:00.000Z', is_expired: true },
+    });
+    listPublicProducts.mockResolvedValue({ items: [product()] });
+    renderPage();
+
+    await screen.findByText('Olá, Joao');
+    expect(await screen.findByText(/Vencido/i)).toBeInTheDocument();
+    expect(screen.queryByText(/Código: NSU-0418-Q4/)).not.toBeInTheDocument();
+  });
+
+  it('saldo fracionado (coupon_value_cents/100) mostra 2 casas decimais', async () => {
+    getMyNsCredits.mockResolvedValue({ wallet: { balance: 381.5 } });
+    listPublicProducts.mockResolvedValue({ items: [product()] });
+    renderPage();
+
+    await screen.findByText('Olá, Joao');
+    expect(await screen.findByText('381,50 NSCréditos')).toBeInTheDocument();
   });
 
   it('visitante não autenticado vê convite para entrar, sem perfil falso', async () => {

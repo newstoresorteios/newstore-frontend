@@ -34,9 +34,14 @@ describe('rotas da Loja de Prêmios', () => {
     expect(APP).not.toMatch(/path="\/loja\/admin"/);
   });
 
-  it('as rotas da loja são apenas o catálogo e o detalhe do produto', () => {
+  it('as rotas da loja são o catálogo, o detalhe do produto e meus pedidos', () => {
     const rotasDaLoja = [...APP.matchAll(/path="(\/loja[^"]*)"/g)].map((m) => m[1]);
-    expect(rotasDaLoja.sort()).toEqual(['/loja', '/loja/produto/:trayProductId']);
+    expect(rotasDaLoja.sort()).toEqual(['/loja', '/loja/pedidos', '/loja/produto/:trayProductId']);
+  });
+
+  it('meus pedidos exige autenticação (fica dentro de ProtectedRoute)', () => {
+    const trecho = APP.match(/<Route\s+path="\/loja\/pedidos"[\s\S]{0,120}/)?.[0] || '';
+    expect(trecho).toMatch(/ProtectedRoute/);
   });
 
   it('o detalhe do produto é público, sem guarda de admin', () => {

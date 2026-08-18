@@ -101,6 +101,7 @@ export const ISSUE_MESSAGES = {
   insufficient_stock: "Estoque insuficiente para a quantidade escolhida.",
   price_changed: "O valor deste produto foi atualizado.",
   insufficient_nscredits: "Saldo de NSCréditos insuficiente.",
+  coupon_expired: "Seu cupom de NSCréditos está vencido. Fale com o suporte para renovar.",
   tray_unavailable: "Não foi possível confirmar a disponibilidade agora. Tente de novo.",
   wallet_unavailable: "Não foi possível consultar seu saldo agora.",
 

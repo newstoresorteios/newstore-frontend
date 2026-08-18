@@ -39,7 +39,8 @@ import { useAuth } from "./authContext";
 export function formatNsCredits(value) {
   const n = Number(value);
   if (!Number.isFinite(n)) return "—";
-  return n.toLocaleString("pt-BR");
+  const hasFraction = Math.abs(n % 1) > 1e-9;
+  return n.toLocaleString("pt-BR", { minimumFractionDigits: hasFraction ? 2 : 0, maximumFractionDigits: 2 });
 }
 
 /** Placeholder local: usado apenas quando a Tray realmente não tem imagem. */

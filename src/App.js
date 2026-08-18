@@ -29,6 +29,7 @@ import AutorizacaoCativoPage from "./AutorizacaoCativoPage";
 import CaptiveConfirmationPage from "./CaptiveConfirmationPage";
 import LojaPage from "./LojaPage";
 import LojaProdutoPage from "./LojaProdutoPage";
+import LojaPedidosPage from "./LojaPedidosPage";
 import AdminLojaPremiosPage from "./AdminLojaPremiosPage";
 import PushPermissionPrompt from "./components/PushPermissionPrompt";
 
@@ -59,6 +60,14 @@ export default function App() {
             {/* LOJA DE PRÊMIOS — catálogo e detalhe do produto */}
             <Route path="/loja" element={<LojaPage />} />
             <Route path="/loja/produto/:trayProductId" element={<LojaProdutoPage />} />
+            <Route
+              path="/loja/pedidos"
+              element={
+                <ProtectedRoute>
+                  <LojaPedidosPage />
+                </ProtectedRoute>
+              }
+            />
 
             {/* CONTA: autenticado e não-admin */}
             <Route

@@ -206,7 +206,11 @@ export default function CartDrawer({ open, onClose, walletBalance }) {
                 </Typography>
               </Stack>
 
-              {validation && !validation.valid && !validation.wallet?.sufficient && validation.wallet?.missing > 0 && (
+              {validation &&
+                !validation.valid &&
+                !validation.wallet?.sufficient &&
+                validation.wallet?.missing > 0 &&
+                !validation.issues?.includes("coupon_expired") && (
                 <Alert severity="warning" variant="outlined">
                   <Typography variant="body2" sx={{ fontWeight: 800 }}>
                     Saldo insuficiente

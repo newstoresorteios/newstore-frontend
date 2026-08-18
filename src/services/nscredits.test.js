@@ -53,11 +53,16 @@ describe('parseNsCreditAmountInput', () => {
 });
 
 describe('formatNsCredits', () => {
-  it('formata em pt-BR sem casas decimais', () => {
+  it('formata em pt-BR sem casas decimais quando o valor e inteiro', () => {
     expect(formatNsCredits(8450)).toBe('8.450');
     expect(formatNsCredits(10500)).toBe('10.500');
     expect(formatNsCredits(0)).toBe('0');
     expect(formatNsCredits(1000000)).toBe('1.000.000');
+  });
+
+  it('mostra 2 casas decimais quando o saldo (coupon_value_cents/100) tem fracao', () => {
+    expect(formatNsCredits(381.5)).toBe('381,50');
+    expect(formatNsCredits(381)).toBe('381');
   });
 
   it('valor invalido nao vira zero', () => {

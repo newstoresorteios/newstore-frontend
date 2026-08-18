@@ -160,6 +160,24 @@ describe('pre-validacao', () => {
     expect(screen.getByText(/Faltam: 1.550 NSCréditos/i)).toBeInTheDocument();
   });
 
+  it('cupom vencido mostra mensagem propria, nao a de saldo insuficiente', async () => {
+    validateCart.mockResolvedValue({
+      valid: false,
+      cart: { id: 'cart-1', total_items: 1, total_units: 1, total_nscredits: 1500 },
+      wallet: { balance: 8450, sufficient: false, missing: 1500 },
+      issues: ['coupon_expired'],
+      items: [{ id: 'item-1', valid: true, issues: [] }],
+    });
+
+    renderDrawer();
+    await screen.findByText('Citizen Promaster');
+    userEvent.click(screen.getByRole('button', { name: /VALIDAR CARRINHO/i }));
+
+    expect(await screen.findByText(/vencido/i)).toBeInTheDocument();
+    expect(screen.queryByText(/Saldo insuficiente/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Faltam:/i)).not.toBeInTheDocument();
+  });
+
   it('problema por item aparece junto do item', async () => {
     validateCart.mockResolvedValue({
       valid: false,
