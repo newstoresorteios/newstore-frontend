@@ -47,7 +47,8 @@ import {
   isRewardRedemptionEnabled,
 } from "./services/checkout";
 import { formatShortDate } from "./components/rewardStore/StoreProfileHeader";
-import { getMyProfile, updateMyBirthDate } from "./services/rewardProfile";
+import { getMyProfile, updateMyBirthDate, updateMyCpf } from "./services/rewardProfile";
+import { formatCPFInput, isValidCPF } from "./lib/cpf";
 
 const EMPTY_ADDRESS_FORM = {
   recipient_name: "",
@@ -176,21 +177,33 @@ function AddressStep({ addresses, selectedId, onSelect, onAddressCreated }) {
 
 /* ───────────────── Passo 0: completar perfil (se faltar dado) ───────────────── */
 //
-// A Tray exige birth_date pra criar o Customer (rewardProfile.js, backend).
-// So aparece quando falta -- uma vez salvo, nunca mais pede de novo
-// (mesmo padrao do telefone em /conta).
+// A Tray exige birth_date E cpf pra criar o Customer nesta loja
+// (rewardProfile.js, backend -- cpf provado obrigatorio via teste
+// controlado real, M7.1). Cada campo so aparece quando falta -- uma vez
+// salvo, nunca mais pede de novo (mesmo padrao do telefone em /conta).
 
-function ProfileCompletionStep({ onComplete }) {
+function ProfileCompletionStep({ missingFields, onComplete }) {
+  const needsBirthDate = missingFields.includes("birth_date");
+  const needsCpf = missingFields.includes("cpf");
   const [birthDate, setBirthDate] = React.useState("");
+  const [cpf, setCpf] = React.useState("");
   const [saving, setSaving] = React.useState(false);
   const [error, setError] = React.useState("");
 
   async function submit(e) {
     e.preventDefault();
-    setSaving(true);
     setError("");
+
+    if (needsCpf && !isValidCPF(cpf)) {
+      setError("Informe um CPF válido.");
+      return;
+    }
+
+    setSaving(true);
     try {
-      const profile = await updateMyBirthDate(birthDate);
+      let profile = null;
+      if (needsBirthDate) profile = await updateMyBirthDate(birthDate);
+      if (needsCpf) profile = await updateMyCpf(cpf);
       onComplete(profile);
     } catch (err) {
       setError(describeCheckoutError(err, "Não foi possível salvar seus dados agora."));
@@ -203,24 +216,37 @@ function ProfileCompletionStep({ onComplete }) {
     <Stack spacing={2}>
       <Typography sx={{ fontWeight: 900, fontSize: 20 }}>Complete seus dados para continuar</Typography>
       <Typography variant="body2" sx={{ opacity: 0.75 }}>
-        Para criar seu pedido, precisamos apenas da sua data de nascimento. Isso é salvo no seu perfil — você não
-        precisará informar de novo em resgates futuros.
+        Para criar seu pedido, precisamos de {needsBirthDate && needsCpf ? "algumas informações" : needsCpf ? "seu CPF" : "sua data de nascimento"}
+        . Isso é salvo no seu perfil — você não precisará informar de novo em resgates futuros.
       </Typography>
 
       <Paper variant="outlined" sx={{ p: 2.5, borderRadius: 3, borderColor: "rgba(255,255,255,0.10)" }}>
         <Box component="form" onSubmit={submit}>
           <Stack spacing={1.5}>
             {error && <Alert severity="error">{error}</Alert>}
-            <TextField
-              label="Data de nascimento"
-              type="date"
-              size="small"
-              required
-              value={birthDate}
-              onChange={(e) => setBirthDate(e.target.value)}
-              InputLabelProps={{ shrink: true }}
-              disabled={saving}
-            />
+            {needsBirthDate && (
+              <TextField
+                label="Data de nascimento"
+                type="date"
+                size="small"
+                required
+                value={birthDate}
+                onChange={(e) => setBirthDate(e.target.value)}
+                InputLabelProps={{ shrink: true }}
+                disabled={saving}
+              />
+            )}
+            {needsCpf && (
+              <TextField
+                label="CPF"
+                size="small"
+                required
+                value={cpf}
+                onChange={(e) => setCpf(formatCPFInput(e.target.value))}
+                disabled={saving}
+                inputProps={{ inputMode: "numeric", maxLength: 14 }}
+              />
+            )}
             <Button
               type="submit"
               variant="contained"
@@ -420,6 +446,7 @@ function ResgateConteudo() {
   const [addresses, setAddresses] = React.useState([]);
   const [selectedAddressId, setSelectedAddressId] = React.useState(null);
   const [profileComplete, setProfileComplete] = React.useState(true);
+  const [missingFields, setMissingFields] = React.useState([]);
 
   const [prepared, setPrepared] = React.useState(null);
   const [prepareLoading, setPrepareLoading] = React.useState(false);
@@ -448,6 +475,7 @@ function ResgateConteudo() {
         const def = list.find((a) => a.is_default) || list[0] || null;
         if (def) setSelectedAddressId(def.id);
         setProfileComplete(profile?.profile_complete_for_reward !== false);
+        setMissingFields(Array.isArray(profile?.missing_reward_fields) ? profile.missing_reward_fields : []);
       } catch (e) {
         if (!cancelled) setBootError(describeCheckoutError(e, "Não foi possível carregar o checkout agora."));
       } finally {
@@ -534,7 +562,20 @@ function ResgateConteudo() {
   }
 
   if (!profileComplete) {
-    return <ProfileCompletionStep onComplete={() => setProfileComplete(true)} />;
+    return (
+      <ProfileCompletionStep
+        missingFields={missingFields}
+        onComplete={(profile) => {
+          // PATCH /me/birth-date e /me/cpf devolvem profile.missing_fields
+          // (rewardProfile.js) -- mesma lista, nome diferente do GET /me
+          // (missing_reward_fields). Reaplica aqui pra so avancar quando
+          // realmente estiver completo (pode faltar mais de um campo).
+          const stillMissing = Array.isArray(profile?.missing_fields) ? profile.missing_fields : [];
+          setMissingFields(stillMissing);
+          if (stillMissing.length === 0) setProfileComplete(true);
+        }}
+      />
+    );
   }
 
   return (

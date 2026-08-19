@@ -56,6 +56,7 @@ jest.mock('./services/checkout', () => {
 jest.mock('./services/rewardProfile', () => ({
   getMyProfile: jest.fn(),
   updateMyBirthDate: jest.fn(),
+  updateMyCpf: jest.fn(),
 }));
 
 import { getMyNsCredits } from './services/nscredits';
@@ -66,7 +67,7 @@ import {
   confirmRedemption,
   isRewardRedemptionEnabled,
 } from './services/checkout';
-import { getMyProfile, updateMyBirthDate } from './services/rewardProfile';
+import { getMyProfile, updateMyBirthDate, updateMyCpf } from './services/rewardProfile';
 import LojaResgatePage from './LojaResgatePage';
 
 function addr(overrides = {}) {
@@ -138,7 +139,7 @@ it('perfil incompleto (sem birth_date): mostra COMPLETE SEUS DADOS, nunca a revi
 
 it('salvar data de nascimento libera o fluxo normal sem pedir de novo', async () => {
   getMyProfile.mockResolvedValue({ id: 42, name: 'Joao', email: 'joao@x.com', birth_date: null, profile_complete_for_reward: false, missing_reward_fields: ['birth_date'] });
-  updateMyBirthDate.mockResolvedValue({ birth_date: '1990-05-20', profile_complete_for_reward: true, missing_reward_fields: [] });
+  updateMyBirthDate.mockResolvedValue({ birth_date: '1990-05-20', profile_complete_for_reward: true, missing_fields: [] });
   renderPage();
 
   const input = await screen.findByLabelText(/Data de nascimento/i);
@@ -146,6 +147,57 @@ it('salvar data de nascimento libera o fluxo normal sem pedir de novo', async ()
   userEvent.click(screen.getByRole('button', { name: /SALVAR E CONTINUAR/i }));
 
   await waitFor(() => expect(updateMyBirthDate).toHaveBeenCalledWith('1990-05-20'));
+  expect(await screen.findByText('Citizen Promaster')).toBeInTheDocument();
+});
+
+it('perfil incompleto (sem cpf): mostra COMPLETE SEUS DADOS com campo de CPF', async () => {
+  getMyProfile.mockResolvedValue({ id: 42, name: 'Joao', email: 'joao@x.com', birth_date: '1990-01-01', has_cpf: false, profile_complete_for_reward: false, missing_reward_fields: ['cpf'] });
+  renderPage();
+
+  expect(await screen.findByText(/Complete seus dados para continuar/i)).toBeInTheDocument();
+  expect(await screen.findByLabelText(/^CPF\b/i)).toBeInTheDocument();
+  expect(screen.queryByLabelText(/Data de nascimento/i)).not.toBeInTheDocument();
+});
+
+it('cpf invalido nunca chega a rede', async () => {
+  getMyProfile.mockResolvedValue({ id: 42, name: 'Joao', email: 'joao@x.com', birth_date: '1990-01-01', has_cpf: false, profile_complete_for_reward: false, missing_reward_fields: ['cpf'] });
+  renderPage();
+
+  const input = await screen.findByLabelText(/^CPF\b/i);
+  fireEvent.change(input, { target: { value: '123.456.789-00' } });
+  userEvent.click(screen.getByRole('button', { name: /SALVAR E CONTINUAR/i }));
+
+  expect(await screen.findByText(/Informe um CPF válido/i)).toBeInTheDocument();
+  expect(updateMyCpf).not.toHaveBeenCalled();
+});
+
+it('salvar cpf valido libera o fluxo normal e avanca automaticamente para a revisao', async () => {
+  getMyProfile.mockResolvedValue({ id: 42, name: 'Joao', email: 'joao@x.com', birth_date: '1990-01-01', has_cpf: false, profile_complete_for_reward: false, missing_reward_fields: ['cpf'] });
+  updateMyCpf.mockResolvedValue({ has_cpf: true, cpf_masked: '***.***.***-35', profile_complete_for_reward: true, missing_fields: [] });
+  renderPage();
+
+  const input = await screen.findByLabelText(/^CPF\b/i);
+  fireEvent.change(input, { target: { value: '111.444.777-35' } });
+  userEvent.click(screen.getByRole('button', { name: /SALVAR E CONTINUAR/i }));
+
+  await waitFor(() => expect(updateMyCpf).toHaveBeenCalledWith('111.444.777-35'));
+  expect(await screen.findByText('Citizen Promaster')).toBeInTheDocument();
+});
+
+it('perfil sem birth_date e sem cpf: pede os dois campos numa unica etapa', async () => {
+  getMyProfile.mockResolvedValue({ id: 42, name: 'Joao', email: 'joao@x.com', birth_date: null, has_cpf: false, profile_complete_for_reward: false, missing_reward_fields: ['birth_date', 'cpf'] });
+  updateMyBirthDate.mockResolvedValue({ birth_date: '1990-05-20', profile_complete_for_reward: false, missing_fields: ['cpf'] });
+  updateMyCpf.mockResolvedValue({ has_cpf: true, cpf_masked: '***.***.***-35', profile_complete_for_reward: true, missing_fields: [] });
+  renderPage();
+
+  const birthInput = await screen.findByLabelText(/Data de nascimento/i);
+  const cpfInput = await screen.findByLabelText(/^CPF\b/i);
+  fireEvent.change(birthInput, { target: { value: '1990-05-20' } });
+  fireEvent.change(cpfInput, { target: { value: '111.444.777-35' } });
+  userEvent.click(screen.getByRole('button', { name: /SALVAR E CONTINUAR/i }));
+
+  await waitFor(() => expect(updateMyBirthDate).toHaveBeenCalledWith('1990-05-20'));
+  await waitFor(() => expect(updateMyCpf).toHaveBeenCalledWith('111.444.777-35'));
   expect(await screen.findByText('Citizen Promaster')).toBeInTheDocument();
 });
 

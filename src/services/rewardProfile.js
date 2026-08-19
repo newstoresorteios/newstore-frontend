@@ -1,9 +1,10 @@
 // src/services/rewardProfile.js
 //
 // Completude de perfil exigida para o resgate por NSCréditos: a Tray
-// exige birth_date para criar um Customer (backend: rewardProfile.js).
-// Mesmo padrão do telefone em /conta -- pede uma vez quando falta, salva,
-// reutiliza depois.
+// exige birth_date E cpf para criar um Customer nesta loja (backend:
+// rewardProfile.js -- cpf provado obrigatorio via teste controlado real,
+// M7.1). Mesmo padrão do telefone em /conta -- pede uma vez quando falta,
+// salva, reutiliza depois.
 
 import { apiJoin, authHeaders } from "../lib/api";
 
@@ -37,5 +38,16 @@ export async function getMyProfile() {
 /** Salva a data de nascimento (YYYY-MM-DD) exigida pela Tray para criar o Customer. */
 export async function updateMyBirthDate(birthDate) {
   const json = await request("/me/birth-date", { method: "PATCH", body: { birth_date: birthDate } });
+  return json.profile || null;
+}
+
+/**
+ * Salva o CPF exigido por esta loja Tray para criar o Customer. Aceita
+ * formatado ou so digitos -- o backend normaliza e valida (fonte da
+ * verdade); aqui so repassa a string, nunca usa Number (perde zeros a
+ * esquerda).
+ */
+export async function updateMyCpf(cpf) {
+  const json = await request("/me/cpf", { method: "PATCH", body: { cpf } });
   return json.profile || null;
 }

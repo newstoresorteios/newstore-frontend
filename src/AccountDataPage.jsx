@@ -28,6 +28,7 @@ import {
 } from "@mui/material";
 import ArrowBackIosNewRoundedIcon from "@mui/icons-material/ArrowBackIosNewRounded";
 import AccountCircleRoundedIcon from "@mui/icons-material/AccountCircleRounded";
+import { formatCPFInput, isValidCPF } from "./lib/cpf";
 
 const theme = createTheme({
   palette: {
@@ -61,6 +62,13 @@ function getUserBirthDate(user) {
   return String(user?.birth_date || "").trim();
 }
 
+// cpf cru NUNCA chega ao frontend (backend so devolve has_cpf/cpf_masked,
+// ver GET /me) -- so a tela de edicao trabalha com o valor cru, e so
+// durante a digitacao (nunca fica salvo no state apos o envio).
+function getUserCpfMasked(user) {
+  return user?.has_cpf ? String(user?.cpf_masked || "").trim() : "";
+}
+
 function formatBirthDateDisplay(value) {
   const s = String(value || "").trim();
   const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(s);
@@ -91,6 +99,10 @@ export default function AccountDataPage() {
   const [birthDateInput, setBirthDateInput] = React.useState("");
   const [birthDateSaving, setBirthDateSaving] = React.useState(false);
   const [birthDateStatus, setBirthDateStatus] = React.useState(null);
+  const [cpfEditing, setCpfEditing] = React.useState(false);
+  const [cpfInput, setCpfInput] = React.useState("");
+  const [cpfSaving, setCpfSaving] = React.useState(false);
+  const [cpfStatus, setCpfStatus] = React.useState(null);
   const [whatsappConsent, setWhatsappConsent] = React.useState(null);
   const [whatsappLoading, setWhatsappLoading] = React.useState(true);
   const [whatsappSaving, setWhatsappSaving] = React.useState(false);
@@ -139,12 +151,21 @@ export default function AccountDataPage() {
     if (!birthDateEditing) setBirthDateInput(getUserBirthDate(user));
   }, [birthDateEditing, user]);
 
+  React.useEffect(() => {
+    // cpf cru nunca fica no state fora da digitacao -- ao sair da edicao
+    // (salvo ou cancelado) o campo volta a ficar vazio, nunca reexibe o
+    // valor digitado.
+    if (!cpfEditing) setCpfInput("");
+  }, [cpfEditing]);
+
   const accountName = user?.name || user?.fullName || user?.nome || user?.displayName || user?.username || "Não informado";
   const accountEmail = user?.email || "Não informado";
   const accountPhone = getUserPhone(user);
   const accountPhoneText = accountPhone || "Não informado";
   const accountBirthDate = getUserBirthDate(user);
   const accountBirthDateText = formatBirthDateDisplay(accountBirthDate) || "Não informado";
+  const accountCpfMasked = getUserCpfMasked(user);
+  const accountCpfText = accountCpfMasked || "Não informado";
   const whatsappEnabled = whatsappConsent?.can_send === true;
 
   const doLogout = () => {
@@ -228,6 +249,48 @@ export default function AccountDataPage() {
       setBirthDateStatus({ type: "error", message: "Não foi possível salvar a data de nascimento. Tente novamente." });
     } finally {
       setBirthDateSaving(false);
+    }
+  }
+
+  async function handleSaveCpf() {
+    setCpfStatus(null);
+
+    if (!isValidCPF(cpfInput)) {
+      setCpfStatus({ type: "error", message: "Informe um CPF válido." });
+      return;
+    }
+
+    try {
+      setCpfSaving(true);
+      const r = await fetch(apiJoin("/me/cpf"), {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", ...authHeaders() },
+        credentials: "include",
+        body: JSON.stringify({ cpf: cpfInput }),
+      });
+      const data = await r.json().catch(() => ({}));
+
+      if (!r.ok || data?.ok === false) {
+        setCpfStatus({
+          type: "error",
+          message: data?.error === "cpf_already_in_use" ? "Este CPF já está em uso em outra conta." : "Informe um CPF válido.",
+        });
+        return;
+      }
+
+      const nextUser = {
+        ...(user || {}),
+        has_cpf: !!data?.profile?.has_cpf,
+        cpf_masked: data?.profile?.cpf_masked || null,
+      };
+      setUser(nextUser);
+      setCpfEditing(false);
+      setCpfStatus({ type: "success", message: "CPF salvo com sucesso." });
+      try { localStorage.setItem("me", JSON.stringify(nextUser)); } catch {}
+    } catch {
+      setCpfStatus({ type: "error", message: "Não foi possível salvar o CPF. Tente novamente." });
+    } finally {
+      setCpfSaving(false);
     }
   }
 
@@ -441,6 +504,60 @@ export default function AccountDataPage() {
                 {birthDateStatus && (
                   <Alert severity={birthDateStatus.type} variant="outlined" sx={{ maxWidth: 520 }}>
                     {birthDateStatus.message}
+                  </Alert>
+                )}
+
+                <Stack spacing={1.5}>
+                  <Typography variant="body2" sx={{ opacity: 0.75 }}>CPF</Typography>
+                  <Typography variant="caption" sx={{ opacity: 0.62 }}>
+                    Usado apenas para viabilizar o resgate na Loja de Prêmios NS.
+                  </Typography>
+                  {cpfEditing ? (
+                    <Stack spacing={1.5} sx={{ maxWidth: 420 }}>
+                      <TextField
+                        label="CPF"
+                        value={cpfInput}
+                        onChange={(e) => setCpfInput(formatCPFInput(e.target.value))}
+                        disabled={cpfSaving}
+                        fullWidth
+                        inputProps={{ inputMode: "numeric", maxLength: 14 }}
+                      />
+                      <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
+                        <Button variant="contained" color="success" onClick={handleSaveCpf} disabled={cpfSaving}>
+                          {cpfSaving ? "Salvando..." : "Salvar"}
+                        </Button>
+                        <Button
+                          variant="text"
+                          onClick={() => {
+                            setCpfEditing(false);
+                            setCpfStatus(null);
+                          }}
+                          disabled={cpfSaving}
+                        >
+                          Cancelar
+                        </Button>
+                      </Stack>
+                    </Stack>
+                  ) : (
+                    <Stack direction={{ xs: "column", sm: "row" }} spacing={1.5} alignItems={{ xs: "flex-start", sm: "center" }}>
+                      <Typography fontWeight={800}>{accountCpfText}</Typography>
+                      <Button
+                        variant="outlined"
+                        size="small"
+                        onClick={() => {
+                          setCpfStatus(null);
+                          setCpfEditing(true);
+                        }}
+                      >
+                        {accountCpfMasked ? "Alterar CPF" : "Adicionar CPF"}
+                      </Button>
+                    </Stack>
+                  )}
+                </Stack>
+
+                {cpfStatus && (
+                  <Alert severity={cpfStatus.type} variant="outlined" sx={{ maxWidth: 520 }}>
+                    {cpfStatus.message}
                   </Alert>
                 )}
 
