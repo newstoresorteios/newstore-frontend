@@ -3,10 +3,9 @@
 // "Meus Pedidos" (/loja/pedidos) — lista os resgates reais do usuário
 // (GET /api/store/redemptions). Somente leitura.
 //
-// FASE E (pedido Tray real) ainda está bloqueada: hoje todo resgate
-// tentado termina em "Aguardando liberação do resgate real", com os
-// créditos devolvidos automaticamente. Esta tela mostra isso com
-// honestidade — nunca finge sucesso.
+// Mostra o status factual de cada resgate, incluindo o número do pedido
+// Tray quando existe. Nunca finge sucesso nem esconde um estado ambíguo
+// (reconciliation_required) atrás de uma mensagem genérica.
 
 import * as React from "react";
 import { Link as RouterLink } from "react-router-dom";
@@ -51,9 +50,22 @@ function RedemptionRow({ redemption }) {
           sx={{ fontWeight: 800, bgcolor: "rgba(255,255,255,0.08)", color: SEVERITY_COLOR[severity] }}
         />
       </Stack>
-      {redemption.status === "blocked_tray_contract_pending" && (
+      {redemption.status === "confirmed" && redemption.tray_order_id && (
         <Typography variant="caption" sx={{ display: "block", mt: 1, opacity: 0.6 }}>
-          Seus créditos foram devolvidos integralmente. O resgate real ainda não está disponível.
+          Pedido #{redemption.tray_order_id}
+        </Typography>
+      )}
+      {redemption.status === "reconciliation_required" && (
+        <Typography variant="caption" sx={{ display: "block", mt: 1, opacity: 0.75 }}>
+          Ainda estamos confirmando este resgate com certeza. Seus créditos ficam reservados até resolvermos — não tente resgatar de novo enquanto isso.
+        </Typography>
+      )}
+      {(redemption.status === "blocked_tray_contract_pending" ||
+        redemption.status === "blocked_tray_customer_unmapped" ||
+        redemption.status === "compensated" ||
+        redemption.status === "failed") && (
+        <Typography variant="caption" sx={{ display: "block", mt: 1, opacity: 0.6 }}>
+          Seus créditos foram devolvidos integralmente.
         </Typography>
       )}
     </Paper>

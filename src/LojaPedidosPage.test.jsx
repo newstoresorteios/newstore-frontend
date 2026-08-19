@@ -99,6 +99,38 @@ it('lista os pedidos com status legivel, inclusive o estado bloqueado da Fase E'
   expect(screen.getByText(/créditos foram devolvidos integralmente/i)).toBeInTheDocument();
 });
 
+it('pedido confirmado mostra o numero do pedido Tray', async () => {
+  listMyRedemptions.mockResolvedValue({
+    items: [{ id: 'conf-1', credits_amount: 200, status: 'confirmed', tray_order_id: '778899', created_at: '2026-08-18T12:00:00.000Z' }],
+    paging: { page: 1, limit: 50, total: 1 },
+  });
+  renderPage();
+
+  expect(await screen.findByText('Confirmado')).toBeInTheDocument();
+  expect(screen.getByText('Pedido #778899')).toBeInTheDocument();
+});
+
+it('reconciliation_required mostra aviso para nao tentar de novo', async () => {
+  listMyRedemptions.mockResolvedValue({
+    items: [{ id: 'rec-1', credits_amount: 300, status: 'reconciliation_required', created_at: '2026-08-18T12:00:00.000Z' }],
+    paging: { page: 1, limit: 50, total: 1 },
+  });
+  renderPage();
+
+  expect(await screen.findByText(/não tente resgatar de novo/i)).toBeInTheDocument();
+});
+
+it('cliente Tray nao mapeado mostra status e devolucao de creditos', async () => {
+  listMyRedemptions.mockResolvedValue({
+    items: [{ id: 'unm-1', credits_amount: 400, status: 'blocked_tray_customer_unmapped', created_at: '2026-08-18T12:00:00.000Z' }],
+    paging: { page: 1, limit: 50, total: 1 },
+  });
+  renderPage();
+
+  expect(await screen.findByText(/Não foi possível localizar seu cadastro/i)).toBeInTheDocument();
+  expect(screen.getByText(/créditos foram devolvidos integralmente/i)).toBeInTheDocument();
+});
+
 it('nunca mostra "confirmado" quando o backend nao confirmou', async () => {
   listMyRedemptions.mockResolvedValue({
     items: [{ id: 'x1', credits_amount: 100, status: 'blocked_tray_contract_pending', created_at: '2026-08-18T12:00:00.000Z' }],

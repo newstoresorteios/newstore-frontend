@@ -6,6 +6,7 @@
 // PRÉ-VALIDAÇÃO. O botão final NÃO fecha resgate — o fechamento é a Fase 5.
 
 import * as React from "react";
+import { useNavigate } from "react-router-dom";
 import {
   Alert,
   Box,
@@ -26,6 +27,7 @@ import ShoppingCartRoundedIcon from "@mui/icons-material/ShoppingCartRounded";
 
 import { formatNsCredits } from "../../services/nscredits";
 import { describeIssue, describeCartError } from "../../services/rewardCart";
+import { isRewardRedemptionEnabled } from "../../services/checkout";
 import { useCart } from "./CartContext";
 
 function Thumb({ src, alt }) {
@@ -66,8 +68,10 @@ function ItemIssues({ issues }) {
 }
 
 export default function CartDrawer({ open, onClose, walletBalance }) {
+  const navigate = useNavigate();
   const { cart, busy, validation, updateItem, removeItem, validate, loading } = useCart();
   const [error, setError] = React.useState("");
+  const redemptionEnabled = isRewardRedemptionEnabled();
 
   const issuesByItem = React.useMemo(() => {
     const map = {};
@@ -250,14 +254,27 @@ export default function CartDrawer({ open, onClose, walletBalance }) {
                 VALIDAR CARRINHO
               </Button>
 
-              {/* O fechamento do resgate é a Fase 5. Nada de checkout falso. */}
-              <Button variant="outlined" fullWidth disabled sx={{ borderRadius: 999, fontWeight: 900 }}>
+              {/* So habilita quando o carrinho estiver validado E o
+                  kill-switch do cliente (espelho do backend) estiver ligado.
+                  Nunca finge que o fechamento existe quando nao existe. */}
+              <Button
+                variant="outlined"
+                fullWidth
+                disabled={!redemptionEnabled || !validation?.valid}
+                onClick={() => {
+                  onClose();
+                  navigate("/loja/resgate");
+                }}
+                sx={{ borderRadius: 999, fontWeight: 900 }}
+              >
                 CONTINUAR
               </Button>
               <Typography variant="caption" sx={{ opacity: 0.55, textAlign: "center" }}>
-                {validation?.valid
+                {!redemptionEnabled
                   ? "O fechamento do resgate será liberado em breve."
-                  : "Valide o carrinho para conferir disponibilidade e saldo."}
+                  : validation?.valid
+                    ? "Revise seu endereço e confirme o resgate."
+                    : "Valide o carrinho para conferir disponibilidade e saldo."}
               </Typography>
 
               {temSaldo === false && !validation && (

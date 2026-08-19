@@ -34,9 +34,9 @@ describe('rotas da Loja de Prêmios', () => {
     expect(APP).not.toMatch(/path="\/loja\/admin"/);
   });
 
-  it('as rotas da loja são o catálogo, o detalhe do produto e meus pedidos', () => {
+  it('as rotas da loja são o catálogo, o detalhe do produto, meus pedidos e o resgate', () => {
     const rotasDaLoja = [...APP.matchAll(/path="(\/loja[^"]*)"/g)].map((m) => m[1]);
-    expect(rotasDaLoja.sort()).toEqual(['/loja', '/loja/pedidos', '/loja/produto/:trayProductId']);
+    expect(rotasDaLoja.sort()).toEqual(['/loja', '/loja/pedidos', '/loja/produto/:trayProductId', '/loja/resgate']);
   });
 
   it('meus pedidos exige autenticação (fica dentro de ProtectedRoute)', () => {
@@ -48,8 +48,14 @@ describe('rotas da Loja de Prêmios', () => {
     expect(APP).toMatch(/<Route path="\/loja\/produto\/:trayProductId" element=\{<LojaProdutoPage \/>\} \/>/);
   });
 
-  it('não existe rota de checkout ou resgate nesta fase', () => {
-    for (const proibida of ['/loja/checkout', '/loja/resgate', '/loja/pedido', '/loja/carrinho']) {
+  it('o resgate exige autenticação (fica dentro de ProtectedRoute) — o fechamento em si é gated por REACT_APP_REWARD_REDEMPTION_ENABLED dentro da própria página', () => {
+    const trecho = APP.match(/<Route\s+path="\/loja\/resgate"[\s\S]{0,140}/)?.[0] || '';
+    expect(trecho).toMatch(/ProtectedRoute/);
+    expect(trecho).toMatch(/LojaResgatePage/);
+  });
+
+  it('não existe rota de checkout, pedido avulso ou carrinho fora do fluxo já existente', () => {
+    for (const proibida of ['/loja/checkout', '/loja/pedido', '/loja/carrinho']) {
       expect(APP).not.toContain(`path="${proibida}"`);
     }
   });
