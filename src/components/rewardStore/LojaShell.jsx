@@ -45,7 +45,15 @@ export const lojaTheme = createTheme({
 });
 
 /** Carteira do cliente com os três estados factuais (carregando / saldo / erro). */
-const WalletCtx = React.createContext({ balance: null, loading: false, error: false, onRetry: () => {} });
+const WalletCtx = React.createContext({
+  balance: null,
+  couponCode: null,
+  expiresAt: null,
+  isExpired: false,
+  loading: false,
+  error: false,
+  onRetry: () => {},
+});
 
 export function useStoreWallet() {
   return React.useContext(WalletCtx);
@@ -91,16 +99,30 @@ function ShellChrome({ children, onBack }) {
 export default function LojaShell({ children, onBack }) {
   const { user, loading: authLoading } = useAuth();
 
-  const [wallet, setWallet] = React.useState({ balance: null, loading: false, error: false });
+  const [wallet, setWallet] = React.useState({
+    balance: null,
+    couponCode: null,
+    expiresAt: null,
+    isExpired: false,
+    loading: false,
+    error: false,
+  });
 
   const loadWallet = React.useCallback(async () => {
-    setWallet({ balance: null, loading: true, error: false });
+    setWallet((c) => ({ ...c, balance: null, loading: true, error: false }));
     try {
       const payload = await getMyNsCredits();
-      setWallet({ balance: Number(payload?.wallet?.balance ?? 0), loading: false, error: false });
+      setWallet({
+        balance: Number(payload?.wallet?.balance ?? 0),
+        couponCode: payload?.wallet?.coupon_code || null,
+        expiresAt: payload?.wallet?.expires_at || null,
+        isExpired: Boolean(payload?.wallet?.is_expired),
+        loading: false,
+        error: false,
+      });
     } catch {
       // Erro NUNCA vira saldo 0.
-      setWallet({ balance: null, loading: false, error: true });
+      setWallet({ balance: null, couponCode: null, expiresAt: null, isExpired: false, loading: false, error: true });
     }
   }, []);
 

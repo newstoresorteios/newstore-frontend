@@ -65,14 +65,19 @@ export function parseNsCreditAmountInput(value) {
 }
 
 /**
- * 8450 -> "8.450". Sem casas decimais.
+ * 8450 -> "8.450". 381.5 -> "381,50" (o saldo vem de coupon_value_cents/100,
+ * entao nunca tem mais que 2 casas decimais).
  * Ausencia de valor NAO vira "0": zero e um saldo, ausencia nao.
  */
 export function formatNsCredits(value) {
   if (value === null || value === undefined || value === "") return "—";
   const n = Number(value);
   if (!Number.isFinite(n)) return "—";
-  return Math.trunc(n).toLocaleString("pt-BR");
+  const hasFraction = Math.abs(n % 1) > 1e-9;
+  return n.toLocaleString("pt-BR", {
+    minimumFractionDigits: hasFraction ? 2 : 0,
+    maximumFractionDigits: 2,
+  });
 }
 
 /* ─────────────────────────── Erros ─────────────────────────── */

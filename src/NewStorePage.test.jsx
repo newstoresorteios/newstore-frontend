@@ -1,4 +1,9 @@
 // Testes da chamada da Loja de Prêmios na landing dos sorteios.
+//
+// FASE 5, item 45-51: a propaganda deixou de viver nas bordas (rails) e
+// passou a ficar no fluxo normal do conteúdo, entre o sorteio principal e o
+// bloco de sorteio adicional (quando existir).
+//
 // Execute com: npm test
 
 import React from 'react';
@@ -43,24 +48,21 @@ beforeEach(() => {
   );
 });
 
-it('mostra a chamada da Loja de Prêmios', async () => {
+it('mostra a chamada da Loja de Prêmios uma única vez', async () => {
   render(<NewStorePage />);
 
-  expect((await screen.findAllByText('LOJA DE PRÊMIOS NS')).length).toBeGreaterThan(0);
-  expect(screen.getAllByText('Seus NSCréditos valem prêmios.').length).toBeGreaterThan(0);
-  expect(screen.getAllByText(/Conheça os produtos disponíveis na New Store/i).length).toBeGreaterThan(0);
+  expect(await screen.findAllByText('LOJA DE PRÊMIOS NS')).toHaveLength(1);
+  expect(screen.getByText('Seus NSCréditos valem prêmios.')).toBeInTheDocument();
+  expect(screen.getByText(/Conheça os produtos disponíveis na New Store/i)).toBeInTheDocument();
 });
 
-it('todo CTA da loja leva para /loja', async () => {
+it('o CTA da loja leva para /loja', async () => {
   render(<NewStorePage />);
 
-  const ctas = await screen.findAllByText('CONHECER A LOJA');
-  expect(ctas.length).toBeGreaterThan(0);
-  ctas.forEach((cta) => {
-    const link = cta.closest('a');
-    expect(link).toBeTruthy();
-    expect(link.getAttribute('href')).toBe('/loja');
-  });
+  const cta = await screen.findByText('VER PRÊMIOS');
+  const link = cta.closest('a');
+  expect(link).toBeTruthy();
+  expect(link.getAttribute('href')).toBe('/loja');
 });
 
 it('não mostra saldo fictício de NSCréditos', async () => {
@@ -80,41 +82,40 @@ it('a landing do sorteio continua renderizando', async () => {
   expect(screen.getByText(/Participe, concorra e ainda receba 100% do valor de volta/i)).toBeInTheDocument();
 });
 
-it('a chamada da loja NÃO fica mais entre a introdução e a cartela', async () => {
+it('ordem no DOM: sorteio principal < propaganda da Loja < bloco de sorteio adicional', async () => {
   const { container } = render(<NewStorePage />);
 
   await screen.findAllByText('LOJA DE PRÊMIOS NS');
   const texto = container.textContent;
 
   const intro = texto.indexOf('Bem-vindos ao Sorteio da');
-  const cartela = texto.indexOf('Sorteio de um Watch Winder');
-  const primeiroBanner = texto.indexOf('LOJA DE PRÊMIOS NS');
+  const fimDaCartela = texto.indexOf('primeiro sorteio da');
+  const banner = texto.indexOf('LOJA DE PRÊMIOS NS');
+  // Sem sorteio adicional mockado, este é o marcador real do bloco (item 50:
+  // a propaganda não pode depender de existir um sorteio adicional).
+  const blocoAdicional = texto.indexOf('Nenhum sorteio adicional aberto no momento');
 
   expect(intro).toBeGreaterThanOrEqual(0);
-  expect(cartela).toBeGreaterThan(intro);
-  // O banner não pode estar no intervalo entre a introdução e a cartela.
-  expect(primeiroBanner).toBeGreaterThan(cartela);
+  expect(fimDaCartela).toBeGreaterThan(intro);
+  expect(banner).toBeGreaterThan(fimDaCartela);
+  expect(blocoAdicional).toBeGreaterThan(banner);
 });
 
-it('a propaganda vive nas bordas (colunas fixas) e numa faixa de rodapé', async () => {
-  render(<NewStorePage />);
-
-  // Duas colunas laterais + uma faixa compacta = 3 ocorrências no DOM.
-  // A visibilidade de cada uma é decidida por media query no CSS.
-  const chamadas = await screen.findAllByText('LOJA DE PRÊMIOS NS');
-  expect(chamadas.length).toBe(3);
-
-  const rails = document.querySelectorAll('[aria-label="Loja de Prêmios NS"]');
-  expect(rails.length).toBe(2);
-});
-
-it('as colunas laterais são fixas e ficam fora do fluxo do conteúdo', async () => {
+it('não existem mais colunas fixas (rails) nas bordas da página', async () => {
   render(<NewStorePage />);
   await screen.findAllByText('LOJA DE PRÊMIOS NS');
 
   const rails = document.querySelectorAll('[aria-label="Loja de Prêmios NS"]');
-  rails.forEach((rail) => {
-    // position:fixed garante que não empurram a grade do sorteio.
-    expect(window.getComputedStyle(rail).position).toBe('fixed');
-  });
+  // Um único banner, no fluxo normal — nenhum elemento position:fixed.
+  expect(rails.length).toBe(1);
+  expect(window.getComputedStyle(rails[0]).position).not.toBe('fixed');
+});
+
+it('o banner participa do layout normal (não é absoluto/fixo, não poderia sobrepor a cartela)', async () => {
+  render(<NewStorePage />);
+  await screen.findAllByText('LOJA DE PRÊMIOS NS');
+
+  const banner = document.querySelector('[aria-label="Loja de Prêmios NS"]');
+  const position = window.getComputedStyle(banner).position;
+  expect(['static', 'relative', '']).toContain(position);
 });

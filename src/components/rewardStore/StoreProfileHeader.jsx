@@ -35,6 +35,21 @@ export function formatMemberSince(value) {
   return d.toLocaleDateString("pt-BR", { month: "long", year: "numeric" });
 }
 
+/**
+ * Usa os componentes UTC da data, nao o fuso local do navegador: a validade
+ * de um cupom e uma data de calendario factual, nunca deve "andar" um dia
+ * para tras so por causa do fuso de quem esta olhando a tela.
+ */
+export function formatShortDate(value) {
+  if (!value) return null;
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return null;
+  const day = String(d.getUTCDate()).padStart(2, "0");
+  const month = String(d.getUTCMonth() + 1).padStart(2, "0");
+  const year = String(d.getUTCFullYear()).slice(-2);
+  return `${day}/${month}/${year}`;
+}
+
 /** Célula do resumo. `pending` marca o dado que ainda não existe no backend. */
 function SummaryCell({ label, value, hint, pending }) {
   return (
@@ -101,14 +116,37 @@ function BalanceCell({ wallet }) {
     );
   }
 
+  const { couponCode, expiresAt, isExpired } = wallet || {};
+  const expiresLabel = formatShortDate(expiresAt);
+
   return (
     <Stack spacing={0.25} sx={{ minWidth: 140 }}>
       <Typography variant="caption" sx={{ opacity: 0.6, fontWeight: 700, letterSpacing: 0.4 }}>
         SALDO DISPONÍVEL
       </Typography>
-      <Typography sx={{ fontWeight: 900, fontSize: { xs: 20, md: 24 }, color: "secondary.main", lineHeight: 1.2 }}>
+      <Typography
+        sx={{
+          fontWeight: 900,
+          fontSize: { xs: 20, md: 24 },
+          color: isExpired ? "rgba(255,255,255,0.45)" : "secondary.main",
+          lineHeight: 1.2,
+          textDecoration: isExpired ? "line-through" : "none",
+        }}
+      >
         {formatNsCredits(balance ?? 0)} NSCréditos
       </Typography>
+      {isExpired && (
+        <Typography variant="caption" sx={{ color: "error.main", fontWeight: 700 }}>
+          Vencido — não pode ser usado em resgates
+        </Typography>
+      )}
+      {!isExpired && (couponCode || expiresLabel) && (
+        <Typography variant="caption" sx={{ opacity: 0.55 }}>
+          {[couponCode ? `Código: ${couponCode}` : null, expiresLabel ? `Válidos até ${expiresLabel}` : null]
+            .filter(Boolean)
+            .join(" · ")}
+        </Typography>
+      )}
     </Stack>
   );
 }
@@ -223,9 +261,10 @@ export default function StoreProfileHeader({ user, loading, wallet }) {
         </Stack>
 
         <Button
+          component={RouterLink}
+          to="/loja/pedidos"
           startIcon={<ReceiptLongRoundedIcon />}
           variant="outlined"
-          disabled
           sx={{
             fontWeight: 900,
             borderRadius: 999,
