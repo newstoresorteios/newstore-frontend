@@ -2,7 +2,7 @@
 // Execute com: npm test
 
 import React from 'react';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 jest.mock(
@@ -53,6 +53,11 @@ jest.mock('./services/checkout', () => {
   };
 });
 
+jest.mock('./services/rewardProfile', () => ({
+  getMyProfile: jest.fn(),
+  updateMyBirthDate: jest.fn(),
+}));
+
 import { getMyNsCredits } from './services/nscredits';
 import {
   getCheckoutBootstrap,
@@ -61,6 +66,7 @@ import {
   confirmRedemption,
   isRewardRedemptionEnabled,
 } from './services/checkout';
+import { getMyProfile, updateMyBirthDate } from './services/rewardProfile';
 import LojaResgatePage from './LojaResgatePage';
 
 function addr(overrides = {}) {
@@ -104,6 +110,7 @@ beforeEach(() => {
   isRewardRedemptionEnabled.mockReturnValue(true);
   getCheckoutBootstrap.mockResolvedValue({ wallet: { balance: 20 }, addresses: [addr()] });
   prepareRedemption.mockResolvedValue(preparedPayload());
+  getMyProfile.mockResolvedValue({ id: 42, name: 'Joao', email: 'joao@x.com', birth_date: '1990-01-01', profile_complete_for_reward: true, missing_reward_fields: [] });
 });
 
 it('kill-switch desligado: nao chama nenhuma API, mostra aviso honesto', async () => {
@@ -119,6 +126,27 @@ it('visitante nao autenticado ve convite para entrar', async () => {
   renderPage();
 
   expect(await screen.findByText(/Entre na sua conta/i)).toBeInTheDocument();
+});
+
+it('perfil incompleto (sem birth_date): mostra COMPLETE SEUS DADOS, nunca a revisao direto', async () => {
+  getMyProfile.mockResolvedValue({ id: 42, name: 'Joao', email: 'joao@x.com', birth_date: null, profile_complete_for_reward: false, missing_reward_fields: ['birth_date'] });
+  renderPage();
+
+  expect(await screen.findByText(/Complete seus dados para continuar/i)).toBeInTheDocument();
+  expect(getCheckoutBootstrap).toHaveBeenCalled(); // bootstrap roda em paralelo, so a UI muda
+});
+
+it('salvar data de nascimento libera o fluxo normal sem pedir de novo', async () => {
+  getMyProfile.mockResolvedValue({ id: 42, name: 'Joao', email: 'joao@x.com', birth_date: null, profile_complete_for_reward: false, missing_reward_fields: ['birth_date'] });
+  updateMyBirthDate.mockResolvedValue({ birth_date: '1990-05-20', profile_complete_for_reward: true, missing_reward_fields: [] });
+  renderPage();
+
+  const input = await screen.findByLabelText(/Data de nascimento/i);
+  fireEvent.change(input, { target: { value: '1990-05-20' } });
+  userEvent.click(screen.getByRole('button', { name: /SALVAR E CONTINUAR/i }));
+
+  await waitFor(() => expect(updateMyBirthDate).toHaveBeenCalledWith('1990-05-20'));
+  expect(await screen.findByText('Citizen Promaster')).toBeInTheDocument();
 });
 
 it('endereco padrao ja vem selecionado e dispara a revisao automaticamente', async () => {

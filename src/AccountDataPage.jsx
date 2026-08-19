@@ -57,6 +57,17 @@ function getUserPhone(user) {
   return String(user?.phone || user?.telefone || user?.phone_number || "").trim();
 }
 
+function getUserBirthDate(user) {
+  return String(user?.birth_date || "").trim();
+}
+
+function formatBirthDateDisplay(value) {
+  const s = String(value || "").trim();
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(s);
+  if (!m) return "";
+  return `${m[3]}/${m[2]}/${m[1]}`;
+}
+
 function readStoredUser() {
   try {
     return JSON.parse(localStorage.getItem("me") || "null");
@@ -76,6 +87,10 @@ export default function AccountDataPage() {
   const [phoneInput, setPhoneInput] = React.useState("");
   const [phoneSaving, setPhoneSaving] = React.useState(false);
   const [phoneStatus, setPhoneStatus] = React.useState(null);
+  const [birthDateEditing, setBirthDateEditing] = React.useState(false);
+  const [birthDateInput, setBirthDateInput] = React.useState("");
+  const [birthDateSaving, setBirthDateSaving] = React.useState(false);
+  const [birthDateStatus, setBirthDateStatus] = React.useState(null);
   const [whatsappConsent, setWhatsappConsent] = React.useState(null);
   const [whatsappLoading, setWhatsappLoading] = React.useState(true);
   const [whatsappSaving, setWhatsappSaving] = React.useState(false);
@@ -92,6 +107,7 @@ export default function AccountDataPage() {
         if (!alive) return;
         setUser(nextUser);
         setPhoneInput(getUserPhone(nextUser));
+        setBirthDateInput(getUserBirthDate(nextUser));
         try { if (nextUser) localStorage.setItem("me", JSON.stringify(nextUser)); } catch {}
       } catch {
         if (alive) setLoadError(true);
@@ -119,10 +135,16 @@ export default function AccountDataPage() {
     if (!phoneEditing) setPhoneInput(getUserPhone(user));
   }, [phoneEditing, user]);
 
+  React.useEffect(() => {
+    if (!birthDateEditing) setBirthDateInput(getUserBirthDate(user));
+  }, [birthDateEditing, user]);
+
   const accountName = user?.name || user?.fullName || user?.nome || user?.displayName || user?.username || "Não informado";
   const accountEmail = user?.email || "Não informado";
   const accountPhone = getUserPhone(user);
   const accountPhoneText = accountPhone || "Não informado";
+  const accountBirthDate = getUserBirthDate(user);
+  const accountBirthDateText = formatBirthDateDisplay(accountBirthDate) || "Não informado";
   const whatsappEnabled = whatsappConsent?.can_send === true;
 
   const doLogout = () => {
@@ -169,6 +191,43 @@ export default function AccountDataPage() {
       setPhoneStatus({ type: "error", message: "Não foi possível salvar o telefone. Tente novamente." });
     } finally {
       setPhoneSaving(false);
+    }
+  }
+
+  async function handleSaveBirthDate() {
+    const birthDate = String(birthDateInput || "").trim();
+    setBirthDateStatus(null);
+
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(birthDate)) {
+      setBirthDateStatus({ type: "error", message: "Informe uma data de nascimento válida." });
+      return;
+    }
+
+    try {
+      setBirthDateSaving(true);
+      const r = await fetch(apiJoin("/me/birth-date"), {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", ...authHeaders() },
+        credentials: "include",
+        body: JSON.stringify({ birth_date: birthDate }),
+      });
+      const data = await r.json().catch(() => ({}));
+
+      if (!r.ok || data?.ok === false) {
+        setBirthDateStatus({ type: "error", message: "Informe uma data de nascimento válida." });
+        return;
+      }
+
+      const nextUser = { ...(user || {}), birth_date: data?.profile?.birth_date || birthDate };
+      setUser(nextUser);
+      setBirthDateInput(getUserBirthDate(nextUser));
+      setBirthDateEditing(false);
+      setBirthDateStatus({ type: "success", message: "Data de nascimento salva com sucesso." });
+      try { localStorage.setItem("me", JSON.stringify(nextUser)); } catch {}
+    } catch {
+      setBirthDateStatus({ type: "error", message: "Não foi possível salvar a data de nascimento. Tente novamente." });
+    } finally {
+      setBirthDateSaving(false);
     }
   }
 
@@ -325,6 +384,63 @@ export default function AccountDataPage() {
                 {phoneStatus && (
                   <Alert severity={phoneStatus.type} variant="outlined" sx={{ maxWidth: 520 }}>
                     {phoneStatus.message}
+                  </Alert>
+                )}
+
+                <Stack spacing={1.5}>
+                  <Typography variant="body2" sx={{ opacity: 0.75 }}>Data de nascimento</Typography>
+                  <Typography variant="caption" sx={{ opacity: 0.62 }}>
+                    Usada apenas para viabilizar o resgate na Loja de Prêmios NS.
+                  </Typography>
+                  {birthDateEditing ? (
+                    <Stack spacing={1.5} sx={{ maxWidth: 420 }}>
+                      <TextField
+                        label="Data de nascimento"
+                        type="date"
+                        value={birthDateInput}
+                        onChange={(e) => setBirthDateInput(e.target.value)}
+                        disabled={birthDateSaving}
+                        fullWidth
+                        InputLabelProps={{ shrink: true }}
+                      />
+                      <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
+                        <Button variant="contained" color="success" onClick={handleSaveBirthDate} disabled={birthDateSaving}>
+                          {birthDateSaving ? "Salvando..." : "Salvar"}
+                        </Button>
+                        <Button
+                          variant="text"
+                          onClick={() => {
+                            setBirthDateEditing(false);
+                            setBirthDateInput(accountBirthDate);
+                            setBirthDateStatus(null);
+                          }}
+                          disabled={birthDateSaving}
+                        >
+                          Cancelar
+                        </Button>
+                      </Stack>
+                    </Stack>
+                  ) : (
+                    <Stack direction={{ xs: "column", sm: "row" }} spacing={1.5} alignItems={{ xs: "flex-start", sm: "center" }}>
+                      <Typography fontWeight={800}>{accountBirthDateText}</Typography>
+                      <Button
+                        variant="outlined"
+                        size="small"
+                        onClick={() => {
+                          setBirthDateInput(accountBirthDate);
+                          setBirthDateStatus(null);
+                          setBirthDateEditing(true);
+                        }}
+                      >
+                        {accountBirthDate ? "Editar data de nascimento" : "Adicionar data de nascimento"}
+                      </Button>
+                    </Stack>
+                  )}
+                </Stack>
+
+                {birthDateStatus && (
+                  <Alert severity={birthDateStatus.type} variant="outlined" sx={{ maxWidth: 520 }}>
+                    {birthDateStatus.message}
                   </Alert>
                 )}
 

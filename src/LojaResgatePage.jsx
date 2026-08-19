@@ -47,6 +47,7 @@ import {
   isRewardRedemptionEnabled,
 } from "./services/checkout";
 import { formatShortDate } from "./components/rewardStore/StoreProfileHeader";
+import { getMyProfile, updateMyBirthDate } from "./services/rewardProfile";
 
 const EMPTY_ADDRESS_FORM = {
   recipient_name: "",
@@ -169,6 +170,69 @@ function AddressStep({ addresses, selectedId, onSelect, onAddressCreated }) {
           </Box>
         </Paper>
       )}
+    </Stack>
+  );
+}
+
+/* ───────────────── Passo 0: completar perfil (se faltar dado) ───────────────── */
+//
+// A Tray exige birth_date pra criar o Customer (rewardProfile.js, backend).
+// So aparece quando falta -- uma vez salvo, nunca mais pede de novo
+// (mesmo padrao do telefone em /conta).
+
+function ProfileCompletionStep({ onComplete }) {
+  const [birthDate, setBirthDate] = React.useState("");
+  const [saving, setSaving] = React.useState(false);
+  const [error, setError] = React.useState("");
+
+  async function submit(e) {
+    e.preventDefault();
+    setSaving(true);
+    setError("");
+    try {
+      const profile = await updateMyBirthDate(birthDate);
+      onComplete(profile);
+    } catch (err) {
+      setError(describeCheckoutError(err, "Não foi possível salvar seus dados agora."));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Stack spacing={2}>
+      <Typography sx={{ fontWeight: 900, fontSize: 20 }}>Complete seus dados para continuar</Typography>
+      <Typography variant="body2" sx={{ opacity: 0.75 }}>
+        Para criar seu pedido, precisamos apenas da sua data de nascimento. Isso é salvo no seu perfil — você não
+        precisará informar de novo em resgates futuros.
+      </Typography>
+
+      <Paper variant="outlined" sx={{ p: 2.5, borderRadius: 3, borderColor: "rgba(255,255,255,0.10)" }}>
+        <Box component="form" onSubmit={submit}>
+          <Stack spacing={1.5}>
+            {error && <Alert severity="error">{error}</Alert>}
+            <TextField
+              label="Data de nascimento"
+              type="date"
+              size="small"
+              required
+              value={birthDate}
+              onChange={(e) => setBirthDate(e.target.value)}
+              InputLabelProps={{ shrink: true }}
+              disabled={saving}
+            />
+            <Button
+              type="submit"
+              variant="contained"
+              disabled={saving}
+              startIcon={saving ? <CircularProgress size={16} /> : null}
+              sx={{ bgcolor: "primary.main", color: "#0E0E0E", fontWeight: 900, borderRadius: 999, alignSelf: "flex-start", px: 3 }}
+            >
+              SALVAR E CONTINUAR
+            </Button>
+          </Stack>
+        </Box>
+      </Paper>
     </Stack>
   );
 }
@@ -355,6 +419,7 @@ function ResgateConteudo() {
   const [bootError, setBootError] = React.useState("");
   const [addresses, setAddresses] = React.useState([]);
   const [selectedAddressId, setSelectedAddressId] = React.useState(null);
+  const [profileComplete, setProfileComplete] = React.useState(true);
 
   const [prepared, setPrepared] = React.useState(null);
   const [prepareLoading, setPrepareLoading] = React.useState(false);
@@ -376,12 +441,13 @@ function ResgateConteudo() {
       setBootLoading(true);
       setBootError("");
       try {
-        const out = await getCheckoutBootstrap();
+        const [out, profile] = await Promise.all([getCheckoutBootstrap(), getMyProfile()]);
         if (cancelled) return;
         const list = Array.isArray(out?.addresses) ? out.addresses : [];
         setAddresses(list);
         const def = list.find((a) => a.is_default) || list[0] || null;
         if (def) setSelectedAddressId(def.id);
+        setProfileComplete(profile?.profile_complete_for_reward !== false);
       } catch (e) {
         if (!cancelled) setBootError(describeCheckoutError(e, "Não foi possível carregar o checkout agora."));
       } finally {
@@ -408,9 +474,11 @@ function ResgateConteudo() {
   }, []);
 
   React.useEffect(() => {
-    if (!selectedAddressId) return;
+    // Nao adianta revisar o resgate enquanto falta dado de perfil exigido
+    // pela Tray -- evita uma chamada de rede que so seria descartada.
+    if (!selectedAddressId || !profileComplete) return;
     runPrepare(selectedAddressId);
-  }, [selectedAddressId, runPrepare]);
+  }, [selectedAddressId, profileComplete, runPrepare]);
 
   async function handleConfirm() {
     if (confirming) return; // anti-duplo-clique: nunca reemitir enquanto ha uma tentativa em voo
@@ -463,6 +531,10 @@ function ResgateConteudo() {
 
   if (bootError) {
     return <Alert severity="error">{bootError}</Alert>;
+  }
+
+  if (!profileComplete) {
+    return <ProfileCompletionStep onComplete={() => setProfileComplete(true)} />;
   }
 
   return (
