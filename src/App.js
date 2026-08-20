@@ -33,6 +33,7 @@ import LojaPedidosPage from "./LojaPedidosPage";
 import LojaResgatePage from "./LojaResgatePage";
 import AdminLojaPremiosPage from "./AdminLojaPremiosPage";
 import PushPermissionPrompt from "./components/PushPermissionPrompt";
+import DeveloperWatermark from "./components/DeveloperWatermark";
 
 export default function App() {
   const [selecionados, setSelecionados] = React.useState([]);
@@ -208,6 +209,9 @@ export default function App() {
             />
           </Routes>
           <PushPermissionPrompt />
+          {/* Assinatura institucional das áreas públicas (sorteios + Loja NS).
+              O próprio componente se esconde em /admin. */}
+          <DeveloperWatermark />
         </BrowserRouter>
       </SelectionContext.Provider>
     </AuthProvider>
