@@ -5,7 +5,8 @@ import React from 'react';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
-jest.mock('react-router-dom', () => ({ useNavigate: () => jest.fn() }), { virtual: true });
+const mockNavigate = jest.fn();
+jest.mock('react-router-dom', () => ({ useNavigate: () => mockNavigate }), { virtual: true });
 
 jest.mock('../../services/rewardCart', () => {
   const actual = jest.requireActual('../../services/rewardCart');
@@ -137,7 +138,7 @@ describe('pre-validacao', () => {
     renderDrawer();
     await screen.findByText('Citizen Promaster');
 
-    userEvent.click(screen.getByRole('button', { name: /VALIDAR CARRINHO/i }));
+    userEvent.click(screen.getByRole('button', { name: /RESGATAR/i }));
     expect(await screen.findByText(/pronto para revisão/i)).toBeInTheDocument();
   });
 
@@ -152,7 +153,7 @@ describe('pre-validacao', () => {
 
     renderDrawer();
     await screen.findByText('Citizen Promaster');
-    userEvent.click(screen.getByRole('button', { name: /VALIDAR CARRINHO/i }));
+    userEvent.click(screen.getByRole('button', { name: /RESGATAR/i }));
 
     expect(await screen.findByText(/Saldo insuficiente/i)).toBeInTheDocument();
     expect(screen.getByText(/Você possui: 8.450 NSCréditos/i)).toBeInTheDocument();
@@ -171,7 +172,7 @@ describe('pre-validacao', () => {
 
     renderDrawer();
     await screen.findByText('Citizen Promaster');
-    userEvent.click(screen.getByRole('button', { name: /VALIDAR CARRINHO/i }));
+    userEvent.click(screen.getByRole('button', { name: /RESGATAR/i }));
 
     expect(await screen.findByText(/vencido/i)).toBeInTheDocument();
     expect(screen.queryByText(/Saldo insuficiente/i)).not.toBeInTheDocument();
@@ -189,7 +190,7 @@ describe('pre-validacao', () => {
 
     renderDrawer();
     await screen.findByText('Citizen Promaster');
-    userEvent.click(screen.getByRole('button', { name: /VALIDAR CARRINHO/i }));
+    userEvent.click(screen.getByRole('button', { name: /RESGATAR/i }));
 
     expect(await screen.findByText(/opção escolhida está indisponível/i)).toBeInTheDocument();
   });
@@ -205,7 +206,7 @@ describe('pre-validacao', () => {
 
     renderDrawer();
     await screen.findByText('Citizen Promaster');
-    userEvent.click(screen.getByRole('button', { name: /VALIDAR CARRINHO/i }));
+    userEvent.click(screen.getByRole('button', { name: /RESGATAR/i }));
 
     expect(await screen.findByText(/não está mais disponível na Loja/i)).toBeInTheDocument();
     expect(screen.getByText('Citizen Promaster')).toBeInTheDocument();
@@ -222,7 +223,7 @@ describe('pre-validacao', () => {
 
     renderDrawer();
     await screen.findByText('Citizen Promaster');
-    userEvent.click(screen.getByRole('button', { name: /VALIDAR CARRINHO/i }));
+    userEvent.click(screen.getByRole('button', { name: /RESGATAR/i }));
 
     expect(await screen.findByText(/confirmar a disponibilidade/i)).toBeInTheDocument();
     expect(screen.queryByText(/pronto para revisão/i)).not.toBeInTheDocument();
@@ -239,23 +240,37 @@ describe('pre-validacao', () => {
 });
 
 describe('fechamento ainda nao existe', () => {
-  it('o botao CONTINUAR fica desabilitado mesmo com carrinho valido', async () => {
+  it('com o kill-switch desligado, RESGATAR valida mas NAO avanca', async () => {
     renderDrawer();
     await screen.findByText('Citizen Promaster');
 
-    userEvent.click(screen.getByRole('button', { name: /VALIDAR CARRINHO/i }));
+    userEvent.click(screen.getByRole('button', { name: /RESGATAR/i }));
     await screen.findByText(/pronto para revisão/i);
 
-    expect(screen.getByRole('button', { name: 'CONTINUAR' })).toBeDisabled();
+    // a validacao real rodou...
+    expect(validateCart).toHaveBeenCalled();
+    // ...mas o fechamento nao existe ainda: nao navega pro resgate
+    expect(mockNavigate).not.toHaveBeenCalled();
     expect(screen.getByText(/fechamento do resgate será liberado em breve/i)).toBeInTheDocument();
+  });
+
+  it('a etapa tecnica "VALIDAR CARRINHO" nao aparece mais pro cliente', async () => {
+    renderDrawer();
+    await screen.findByText('Citizen Promaster');
+
+    expect(screen.queryByRole('button', { name: /VALIDAR/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'CONTINUAR' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /RESGATAR/i })).toBeInTheDocument();
   });
 
   it('nao existe botao de finalizar resgate', async () => {
     renderDrawer();
     await screen.findByText('Citizen Promaster');
 
+    // O CTA do carrinho e RESGATAR, mas ele NAO finaliza nada por conta
+    // propria: valida e, so com o kill-switch ligado, navega pro checkout.
     expect(screen.queryByRole('button', { name: /FINALIZAR RESGATE/i })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /RESGATAR/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /CONFIRMAR RESGATE/i })).not.toBeInTheDocument();
   });
 });
 

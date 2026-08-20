@@ -90,6 +90,16 @@ export default function CartDrawer({ open, onClose, walletBalance }) {
     }
   }
 
+  // Valida (mesma chamada de sempre) e so entao segue pro resgate. Carrinho
+  // invalido nao avanca -- os problemas continuam aparecendo nos alerts.
+  async function resgatar() {
+    const out = await validate();
+    if (out?.valid && redemptionEnabled) {
+      onClose();
+      navigate("/loja/resgate");
+    }
+  }
+
   const total = cart.totals?.nscredits ?? 0;
   const saldo = validation?.wallet?.balance ?? walletBalance;
   const temSaldo = typeof saldo === "number" ? saldo >= total : null;
@@ -243,38 +253,28 @@ export default function CartDrawer({ open, onClose, walletBalance }) {
                 </Alert>
               ))}
 
+              {/* CTA unico: "validar" e uma etapa TECNICA, nao algo que o
+                  cliente precise entender. A validacao continua acontecendo
+                  exatamente como antes -- so deixou de ter um botao proprio.
+                  So avanca com o carrinho valido E o kill-switch do cliente
+                  (espelho do backend) ligado: nunca finge que o fechamento
+                  existe quando nao existe. */}
               <Button
                 variant="contained"
                 fullWidth
                 disabled={busy}
                 startIcon={busy ? <CircularProgress size={16} /> : null}
-                onClick={() => run(validate)}
+                onClick={() => run(resgatar)}
                 sx={{ bgcolor: "primary.main", color: "#0E0E0E", fontWeight: 900, borderRadius: 999 }}
               >
-                VALIDAR CARRINHO
-              </Button>
-
-              {/* So habilita quando o carrinho estiver validado E o
-                  kill-switch do cliente (espelho do backend) estiver ligado.
-                  Nunca finge que o fechamento existe quando nao existe. */}
-              <Button
-                variant="outlined"
-                fullWidth
-                disabled={!redemptionEnabled || !validation?.valid}
-                onClick={() => {
-                  onClose();
-                  navigate("/loja/resgate");
-                }}
-                sx={{ borderRadius: 999, fontWeight: 900 }}
-              >
-                CONTINUAR
+                RESGATAR
               </Button>
               <Typography variant="caption" sx={{ opacity: 0.55, textAlign: "center" }}>
                 {!redemptionEnabled
                   ? "O fechamento do resgate será liberado em breve."
                   : validation?.valid
                     ? "Revise seu endereço e confirme o resgate."
-                    : "Valide o carrinho para conferir disponibilidade e saldo."}
+                    : "Conferimos disponibilidade e saldo antes de continuar."}
               </Typography>
 
               {temSaldo === false && !validation && (

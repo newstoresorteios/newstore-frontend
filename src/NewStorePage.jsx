@@ -36,7 +36,9 @@ import HelpOutlineOutlinedIcon from "@mui/icons-material/HelpOutlineOutlined";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 
 import GiftCardSimulator from "./components/GiftCardSimulator.jsx";
-import LojaPromo from "./components/rewardStore/LojaPromo";
+// LojaPromo segue existindo em components/rewardStore/LojaPromo.jsx; o import
+// sai junto com o uso porque um import nao utilizado quebra o build (CI trata
+// warning como erro). Reimportar aqui quando a entrada publica voltar.
 
 import {
   AppBar,
@@ -2494,10 +2496,13 @@ Baseado no resultado oficial da Lotomania (Caixa Econômica Federal).
           </Paper>
           {/* === FIM CARTELA === */}
 
-          {/* Propaganda da Loja de Prêmios NS: sempre entre o sorteio principal
-              e o bloco de sorteio adicional, dentro do fluxo normal do
-              conteúdo. Não depende de existir sorteio adicional. */}
-          <LojaPromo />
+          {/* Propaganda da Loja de Prêmios NS (componente preservado em
+              components/rewardStore/LojaPromo.jsx): OCULTA durante a fase de
+              testes controlados da Loja NS. A loja continua funcionando --
+              /loja, /loja/produto/:id, /loja/resgate e /loja/pedidos seguem
+              acessíveis por digitação direta. Aqui escondemos apenas a
+              ENTRADA pública a partir da landing dos sorteios; para voltar a
+              exibir, basta reimportar e renderizar <LojaPromo /> neste ponto. */}
 
           {additionalLoading && (
             <Alert severity="info" sx={{ bgcolor: "rgba(2,136,209,0.12)" }}>

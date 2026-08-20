@@ -48,27 +48,35 @@ beforeEach(() => {
   );
 });
 
-it('mostra a chamada da Loja de Prêmios uma única vez', async () => {
+// Fase de testes controlados da Loja NS: a ENTRADA publica a partir da landing
+// dos sorteios fica escondida. A loja em si continua existindo e acessivel por
+// digitacao direta (/loja) -- ver appRoutes.test.js.
+it('nao apresenta a entrada publica da Loja de Premios na landing', async () => {
   render(<NewStorePage />);
 
-  expect(await screen.findAllByText('LOJA DE PRÊMIOS NS')).toHaveLength(1);
-  expect(screen.getByText('Seus NSCréditos valem prêmios.')).toBeInTheDocument();
-  expect(screen.getByText(/Conheça os produtos disponíveis na New Store/i)).toBeInTheDocument();
+  // espera a landing montar antes de afirmar ausencia
+  await screen.findByText(/Bem-vindos ao Sorteio da/i);
+
+  expect(screen.queryByText('LOJA DE PRÊMIOS NS')).not.toBeInTheDocument();
+  expect(screen.queryByText('VER PRÊMIOS')).not.toBeInTheDocument();
+  expect(screen.queryByText('Seus NSCréditos valem prêmios.')).not.toBeInTheDocument();
 });
 
-it('o CTA da loja leva para /loja', async () => {
-  render(<NewStorePage />);
+it('nao existe nenhum link para /loja na landing dos sorteios', async () => {
+  const { container } = render(<NewStorePage />);
 
-  const cta = await screen.findByText('VER PRÊMIOS');
-  const link = cta.closest('a');
-  expect(link).toBeTruthy();
-  expect(link.getAttribute('href')).toBe('/loja');
+  await screen.findByText(/Bem-vindos ao Sorteio da/i);
+
+  const lojaLinks = Array.from(container.querySelectorAll('a[href]')).filter((a) =>
+    (a.getAttribute('href') || '').startsWith('/loja')
+  );
+  expect(lojaLinks).toHaveLength(0);
 });
 
 it('não mostra saldo fictício de NSCréditos', async () => {
   const { container } = render(<NewStorePage />);
 
-  await screen.findAllByText('LOJA DE PRÊMIOS NS');
+  await screen.findByText(/Bem-vindos ao Sorteio da/i);
   // A carteira do cliente ainda não existe: nada de "Você possui N NSCréditos".
   expect(container.textContent).not.toMatch(/você possui[\s\S]{0,20}nscréditos/i);
   expect(container.textContent).not.toMatch(/saldo[\s\S]{0,20}nscréditos/i);
@@ -77,45 +85,12 @@ it('não mostra saldo fictício de NSCréditos', async () => {
 it('a landing do sorteio continua renderizando', async () => {
   render(<NewStorePage />);
 
-  await screen.findAllByText('LOJA DE PRÊMIOS NS');
+  await screen.findByText(/Bem-vindos ao Sorteio da/i);
   expect(screen.getByText(/Bem-vindos ao Sorteio da/i)).toBeInTheDocument();
   expect(screen.getByText(/Participe, concorra e ainda receba 100% do valor de volta/i)).toBeInTheDocument();
 });
 
-it('ordem no DOM: sorteio principal < propaganda da Loja < bloco de sorteio adicional', async () => {
-  const { container } = render(<NewStorePage />);
-
-  await screen.findAllByText('LOJA DE PRÊMIOS NS');
-  const texto = container.textContent;
-
-  const intro = texto.indexOf('Bem-vindos ao Sorteio da');
-  const fimDaCartela = texto.indexOf('primeiro sorteio da');
-  const banner = texto.indexOf('LOJA DE PRÊMIOS NS');
-  // Sem sorteio adicional mockado, este é o marcador real do bloco (item 50:
-  // a propaganda não pode depender de existir um sorteio adicional).
-  const blocoAdicional = texto.indexOf('Nenhum sorteio adicional aberto no momento');
-
-  expect(intro).toBeGreaterThanOrEqual(0);
-  expect(fimDaCartela).toBeGreaterThan(intro);
-  expect(banner).toBeGreaterThan(fimDaCartela);
-  expect(blocoAdicional).toBeGreaterThan(banner);
-});
-
-it('não existem mais colunas fixas (rails) nas bordas da página', async () => {
-  render(<NewStorePage />);
-  await screen.findAllByText('LOJA DE PRÊMIOS NS');
-
-  const rails = document.querySelectorAll('[aria-label="Loja de Prêmios NS"]');
-  // Um único banner, no fluxo normal — nenhum elemento position:fixed.
-  expect(rails.length).toBe(1);
-  expect(window.getComputedStyle(rails[0]).position).not.toBe('fixed');
-});
-
-it('o banner participa do layout normal (não é absoluto/fixo, não poderia sobrepor a cartela)', async () => {
-  render(<NewStorePage />);
-  await screen.findAllByText('LOJA DE PRÊMIOS NS');
-
-  const banner = document.querySelector('[aria-label="Loja de Prêmios NS"]');
-  const position = window.getComputedStyle(banner).position;
-  expect(['static', 'relative', '']).toContain(position);
-});
+// Os testes de POSICAO/ORDEM da propaganda no DOM da landing sairam junto com a
+// propria propaganda: ela esta oculta durante a fase de testes controlados da
+// Loja NS. O componente segue em components/rewardStore/LojaPromo.jsx -- quando
+// a entrada publica voltar, estes testes voltam com ela.

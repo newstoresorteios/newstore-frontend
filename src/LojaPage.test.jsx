@@ -101,7 +101,9 @@ describe('catálogo', () => {
     expect(screen.getAllByText('5.000').length).toBeGreaterThan(0);
     expect(screen.getAllByText('VALOR EM NSCRÉDITOS').length).toBeGreaterThan(0);
     expect(screen.getByText('DISPONÍVEL')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'VISUALIZAR' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'RESGATAR' })).toBeInTheDocument();
+    // o CTA antigo nao existe mais
+    expect(screen.queryByRole('button', { name: 'VISUALIZAR' })).not.toBeInTheDocument();
   });
 
   it('a vitrine consulta apenas o catálogo local do backend', async () => {

@@ -227,7 +227,7 @@ function ProductCard({ product, onOpen }) {
             "&:hover": { bgcolor: "#7CFF6B" },
           }}
         >
-          VISUALIZAR
+          RESGATAR
         </Button>
       </Box>
     </Card>
