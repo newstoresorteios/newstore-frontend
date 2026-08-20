@@ -2,10 +2,8 @@
 //
 // "Meus Pedidos" — GET /api/store/redemptions. Somente leitura.
 //
-// FASE E (pedido Tray real) ainda esta bloqueada no backend: hoje todo
-// resgate tentado termina em "blocked_tray_contract_pending" com os
-// creditos devolvidos. Este service so LISTA o que ja existe — nao inicia
-// nenhum resgate novo.
+// O fechamento real do resgate (prepare/confirm) vive em services/checkout.js
+// — este arquivo so LISTA o que ja existe.
 
 import { getJSON } from "../lib/api";
 
@@ -24,17 +22,23 @@ const STATUS_LABELS = {
   tray_order_pending: "Enviando pedido",
   tray_order_created: "Pedido criado",
   confirmed: "Confirmado",
-  failed: "Falhou",
+  failed: "Falhou (créditos devolvidos)",
   compensated: "Cancelado (créditos devolvidos)",
   reconciliation_required: "Em verificação",
   blocked_tray_contract_pending: "Aguardando liberação do resgate real",
+  blocked_tray_customer_unmapped: "Não foi possível localizar seu cadastro (créditos devolvidos)",
 };
 
 export function describeRedemptionStatus(status) {
   return STATUS_LABELS[status] || status || "—";
 }
 
-const FINAL_NEGATIVE_STATUSES = new Set(["failed", "compensated", "blocked_tray_contract_pending"]);
+const FINAL_NEGATIVE_STATUSES = new Set([
+  "failed",
+  "compensated",
+  "blocked_tray_contract_pending",
+  "blocked_tray_customer_unmapped",
+]);
 const FINAL_POSITIVE_STATUSES = new Set(["tray_order_created", "confirmed"]);
 
 export function redemptionStatusSeverity(status) {

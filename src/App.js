@@ -30,6 +30,7 @@ import CaptiveConfirmationPage from "./CaptiveConfirmationPage";
 import LojaPage from "./LojaPage";
 import LojaProdutoPage from "./LojaProdutoPage";
 import LojaPedidosPage from "./LojaPedidosPage";
+import LojaResgatePage from "./LojaResgatePage";
 import AdminLojaPremiosPage from "./AdminLojaPremiosPage";
 import PushPermissionPrompt from "./components/PushPermissionPrompt";
 
@@ -65,6 +66,14 @@ export default function App() {
               element={
                 <ProtectedRoute>
                   <LojaPedidosPage />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/loja/resgate"
+              element={
+                <ProtectedRoute>
+                  <LojaResgatePage />
                 </ProtectedRoute>
               }
             />
