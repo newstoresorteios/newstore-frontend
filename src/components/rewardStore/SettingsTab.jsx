@@ -2,8 +2,8 @@
 //
 // Aba CONFIGURAÇÕES do módulo LOJA DE PRÊMIOS NS.
 //
-// Escopo desta etapa (YAGNI): status factual da integração Tray, última
-// sincronização e o comando de atualizar o catálogo curado.
+// Status factual da integração Tray, do catálogo curado e dos módulos
+// operacionais do resgate, mais o comando de atualizar o catálogo.
 // Nada de reservar estoque, alterar produto Tray ou configurar checkout.
 
 import * as React from "react";
@@ -13,7 +13,21 @@ import RefreshRoundedIcon from "@mui/icons-material/RefreshRounded";
 
 import { adminPanelPaperSx } from "../../adminTheme";
 import { getStoreStatus, syncProducts, describeApiError } from "../../services/rewardStore";
+import { isRewardRedemptionEnabled } from "../../services/checkout";
 import { formatDateTime } from "./shared";
+
+/** Chip binário com o mesmo vocabulário visual já usado nesta aba. */
+function StateChip({ on, onLabel, offLabel, color = "success" }) {
+  return (
+    <Chip
+      size="small"
+      label={on ? onLabel : offLabel}
+      color={on ? color : "default"}
+      variant={on ? "filled" : "outlined"}
+      sx={{ fontWeight: 800 }}
+    />
+  );
+}
 
 function Row({ label, children }) {
   return (
@@ -78,6 +92,13 @@ export default function SettingsTab({ onNotify, onSynced }) {
 
   const tray = status?.tray || {};
   const catalog = status?.catalog || {};
+  const modules = status?.modules || {};
+  const redemptionBackend = modules.redemption_backend || null;
+  const trayOrders = modules.tray_orders || null;
+  const webhook = modules.webhook_order || null;
+  // Espelho do kill-switch do frontend (build-time), a mesma função que a
+  // página pública consulta — nunca uma segunda fonte de verdade.
+  const publicStoreEnabled = isRewardRedemptionEnabled();
 
   return (
     <Stack spacing={2}>
@@ -155,6 +176,56 @@ export default function SettingsTab({ onNotify, onSynced }) {
             Recarregar status
           </Button>
         </Stack>
+      </Paper>
+
+      <Paper variant="outlined" sx={{ p: { xs: 2, md: 3 }, ...adminPanelPaperSx }}>
+        <Typography variant="subtitle1" sx={{ fontWeight: 900, mb: 1 }}>
+          Módulos operacionais
+        </Typography>
+
+        <Row label="Resgate (backend)">
+          {redemptionBackend ? (
+            <StateChip on={redemptionBackend.enabled === true} onLabel="Habilitado" offLabel="Desabilitado" />
+          ) : (
+            <Typography variant="body2">—</Typography>
+          )}
+        </Row>
+        <Divider />
+        <Row label="Loja pública (frontend)">
+          <StateChip on={publicStoreEnabled} onLabel="Habilitada" offLabel="Desabilitada" />
+        </Row>
+        <Divider />
+        <Row label="Pedidos Tray criados">
+          <Typography variant="body2">{trayOrders ? trayOrders.orders_created : "—"}</Typography>
+        </Row>
+        <Divider />
+        <Row label="Último pedido Tray">
+          <Typography variant="body2">{formatDateTime(trayOrders?.last_order_at)}</Typography>
+        </Row>
+
+        <Divider sx={{ my: 1 }} />
+
+        {/* A rota existir NÃO prova ativação externa: o escopo `order` do
+            webhook depende de liberação da Tray. Só reportamos entrega
+            comprovada quando existe evidência persistida de um evento real. */}
+        <Row label="Webhook de pedido — endpoint">
+          <StateChip on={webhook?.route === "ready"} onLabel="Disponível" offLabel="Indisponível" />
+        </Row>
+        <Divider />
+        <Row label="Webhook de pedido — entrega Tray">
+          <StateChip
+            on={webhook?.delivery === "verified"}
+            onLabel="Comprovada"
+            offLabel="Não comprovada"
+            color="success"
+          />
+        </Row>
+        <Divider />
+        <Row label="Último evento recebido">
+          <Typography variant="body2">
+            {webhook?.last_event_at ? formatDateTime(webhook.last_event_at) : "Ativação externa não comprovada"}
+          </Typography>
+        </Row>
       </Paper>
     </Stack>
   );

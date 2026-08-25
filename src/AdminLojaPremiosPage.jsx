@@ -33,10 +33,14 @@ import { adminTabsPaperSx, createNewStoreAdminTheme } from "./adminTheme";
 import TrayProductsTab from "./components/rewardStore/TrayProductsTab";
 import PublishedProductsTab from "./components/rewardStore/PublishedProductsTab";
 import NsCreditsTab from "./components/rewardStore/NsCreditsTab";
+import RedemptionsTab from "./components/rewardStore/RedemptionsTab";
 import ReportsTab from "./components/rewardStore/ReportsTab";
 import SettingsTab from "./components/rewardStore/SettingsTab";
 
 const theme = createNewStoreAdminTheme();
+
+/** Índice da aba PEDIDOS / RESGATES (fica antes de Relatórios). */
+const TAB_REDEMPTIONS = 3;
 
 export default function AdminLojaPremiosPage() {
   const navigate = useNavigate();
@@ -44,6 +48,9 @@ export default function AdminLojaPremiosPage() {
   const [toast, setToast] = React.useState(null);
   // Incrementado quando algo muda o catálogo, para as abas já montadas recarregarem.
   const [reloadToken, setReloadToken] = React.useState(0);
+  // "Ver detalhes" nos Relatórios leva ao detalhe dentro de Pedidos/Resgates,
+  // sem duplicar a tela nem criar rota nova.
+  const [redemptionToOpen, setRedemptionToOpen] = React.useState(null);
   const isMobile = useMediaQuery(theme.breakpoints.down("md"));
 
   const notify = React.useCallback((message, severity = "info") => {
@@ -52,6 +59,11 @@ export default function AdminLojaPremiosPage() {
 
   const refreshCatalog = React.useCallback(() => {
     setReloadToken((n) => n + 1);
+  }, []);
+
+  const openRedemption = React.useCallback((redemptionId) => {
+    setRedemptionToOpen(redemptionId);
+    setTab(TAB_REDEMPTIONS);
   }, []);
 
   return (
@@ -81,6 +93,7 @@ export default function AdminLojaPremiosPage() {
               <Tab label="Produtos Tray" />
               <Tab label="Publicados" />
               <Tab label="NSCréditos" />
+              <Tab label="Pedidos / Resgates" />
               <Tab label="Relatórios" />
               <Tab label="Configurações" />
             </Tabs>
@@ -93,8 +106,15 @@ export default function AdminLojaPremiosPage() {
             <PublishedProductsTab onNotify={notify} reloadToken={reloadToken} />
           </Box>
           {tab === 2 && <NsCreditsTab onNotify={notify} />}
-          {tab === 3 && <ReportsTab reloadToken={reloadToken} />}
-          {tab === 4 && <SettingsTab onNotify={notify} onSynced={refreshCatalog} />}
+          {tab === TAB_REDEMPTIONS && (
+            <RedemptionsTab
+              isMobile={isMobile}
+              initialRedemptionId={redemptionToOpen}
+              onDetailClosed={() => setRedemptionToOpen(null)}
+            />
+          )}
+          {tab === 4 && <ReportsTab reloadToken={reloadToken} onOpenRedemption={openRedemption} />}
+          {tab === 5 && <SettingsTab onNotify={notify} onSynced={refreshCatalog} />}
         </Container>
 
         <Snackbar
