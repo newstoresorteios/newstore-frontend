@@ -226,7 +226,24 @@ beforeEach(() => {
   getRedemption.mockResolvedValue(redemptionDetail());
   getRedemptionTrayOrder.mockResolvedValue({
     tray_order_id: '25626',
-    order: { tray_order_id: '25626', status: 'A enviar', payment_method: 'NSCréditos', point_sale: 'LOJA NS', shipment: 'PENDENTE TRAY', shipment_value: '0.00', total: '299.90', created_at: '2026-08-21 10:00:00', updated_at: '2026-08-21 11:00:00', tracking: null },
+    order: {
+      tray_order_id: '25626',
+      status: 'AGUARDANDO PAGAMENTO',
+      status_type: 'open',
+      payment_method: 'NSCréditos',
+      point_sale: 'LOJA NS',
+      shipment: 'PENDENTE TRAY',
+      shipment_value: '0.00',
+      total: '299.90',
+      created_at: '2026-08-21',
+      updated_at: '2026-08-21 11:00:00',
+      logistics: {
+        phase: 'received',
+        label: 'Pedido recebido pela Tray',
+        hint: 'Aguardando atualização da separação/envio.',
+        updated_at: '2026-08-21 11:00:00',
+      },
+    },
     fetched_at: '2026-08-21T12:00:00.000Z',
   });
   getStoreReports.mockResolvedValue({
@@ -539,8 +556,67 @@ describe('aba Pedidos / Resgates', () => {
     await waitFor(() => {
       expect(getRedemptionTrayOrder).toHaveBeenCalledWith('11111111-2222-3333-4444-555555555555');
     });
-    expect(await screen.findByText('A enviar')).toBeInTheDocument();
+    expect(await screen.findByText('AGUARDANDO PAGAMENTO')).toBeInTheDocument();
     expect(screen.getByText(/Última consulta:/)).toBeInTheDocument();
+  });
+
+  it('o admin ve a logistica normalizada da Tray junto do status cru', async () => {
+    getRedemptionTrayOrder.mockResolvedValue({
+      tray_order_id: '25626',
+      order: {
+        tray_order_id: '25626',
+        status: 'ENVIADO',
+        status_type: 'open',
+        shipment: 'Sedex',
+        shipment_value: '51.48',
+        total: '299.90',
+        created_at: '2026-05-27',
+        updated_at: '2026-05-28 15:14:29',
+        logistics: {
+          phase: 'shipped',
+          label: 'Pedido enviado',
+          shipment_method: 'Sedex',
+          carrier: 'Correios',
+          tracking_code: 'AD507735291BR',
+          tracking_url: 'https://www.exemplo-loja.com.br/rastreio?cod_acesso=A4400C4741',
+          shipped_at: '2026-05-28',
+          estimated_delivery_at: '2026-06-17',
+        },
+      },
+      fetched_at: '2026-08-21T12:00:00.000Z',
+    });
+
+    render(<AdminLojaPremiosPage />);
+    userEvent.click(screen.getByRole('tab', { name: 'Pedidos / Resgates' }));
+    await screen.findByText('Fulano de Tal');
+    userEvent.click(screen.getByRole('button', { name: 'Ver detalhes' }));
+    await screen.findByText('Kit Relogio');
+    userEvent.click(screen.getByRole('button', { name: /Atualizar status/i }));
+
+    expect(await screen.findByText('LOGÍSTICA TRAY')).toBeInTheDocument();
+    expect(screen.getByText('Pedido enviado')).toBeInTheDocument();
+    expect(screen.getByText('Correios')).toBeInTheDocument();
+    expect(screen.getByText('AD507735291BR')).toBeInTheDocument();
+    // O status comercial cru continua visivel SO para o admin.
+    expect(screen.getByText('ENVIADO')).toBeInTheDocument();
+
+    const rastreio = screen.getByRole('link', { name: 'abrir' });
+    expect(rastreio).toHaveAttribute('rel', expect.stringContaining('noopener'));
+    expect(rastreio).toHaveAttribute('target', '_blank');
+  });
+
+  it('campo logistico sem valor nao vira "—" no admin', async () => {
+    render(<AdminLojaPremiosPage />);
+    userEvent.click(screen.getByRole('tab', { name: 'Pedidos / Resgates' }));
+    await screen.findByText('Fulano de Tal');
+    userEvent.click(screen.getByRole('button', { name: 'Ver detalhes' }));
+    await screen.findByText('Kit Relogio');
+    userEvent.click(screen.getByRole('button', { name: /Atualizar status/i }));
+
+    await screen.findByText('LOGÍSTICA TRAY');
+    expect(screen.getByText('Pedido recebido pela Tray')).toBeInTheDocument();
+    expect(screen.queryByText('Transportadora')).not.toBeInTheDocument();
+    expect(screen.queryByText('Rastreamento')).not.toBeInTheDocument();
   });
 
   it('o meta técnico dos eventos nunca traz segredo', async () => {

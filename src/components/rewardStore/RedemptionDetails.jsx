@@ -5,7 +5,7 @@
 //
 // SOMENTE LEITURA. Nada aqui altera resgate, saldo, ledger ou pedido Tray.
 // O botão "Atualizar status" faz exclusivamente um GET no backend, que por
-// sua vez faz GET /orders/:id/full na Tray.
+// sua vez faz GET /orders/:id na Tray.
 
 import * as React from "react";
 import {
@@ -183,6 +183,8 @@ function TrayBlock({ trayOrderId, tray, loading, error, onRefresh }) {
       {order && (
         <>
           <Divider sx={{ borderColor: "rgba(255,255,255,0.08)" }} />
+          {/* Status COMERCIAL cru da Tray — útil para a operação, nunca
+              mostrado ao cliente (ele vê só a fase logística normalizada). */}
           <Row label="Status na Tray">{order.status || "—"}</Row>
           <Row label="Pagamento">{order.payment_method || "—"}</Row>
           <Row label="Origem">{order.point_sale || "—"}</Row>
@@ -191,10 +193,42 @@ function TrayBlock({ trayOrderId, tray, loading, error, onRefresh }) {
           <Row label="Total">{order.total || "—"}</Row>
           <Row label="Criado em">{order.created_at || "—"}</Row>
           <Row label="Atualizado em">{order.updated_at || "—"}</Row>
-          {order.tracking && (
-            <Row label="Rastreio">
-              {[order.tracking.carrier, order.tracking.code].filter(Boolean).join(" · ") || "—"}
-            </Row>
+
+          {order.logistics && (
+            <>
+              <Divider sx={{ borderColor: "rgba(255,255,255,0.08)", my: 1 }} />
+              <Typography variant="caption" sx={{ opacity: 0.5, fontWeight: 800, letterSpacing: 0.6 }}>
+                LOGÍSTICA TRAY
+              </Typography>
+              <Row label="Situação">{order.logistics.label}</Row>
+              {/* Campo sem valor factual é omitido — nunca "Transportadora: —". */}
+              {order.logistics.shipment_method && (
+                <Row label="Forma de envio">{order.logistics.shipment_method}</Row>
+              )}
+              {order.logistics.carrier && <Row label="Transportadora">{order.logistics.carrier}</Row>}
+              {order.logistics.tracking_code && (
+                <Row label="Rastreamento">{order.logistics.tracking_code}</Row>
+              )}
+              {order.logistics.shipped_at && <Row label="Enviado em">{order.logistics.shipped_at}</Row>}
+              {order.logistics.estimated_delivery_at && (
+                <Row label="Previsão de entrega">{order.logistics.estimated_delivery_at}</Row>
+              )}
+              {order.logistics.tracking_url && (
+                <Row label="Link de rastreio">
+                  <Button
+                    size="small"
+                    variant="text"
+                    component="a"
+                    href={order.logistics.tracking_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    sx={{ p: 0, minWidth: 0 }}
+                  >
+                    abrir
+                  </Button>
+                </Row>
+              )}
+            </>
           )}
         </>
       )}
