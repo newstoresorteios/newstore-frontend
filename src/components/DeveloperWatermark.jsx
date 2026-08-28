@@ -1,19 +1,13 @@
 // src/components/DeveloperWatermark.jsx
 //
-// Assinatura institucional "Desenvolvido por Tironi Tech" nas áreas PÚBLICAS
-// da NewStore (sorteios + Loja NS). Não aparece em /admin: o painel é
-// ferramenta interna, não vitrine.
+// Assinatura institucional "Desenvolvido por Tironi Tech" no RODAPÉ das
+// áreas PÚBLICAS da NewStore (sorteios + Loja NS). Não aparece em /admin:
+// o painel é ferramenta interna, não vitrine.
 //
-// Montada uma única vez em App.js (mesmo ponto do PushPermissionPrompt), logo
-// depois das <Routes> — evita repetir o markup em cada página.
+// Montada uma única vez em App.js (mesmo ponto do PushPermissionPrompt),
+// depois das <Routes> — entra no fluxo do documento, não sobrepõe a página.
 //
 // Decisões de segurança visual:
-//   pointer-events: none  -> nunca rouba clique de CTA, carrinho ou checkout.
-//   z-index 1100          -> abaixo do drawer do carrinho (1200), do resumo
-//                            flutuante de participações (1250), dos modais
-//                            (1300) e do prompt de push (2000). Se algum
-//                            desses aparecer, ele cobre a marca -- e não o
-//                            contrário, que é a prioridade correta.
 //   estilos inline        -> cada página monta seu próprio ThemeProvider, e
 //                            este componente vive FORA deles. Usar as cores
 //                            literais já praticadas no projeto (#0E0E0E,
@@ -29,27 +23,19 @@ const VERDE = "#67C23A";
 const DOURADO = "#FFC107";
 const CARVAO = "#0E0E0E";
 
-const wrapStyle = {
-  position: "fixed",
-  left: "50%",
-  transform: "translateX(-50%)",
-  bottom: "calc(8px + env(safe-area-inset-bottom, 0px))",
-  zIndex: 1100,
-  pointerEvents: "none",
+const footerStyle = {
+  width: "100%",
+  marginTop: "auto",
+  padding: "18px 16px calc(18px + env(safe-area-inset-bottom, 0px))",
   display: "flex",
   alignItems: "center",
+  justifyContent: "center",
   gap: 8,
-  padding: "5px 12px 5px 6px",
-  borderRadius: 999,
-  border: `1px solid ${VERDE}55`,
-  background: `${CARVAO}D9`,
-  backdropFilter: "blur(8px)",
-  WebkitBackdropFilter: "blur(8px)",
+  borderTop: `1px solid ${VERDE}33`,
+  background: CARVAO,
+  boxSizing: "border-box",
   fontFamily: ["Inter", "system-ui", "Segoe UI", "Roboto", "Arial"].join(","),
   lineHeight: 1,
-  // Nunca encostar nas bordas em telas estreitas.
-  maxWidth: "calc(100vw - 16px)",
-  boxSizing: "border-box",
 };
 
 const monogramStyle = {
@@ -72,7 +58,7 @@ const textStyle = {
   alignItems: "center",
   gap: 4,
   whiteSpace: "nowrap",
-  fontSize: 11,
+  fontSize: 12,
   letterSpacing: 0.2,
 };
 
@@ -90,7 +76,7 @@ export default function DeveloperWatermark() {
   if (isAdminPath(pathname)) return null;
 
   return (
-    <div style={wrapStyle} data-testid="developer-watermark">
+    <footer style={footerStyle} data-testid="developer-watermark">
       <span style={monogramStyle} aria-hidden="true">
         TT
       </span>
@@ -98,6 +84,6 @@ export default function DeveloperWatermark() {
         <span style={prefixStyle}>Desenvolvido por</span>
         <span style={brandStyle}>Tironi Tech</span>
       </span>
-    </div>
+    </footer>
   );
 }

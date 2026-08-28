@@ -1,4 +1,4 @@
-// Assinatura institucional: aparece nas areas publicas, some no /admin.
+// Assinatura institucional: aparece no rodape das areas publicas, some no /admin.
 //
 // react-router-dom v7 usa "exports" no package.json e o resolver do Jest do
 // CRA nao o enxerga -- por isso o projeto inteiro mocka o router virtualmente.
@@ -20,10 +20,11 @@ function renderAt(path) {
 const PUBLICAS = ['/', '/loja', '/loja/produto/14518', '/loja/resgate', '/loja/pedidos', '/conta'];
 
 describe('rotas publicas', () => {
-  it.each(PUBLICAS)('mostra a assinatura em %s', (path) => {
+  it.each(PUBLICAS)('mostra a assinatura no rodape em %s', (path) => {
     renderAt(path);
     expect(screen.getByText('Desenvolvido por')).toBeInTheDocument();
     expect(screen.getByText('Tironi Tech')).toBeInTheDocument();
+    expect(screen.getByTestId('developer-watermark').tagName.toLowerCase()).toBe('footer');
   });
 
   it('mostra o monograma TT', () => {
@@ -49,27 +50,15 @@ describe('painel administrativo', () => {
   });
 });
 
-describe('nao atrapalha a UX', () => {
-  it('nunca intercepta clique (pointer-events none)', () => {
-    renderAt('/loja');
-    expect(screen.getByTestId('developer-watermark')).toHaveStyle({ pointerEvents: 'none' });
-  });
-
-  it('fica abaixo de drawer/modal/overlays na pilha de z-index', () => {
-    renderAt('/loja');
-    const z = Number(screen.getByTestId('developer-watermark').style.zIndex);
-    // drawer do carrinho 1200, resumo flutuante 1250, modal 1300, push 2000
-    expect(z).toBeLessThan(1200);
+describe('e um rodape de documento, nao um overlay', () => {
+  it('nao usa position fixed (nao cobre a pagina)', () => {
+    renderAt('/');
+    expect(screen.getByTestId('developer-watermark')).not.toHaveStyle({ position: 'fixed' });
   });
 
   it('nao e focavel pelo teclado (assinatura, nao controle)', () => {
     renderAt('/');
     const el = screen.getByTestId('developer-watermark');
     expect(el.querySelector('a, button, [tabindex]')).toBeNull();
-  });
-
-  it('nao estoura a largura da tela', () => {
-    renderAt('/');
-    expect(screen.getByTestId('developer-watermark')).toHaveStyle({ maxWidth: 'calc(100vw - 16px)' });
   });
 });

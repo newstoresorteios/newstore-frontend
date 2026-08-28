@@ -43,7 +43,9 @@ export default function App() {
     <AuthProvider>
       <SelectionContext.Provider value={{ selecionados, setSelecionados, limparSelecao }}>
         <BrowserRouter>
-          <Routes>
+          <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column" }}>
+            <div style={{ flex: 1 }}>
+              <Routes>
             {/* HOME só para não-admin */}
             <Route
               path="/"
@@ -207,11 +209,14 @@ export default function App() {
                 </AdminRoute>
               }
             />
-          </Routes>
-          <PushPermissionPrompt />
-          {/* Assinatura institucional das áreas públicas (sorteios + Loja NS).
-              O próprio componente se esconde em /admin. */}
-          <DeveloperWatermark />
+              </Routes>
+            </div>
+            <PushPermissionPrompt />
+            {/* Rodapé institucional das áreas públicas (sorteios + Loja NS).
+                Entra no fluxo do documento — não sobrepõe a página.
+                O próprio componente se esconde em /admin. */}
+            <DeveloperWatermark />
+          </div>
         </BrowserRouter>
       </SelectionContext.Provider>
     </AuthProvider>
