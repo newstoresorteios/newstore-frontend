@@ -90,6 +90,81 @@ async function tryManyPost(paths, body) {
   throw new Error("save_failed");
 }
 
+function paymentKindFromType(value) {
+  const t = String(value || "").toLowerCase();
+  if (t === "adicional" || t === "additional") return "additional";
+  if (t === "secundario" || t === "secondary") return "secondary";
+  if (t === "checkout_batch" || t === "batch") return "checkout_batch";
+  if (t === "principal") return "principal";
+  return null;
+}
+
+function extractDrawList(payload) {
+  if (Array.isArray(payload)) return payload;
+  return payload?.draws || payload?.items || payload?.data?.draws || payload?.data?.items || [];
+}
+
+function extractReservationId(item) {
+  return item?.reservation_id ?? item?.reservationId ?? item?.id ?? null;
+}
+
+function friendlyPixError(status, code) {
+  const messages = {
+    reservation_not_active: "Falha ao gerar PIX: sua reserva não está ativa. Volte ao sorteio para reservar novamente.",
+    reservation_expired: "Falha ao gerar PIX: sua reserva expirou. Volte ao sorteio para reservar novamente.",
+    reservation_not_found: "Falha ao gerar PIX: reserva não encontrada. Volte ao sorteio para reservar novamente.",
+    unauthorized: "Sua sessão expirou. Faça login novamente.",
+    mp_token_missing: "Pagamento PIX indisponível no momento. Tente novamente em instantes.",
+    mercado_pago_payment_failed: "Falha ao criar o pagamento PIX. Tente novamente.",
+    secondary_payment_create_failed: "Falha ao criar o pagamento PIX. Tente novamente.",
+  };
+  if (messages[code]) return messages[code];
+  if (status === 401) return messages.unauthorized;
+  if (code && !/^[a-z0-9_:-]+$/i.test(code)) return code;
+  return `Falha ao gerar PIX (HTTP ${status}).`;
+}
+
+function pixRoutesForKind(kind, { reservationId, drawId, batchId }) {
+  const additional = {
+    path: "/additional-payments/pix",
+    body: { draw_id: drawId, reservation_id: reservationId, reservationId },
+    kind: "additional",
+  };
+  const secondary = {
+    path: "/secondary-payments/pix",
+    body: { reservation_id: reservationId, reservationId },
+    kind: "secondary",
+  };
+  const principal = {
+    path: "/payments/pix",
+    body: { reservationId, reservation_id: reservationId },
+    kind: "principal",
+  };
+  const batch = batchId
+    ? [{ path: `/checkout-batches/${encodeURIComponent(batchId)}/pix`, body: undefined, kind: "checkout_batch" }]
+    : [];
+  if (kind === "additional") return [...batch, additional, secondary, principal];
+  if (kind === "secondary") return [...batch, secondary, additional, principal];
+  if (kind === "checkout_batch") return [...batch, principal, additional, secondary];
+  return [...batch, principal, additional, secondary];
+}
+
+function pixStatusPaths(payment) {
+  const txid = payment?.txid || payment?.id || payment?.e2eid || payment?.paymentId || payment?.payment_id;
+  const batchId = payment?.batch_id || payment?.batchId;
+  const kind = paymentKindFromType(payment?.paymentType || payment?.payment_type);
+  const paths = [];
+  if (txid && kind === "additional") paths.push(`/additional-payments/${encodeURIComponent(txid)}/status`);
+  if (txid && kind === "secondary") paths.push(`/secondary-payments/${encodeURIComponent(txid)}/status`);
+  if (batchId) paths.push(`/checkout-batches/${encodeURIComponent(batchId)}/status`);
+  if (txid) {
+    paths.push(`/payments/${encodeURIComponent(txid)}/status`);
+    if (kind !== "additional") paths.push(`/additional-payments/${encodeURIComponent(txid)}/status`);
+    if (kind !== "secondary") paths.push(`/secondary-payments/${encodeURIComponent(txid)}/status`);
+  }
+  return paths;
+}
+
 // normaliza payloads diferentes para um único formato
 function normalizeToEntries(payPayload, reservationsPayload) {
   if (payPayload) {
@@ -98,11 +173,17 @@ function normalizeToEntries(payPayload, reservationsPayload) {
       : payPayload.payments || payPayload.items || [];
     return list.flatMap(p => {
       const drawId = p.draw_id ?? p.drawId ?? p.sorteio_id ?? null;
-      const numbers = Array.isArray(p.numbers) ? p.numbers : [];
+      const numbers = Array.isArray(p.numbers)
+        ? p.numbers
+        : [p.n ?? p.number ?? p.numero].filter((n) => n != null && n !== "");
       const payStatus = p.status || p.paymentStatus || "pending";
       const when = p.paid_at || p.updated_at || p.created_at || null;
+      const drawKind = paymentKindFromType(p.draw_type || p.drawType || p.payment_type || p.paymentType);
       return numbers.map(n => ({
         payment_id: p.id ?? p.payment_id ?? null,
+        reservation_id: p.reservation_id ?? p.reservationId ?? null,
+        batch_id: p.batch_id ?? p.batchId ?? null,
+        draw_kind: drawKind,
         draw_id: drawId,
         number: Number(n),
         status: String(payStatus).toLowerCase(),
@@ -114,21 +195,27 @@ function normalizeToEntries(payPayload, reservationsPayload) {
 
   if (reservationsPayload) {
     const list = reservationsPayload.reservations || reservationsPayload.items || [];
-    return list.map(r => {
+    return list.flatMap(r => {
       const raw = String(r.status || "").toLowerCase();
       // mapear corretamente os estados do reservations
       let st = "pending";
       if (raw === "paid" || raw === "sold" || raw === "approved") st = "approved";
       else if (/(active|reserved|pending|await|aguard)/.test(raw)) st = "pending";
       else if (/(expired|cancel)/.test(raw)) st = "expired";
-      return {
-        reservation_id: r.id ?? r.reservation_id ?? null,
+      const nums = Array.isArray(r.numbers)
+        ? r.numbers.map(Number).filter(Number.isFinite)
+        : [Number(r.n ?? r.number ?? r.numero)].filter(Number.isFinite);
+      const drawKind = paymentKindFromType(r.draw_type || r.drawType);
+      return nums.map((n) => ({
+        reservation_id: extractReservationId(r),
+        batch_id: r.batch_id ?? r.batchId ?? null,
+        draw_kind: drawKind,
         draw_id: r.draw_id ?? r.sorteio_id ?? null,
-        number: Number(r.n ?? r.number ?? r.numero),
+        number: n,
         status: st,
         when: r.paid_at || r.updated_at || r.created_at || null,
         expires_at: r.reserved_until || r.expires_at || r.expire_at || null,
-      };
+      }));
     });
   }
 
@@ -293,7 +380,7 @@ export default function AccountPage() {
           const when = asTime(x?.updated_at) || asTime(x?.created_at) || asTime(x?.reserved_until) || 0;
           for (const n of candidates) {
             if (!best || when > best.when) {
-              best = { id: x.id ?? x.reservation_id ?? x.reservationId, number: n, when };
+              best = { id: extractReservationId(x), number: n, when };
             }
           }
         }
@@ -301,30 +388,69 @@ export default function AccountPage() {
       if (best) break; // já achou uma ativa recente neste endpoint
     }
 
+    if (!best && Number.isFinite(Number(drawId))) {
+      const boardPaths = [
+        `/additional-draws/${Number(drawId)}/numbers`,
+        `/secondary-draws/${Number(drawId)}/numbers`,
+      ];
+      for (const path of boardPaths) {
+        try {
+          const r = await fetch(apiJoin(`${path}?_=${Date.now()}`), {
+            headers: { "Content-Type": "application/json", ...authHeaders() },
+            credentials: "include",
+            cache: "no-store",
+          });
+          if (!r.ok) continue;
+          const j = await r.json().catch(() => ({}));
+          const list = Array.isArray(j) ? j : (j.numbers || j.items || []);
+          for (const item of list || []) {
+            const n = Number(item?.n ?? item?.number ?? item?.numero);
+            if (!Number.isFinite(n) || (want.size && !want.has(n))) continue;
+            const status = String(item?.status || "").toLowerCase();
+            if (!/(reserv|pending|active|await|aguard)/.test(status)) continue;
+            const mineFlag = item?.is_mine ?? item?.mine ?? item?.owned_by_me ?? item?.reserved_by_me;
+            if (mineFlag !== true) continue;
+            const id = item?.reservation_id ?? item?.reservationId ?? null;
+            if (!id) continue;
+            const when = asTime(item?.updated_at) || asTime(item?.created_at) || asTime(item?.reserved_until) || 0;
+            if (!best || when > best.when) best = { id, number: n, when };
+          }
+          if (best) break;
+        } catch {}
+      }
+    }
+
     return best ? { reservationId: best.id, number: best.number } : null;
   }
 
   // Procura payment pendente p/ (drawId, number)
   async function findPendingPayment(drawId, number) {
-    try {
-      const url = `/payments/me?_=${Date.now()}`;
-      const r = await fetch(apiJoin(url), {
-        headers: { "Content-Type": "application/json", ...authHeaders() },
-        credentials: "include",
-        cache: "no-store",
-      });
-      if (!r.ok) return null;
-      const j = await r.json().catch(() => ({}));
-      const list = Array.isArray(j) ? j : (j.payments || j.items || []);
-      return (list || []).find(p => {
-        const d = Number(p?.draw_id ?? p?.drawId ?? p?.sorteio_id);
-        const ns = Array.isArray(p?.numbers) ? p.numbers.map(n => Number(n)) : [];
-        const status = String(p?.status || "").toLowerCase();
-        return d === Number(drawId) && ns.includes(Number(number)) && status === "pending";
-      }) || null;
-    } catch {
-      return null;
+    const paths = [
+      `/payments/me?_=${Date.now()}`,
+      `/additional-payments/me?_=${Date.now()}`,
+    ];
+    for (const url of paths) {
+      try {
+        const r = await fetch(apiJoin(url), {
+          headers: { "Content-Type": "application/json", ...authHeaders() },
+          credentials: "include",
+          cache: "no-store",
+        });
+        if (!r.ok) continue;
+        const j = await r.json().catch(() => ({}));
+        const list = Array.isArray(j) ? j : (j.payments || j.items || []);
+        const found = (list || []).find(p => {
+          const d = Number(p?.draw_id ?? p?.drawId ?? p?.sorteio_id);
+          const ns = Array.isArray(p?.numbers)
+            ? p.numbers.map(n => Number(n))
+            : [Number(p?.n ?? p?.number ?? p?.numero)].filter(Number.isFinite);
+          const status = String(p?.status || "").toLowerCase();
+          return d === Number(drawId) && ns.includes(Number(number)) && status === "pending";
+        });
+        if (found) return found;
+      } catch {}
     }
+    return null;
   }
 
   // --------- GERAR PIX ----------
@@ -335,6 +461,8 @@ export default function AccountPage() {
 
     try {
       const drawId = Number(row?.draw_id ?? row?.sorteio ?? row?.draw ?? row?.id);
+      const drawKind = paymentKindFromType(row?.draw_kind || row?.draw_type) || null;
+      const batchId = row?.batch_id || null;
 
       // ► Prioriza a ÚLTIMA reserva ATIVA dentro dos números exibidos na linha
       const hintNumbers = Array.isArray(row?.numeros)
@@ -343,63 +471,78 @@ export default function AccountPage() {
             ? [Number(row?.number ?? row?.numero ?? row?.num)]
             : []);
 
-      const latest = await findLatestActiveReservation(drawId, hintNumbers);
-      if (!latest) {
+      const latest = await findLatestActiveReservation(drawId, hintNumbers)
+        || (row?.reservation_id ? { reservationId: row.reservation_id, number: hintNumbers[0] } : null);
+      if (!latest?.reservationId && !batchId) {
         setPixMsg("Falha ao gerar PIX: sua reserva não está ativa. Volte ao sorteio para reservar novamente.");
         return;
       }
 
-      let selectedNumber = Number(latest.number);
+      let selectedNumber = Number(latest?.number);
 
       // Reaproveita pagamento pendente existente (para o número correto)
-      const already = await findPendingPayment(drawId, selectedNumber);
-      if (already && (already.qr_code || already.qr_code_base64 || already.copy || already.copy_paste)) {
-        setPixData(already);
+      const already = Number.isFinite(selectedNumber) ? await findPendingPayment(drawId, selectedNumber) : null;
+      if (already && (already.qr_code || already.qr_code_base64 || already.copy || already.copy_paste || already.copy_paste_code)) {
+        const kind = paymentKindFromType(already.draw_type || already.payment_type) || drawKind;
+        setPixData({ ...already, paymentType: kind, payment_type: kind });
         const cents = already?.amount_cents ?? null;
         setPixAmount(typeof cents === "number" ? cents / 100 : null);
         setPixMsg(already?.status ? `Status: ${already.status}` : `PIX pendente do nº ${pad2(selectedNumber)} recuperado.`);
         return;
       }
 
-      // Função local para pedir PIX (com revalidação caso a reserva esteja inativa)
-      const requestPix = async (reservationId) => {
-        const r = await fetch(apiJoin("/payments/pix"), {
-          method: "POST",
-          headers: { "Content-Type": "application/json", ...authHeaders() },
-          credentials: "include",
-          cache: "no-store",
-          body: JSON.stringify({ reservationId, reservation_id: reservationId }),
+      const requestPix = async (reservationId, retried = false) => {
+        const routes = pixRoutesForKind(drawKind, {
+          reservationId,
+          drawId,
+          batchId: batchId || already?.batch_id || already?.batchId || null,
         });
-
-        // Se a API disser que a reserva não está ativa, tenta novamente com a última ativa
-        if (!r.ok && r.status === 400) {
-          let msg = "";
-          try { const j = await r.json(); msg = String(j?.error || j?.message || ""); } catch {}
-          if (/reservation[_\s-]?not[_\s-]?active|expired|inativa|expirada/i.test(msg)) {
+        let sawMissingRoute = false;
+        for (const route of routes) {
+          if (!reservationId && route.kind !== "checkout_batch") continue;
+          const r = await fetch(apiJoin(route.path), {
+            method: "POST",
+            headers: { "Content-Type": "application/json", ...authHeaders() },
+            credentials: "include",
+            cache: "no-store",
+            body: route.body === undefined ? undefined : JSON.stringify(route.body),
+          });
+          const j = await r.json().catch(() => ({}));
+          if (r.ok) {
+            return { ...j, paymentType: route.kind, payment_type: route.kind };
+          }
+          const msg = String(j?.error || j?.message || "");
+          if (!retried && [400, 409, 410].includes(r.status) && /reservation[_\s-]?not[_\s-]?active|expired|inativa|expirada/i.test(msg)) {
             const fresh = await findLatestActiveReservation(drawId, hintNumbers);
             if (fresh && fresh.reservationId !== reservationId) {
-              selectedNumber = Number(fresh.number); // atualiza o nº
-              return await requestPix(fresh.reservationId);
+              selectedNumber = Number(fresh.number);
+              return await requestPix(fresh.reservationId, true);
             }
             setPixMsg("Falha ao gerar PIX: sua reserva não está ativa. Volte ao sorteio para reservar novamente.");
             return null;
           }
-        }
-        if (!r.ok) {
-          if (r.status === 404) setPixMsg("Falha ao gerar PIX (rota não encontrada no servidor).");
-          else setPixMsg(`Falha ao gerar PIX (HTTP ${r.status}).`);
+          if ([404, 405, 501].includes(r.status) || /reservation_not_found|draw_not_found/.test(msg)) {
+            sawMissingRoute = [404, 405, 501].includes(r.status);
+            continue;
+          }
+          setPixMsg(friendlyPixError(r.status, msg));
           return null;
         }
-        return await r.json().catch(() => ({}));
+        setPixMsg(sawMissingRoute
+          ? "Falha ao gerar PIX (rota não encontrada no servidor)."
+          : "Falha ao gerar PIX.");
+        return null;
       };
 
-      const created = await requestPix(latest.reservationId);
+      const created = await requestPix(latest?.reservationId);
       if (!created) return;
 
-      setPixData(created);
+      const createdSource = created?.payment || created?.data?.payment || created;
+      setPixData({ ...created, ...createdSource });
 
       // Descobre o valor (centavos)
       let amountCents =
+        (typeof createdSource?.amount_cents === "number" && createdSource.amount_cents) ||
         (typeof created?.amount_cents === "number" && created.amount_cents) ||
         (typeof created?.payment?.amount_cents === "number" && created.payment.amount_cents) ||
         null;
@@ -409,7 +552,7 @@ export default function AccountPage() {
         if (nowPending?.amount_cents != null) amountCents = nowPending.amount_cents;
       }
       if (amountCents == null) {
-        const id = created?.paymentId || created?.id || created?.txid || created?.e2eid;
+        const id = createdSource?.paymentId || createdSource?.payment_id || created?.paymentId || created?.id || created?.txid || created?.e2eid;
         if (id) {
           try {
             const det = await checkPixStatus(id);
@@ -419,7 +562,10 @@ export default function AccountPage() {
       }
 
       setPixAmount(amountCents != null ? amountCents / 100 : null);
-      setPixMsg(created?.status ? `Status: ${created.status}` : `PIX criado para o nº ${pad2(selectedNumber)}.`);
+      const labelNumber = Number.isFinite(selectedNumber) ? pad2(selectedNumber) : null;
+      setPixMsg(createdSource?.status || created?.status
+        ? `Status: ${createdSource?.status || created.status}`
+        : (labelNumber ? `PIX criado para o nº ${labelNumber}.` : "PIX criado."));
     } catch (e) {
       console.error("[AccountPage] createPixPayment error:", e);
       setPixMsg("Falha ao gerar PIX.");
@@ -430,12 +576,29 @@ export default function AccountPage() {
 
   async function refreshPix() {
     try {
-      const txid = pixData?.txid || pixData?.id || pixData?.e2eid || pixData?.paymentId;
-      if (!txid) return;
-      const r = await checkPixStatus(txid);
-      setPixData(prev => ({ ...(prev || {}), ...(r || {}) }));
-      if (r?.status) setPixMsg(`Status: ${r.status}`);
-      if (typeof r?.amount_cents === "number") setPixAmount(r.amount_cents / 100);
+      const paths = pixStatusPaths(pixData);
+      if (!paths.length) return;
+      let payload = null;
+      for (const path of paths) {
+        try {
+          const r = await fetch(apiJoin(path), {
+            headers: { "Content-Type": "application/json", ...authHeaders() },
+            credentials: "include",
+            cache: "no-store",
+          });
+          if (!r.ok) continue;
+          payload = await r.json().catch(() => ({}));
+          if (payload) break;
+        } catch {}
+      }
+      if (!payload) {
+        const txid = pixData?.txid || pixData?.id || pixData?.e2eid || pixData?.paymentId;
+        if (!txid) return;
+        payload = await checkPixStatus(txid);
+      }
+      setPixData(prev => ({ ...(prev || {}), ...(payload || {}) }));
+      if (payload?.status) setPixMsg(`Status: ${payload.status}`);
+      if (typeof payload?.amount_cents === "number") setPixAmount(payload.amount_cents / 100);
     } catch (e) {
       console.error("[AccountPage] checkPixStatus error:", e);
     }
@@ -648,19 +811,40 @@ export default function AccountPage() {
           "/reservations/me",
         ]);
 
-        // draws (status)
+        // draws (status + tipo: principal vs adicional)
         let drawsMap = new Map();
+        const drawKindMap = new Map();
         try {
           const draws = await getJSON("/draws");
           const arr = Array.isArray(draws) ? draws : (draws.draws || draws.items || []);
           drawsMap = new Map(arr.map(d => [Number(d.id ?? d.draw_id), (d.status ?? d.result ?? "")]));
+          for (const d of arr) {
+            const id = Number(d.id ?? d.draw_id);
+            if (!Number.isFinite(id)) continue;
+            drawKindMap.set(id, paymentKindFromType(d.draw_type || d.drawType) || "principal");
+          }
+        } catch {}
+        try {
+          const landing = await getJSON("/additional-draws/landing");
+          for (const d of extractDrawList(landing)) {
+            const id = Number(d?.id ?? d?.draw_id ?? d?.drawId);
+            if (!Number.isFinite(id)) continue;
+            drawKindMap.set(id, paymentKindFromType(d.draw_type || d.drawType) || "additional");
+            if (!drawsMap.has(id)) drawsMap.set(id, d.status ?? d.result ?? "aberto");
+          }
         } catch {}
 
         if (alive && pay) {
-          const entries = normalizeToEntries(
-            from === "/payments/me" ? pay : null,
-            from !== "/payments/me" ? pay : null
-          );
+          const entries = [
+            ...normalizeToEntries(
+              from === "/payments/me" ? pay : null,
+              from !== "/payments/me" ? pay : null
+            ),
+          ];
+          try {
+            const extra = await getJSON("/additional-payments/me");
+            entries.push(...normalizeToEntries(extra, null));
+          } catch {}
 
           const now = Date.now();
           const ttlMs = TTL_MINUTES * 60 * 1000;
@@ -715,6 +899,9 @@ export default function AccountPage() {
                 when: e.when ? new Date(e.when).getTime() : 0,
                 hasPending: false,
                 hasApproved: false,
+                reservation_id: null,
+                batch_id: null,
+                draw_kind: e.draw_kind || null,
               });
             }
             const g = byDraw.get(id);
@@ -722,6 +909,11 @@ export default function AccountPage() {
             g.when = Math.max(g.when, e.when ? new Date(e.when).getTime() : 0);
             g.hasPending  = g.hasPending  || isPendingStatus(e.status);
             g.hasApproved = g.hasApproved || isApprovedStatus(e.status);
+            if (isPendingStatus(e.status)) {
+              if (e.reservation_id) g.reservation_id = e.reservation_id;
+              if (e.batch_id) g.batch_id = e.batch_id;
+            }
+            if (!g.draw_kind && e.draw_kind) g.draw_kind = e.draw_kind;
           }
 
           const grouped = Array.from(byDraw.values()).map(g => {
@@ -735,6 +927,9 @@ export default function AccountPage() {
               pagamento,
               resultado: drawsMap.get(Number(g.draw_id)) || "aberto",
               whenMs: g.when || 0,
+              reservation_id: g.reservation_id,
+              batch_id: g.batch_id,
+              draw_kind: drawKindMap.get(Number(g.draw_id)) || g.draw_kind || null,
             };
           });
 
