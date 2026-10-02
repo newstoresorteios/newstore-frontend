@@ -174,7 +174,7 @@ const isDrawnAdditionalItem = (item) => {
   return status === "sorteado" && (type === "adicional" || type === "secundario");
 };
 
-// Sorteios sorteados continuam visiveis (com a acao "Ocultar do historico");
+// Sorteios sorteados continuam visiveis (visiveis ate o admin usar "Ocultar historico");
 // os demais ja realizados seguem ocultos como antes.
 const isRealizedAdditionalItem = (item) =>
   item?.draw?.realized_at != null && !isDrawnAdditionalItem(item);
@@ -290,7 +290,7 @@ export default function AdminDashboard() {
   const [additionalSaving, setAdditionalSaving] = React.useState(false);
   const [additionalCreating, setAdditionalCreating] = React.useState(false);
   const [additionalClosing, setAdditionalClosing] = React.useState(false);
-  const [archiveTarget, setArchiveTarget] = React.useState(null);
+  const [hideHistoryOpen, setHideHistoryOpen] = React.useState(false);
   const [additionalArchiving, setAdditionalArchiving] = React.useState(false);
   const [additionalError, setAdditionalError] = React.useState("");
   const [newAdditionalFormOpen, setNewAdditionalFormOpen] = React.useState(false);
@@ -822,26 +822,19 @@ export default function AdminDashboard() {
     }
   };
 
-  const confirmArchiveAdditionalDraw = async () => {
+  const confirmHideAdditionalHistory = async () => {
     if (additionalArchivingRef.current) return;
-    const drawId = Number(archiveTarget?.draw?.id);
-    if (!Number.isInteger(drawId) || drawId <= 0 || !isDrawnAdditionalItem(archiveTarget)) {
-      setArchiveTarget(null);
-      return;
-    }
-
     additionalArchivingRef.current = true;
     setAdditionalArchiving(true);
     try {
-      await postJSON(`/admin/additional-draws/${drawId}/archive`, {}, "PATCH");
-      setArchiveTarget(null);
-      setAdditionalDraws((items) => items.filter((item) => Number(item?.draw?.id) !== drawId));
+      await postJSON("/admin/additional-draws/history/hide", {}, "PATCH");
+      setHideHistoryOpen(false);
       await loadAdditionalDraws();
-      alert("Sorteio ocultado do histórico.");
+      alert("Histórico ocultado.");
     } catch (e) {
-      console.error("[AdminDashboard] archive additional draw failed:", e);
-      setArchiveTarget(null);
-      alert("Não foi possível ocultar este sorteio do histórico.");
+      console.error("[AdminDashboard] hide additional history failed:", e);
+      setHideHistoryOpen(false);
+      alert("Não foi possível ocultar o histórico.");
     } finally {
       additionalArchivingRef.current = false;
       setAdditionalArchiving(false);
@@ -970,30 +963,31 @@ export default function AdminDashboard() {
             )}
 
             <Dialog
-              open={Boolean(archiveTarget)}
-              onClose={() => !additionalArchiving && setArchiveTarget(null)}
+              open={hideHistoryOpen}
+              onClose={() => !additionalArchiving && setHideHistoryOpen(false)}
             >
-              <DialogTitle>Ocultar do histórico</DialogTitle>
+              <DialogTitle>Ocultar histórico</DialogTitle>
               <DialogContent>
                 <DialogContentText>
-                  Tem certeza que deseja ocultar este sorteio do histórico?
+                  Tem certeza que deseja ocultar o histórico de sorteios adicionais realizados?
                   <br />
                   <br />
-                  Essa ação apenas oculta o sorteio da listagem, mas não deve apagar pagamentos,
-                  compradores ou registros financeiros.
+                  Essa ação apenas oculta da listagem os sorteios já sorteados. Sorteios em
+                  andamento continuam aparecendo, e pagamentos, compradores e registros
+                  financeiros não são apagados.
                 </DialogContentText>
               </DialogContent>
               <DialogActions>
-                <Button onClick={() => setArchiveTarget(null)} disabled={additionalArchiving}>
+                <Button onClick={() => setHideHistoryOpen(false)} disabled={additionalArchiving}>
                   Cancelar
                 </Button>
                 <Button
-                  onClick={confirmArchiveAdditionalDraw}
+                  onClick={confirmHideAdditionalHistory}
                   disabled={additionalArchiving}
                   color="error"
                   variant="contained"
                 >
-                  {additionalArchiving ? "Ocultando..." : "Ocultar do histórico"}
+                  {additionalArchiving ? "Ocultando..." : "Ocultar histórico"}
                 </Button>
               </DialogActions>
             </Dialog>
@@ -1015,7 +1009,6 @@ export default function AdminDashboard() {
                   return (
                     <ButtonBase
                       key={draw.id}
-                      component="div"
                       onClick={() => selectAdditionalItem(item)}
                       sx={{ width: "100%", borderRadius: 2, textAlign: "left" }}
                     >
@@ -1057,23 +1050,6 @@ export default function AdminDashboard() {
                             <Typography variant="body2">Abertura: {formatAdminDrawDate(draw.opened_at)}</Typography>
                             <Typography variant="body2">Fechamento: {formatAdminDrawDate(draw.closed_at)}</Typography>
                           </Box>
-                          {isDrawnAdditionalItem(item) && (
-                            <Box sx={{ display: "flex", justifyContent: "flex-end" }}>
-                              <Button
-                                size="small"
-                                color="error"
-                                variant="outlined"
-                                startIcon={<DeleteOutlineRoundedIcon />}
-                                onClick={(event) => {
-                                  event.stopPropagation();
-                                  setArchiveTarget(item);
-                                }}
-                                sx={{ borderRadius: 999 }}
-                              >
-                                Ocultar do histórico
-                              </Button>
-                            </Box>
-                          )}
                         </Stack>
                       </Paper>
                     </ButtonBase>
@@ -1127,6 +1103,19 @@ export default function AdminDashboard() {
                     sx={{ borderRadius: 999, px: 3 }}
                   >
                     {additionalClosing ? "Encerrando..." : "ENCERRAR"}
+                  </Button>
+                )}
+
+                {isAdditionalMode && (
+                  <Button
+                    onClick={() => setHideHistoryOpen(true)}
+                    disabled={additionalArchiving || !additionalDraws.some(isDrawnAdditionalItem)}
+                    variant="outlined"
+                    color="error"
+                    startIcon={<DeleteOutlineRoundedIcon />}
+                    sx={{ borderRadius: 999, px: 3 }}
+                  >
+                    OCULTAR HISTÓRICO
                   </Button>
                 )}
 
