@@ -291,6 +291,8 @@ export default function AdminDashboard() {
   const [additionalCreating, setAdditionalCreating] = React.useState(false);
   const [additionalClosing, setAdditionalClosing] = React.useState(false);
   const [hideHistoryOpen, setHideHistoryOpen] = React.useState(false);
+  const [showHistoryOpen, setShowHistoryOpen] = React.useState(false);
+  const [hiddenAdditionalCount, setHiddenAdditionalCount] = React.useState(0);
   const [additionalArchiving, setAdditionalArchiving] = React.useState(false);
   const [additionalError, setAdditionalError] = React.useState("");
   const [newAdditionalFormOpen, setNewAdditionalFormOpen] = React.useState(false);
@@ -409,6 +411,7 @@ export default function AdminDashboard() {
       const payload = await response.json().catch(() => ({}));
       const draws = sortAdditionalItems(normalizeAdditionalDraws(payload));
       setAdditionalDraws(draws);
+      setHiddenAdditionalCount(Number(payload?.hidden_count) || 0);
       const visibleDraws = draws.filter((item) => !isRealizedAdditionalItem(item));
       const wantedId = preferredId ?? selectedAdditionalDrawIdRef.current;
       const selected =
@@ -841,6 +844,25 @@ export default function AdminDashboard() {
     }
   };
 
+  const confirmShowAdditionalHistory = async () => {
+    if (additionalArchivingRef.current) return;
+    additionalArchivingRef.current = true;
+    setAdditionalArchiving(true);
+    try {
+      await postJSON("/admin/additional-draws/history/show", {}, "PATCH");
+      setShowHistoryOpen(false);
+      await loadAdditionalDraws();
+      alert("Histórico exibido novamente.");
+    } catch (e) {
+      console.error("[AdminDashboard] show additional history failed:", e);
+      setShowHistoryOpen(false);
+      alert("Não foi possível exibir o histórico.");
+    } finally {
+      additionalArchivingRef.current = false;
+      setAdditionalArchiving(false);
+    }
+  };
+
   // menu
   const [menuEl, setMenuEl] = React.useState(null);
   const open = Boolean(menuEl);
@@ -992,6 +1014,31 @@ export default function AdminDashboard() {
               </DialogActions>
             </Dialog>
 
+            <Dialog
+              open={showHistoryOpen}
+              onClose={() => !additionalArchiving && setShowHistoryOpen(false)}
+            >
+              <DialogTitle>Exibir histórico</DialogTitle>
+              <DialogContent>
+                <DialogContentText>
+                  Deseja exibir novamente os {hiddenAdditionalCount} sorteio(s) adicional(is)
+                  realizado(s) que estavam ocultos?
+                </DialogContentText>
+              </DialogContent>
+              <DialogActions>
+                <Button onClick={() => setShowHistoryOpen(false)} disabled={additionalArchiving}>
+                  Cancelar
+                </Button>
+                <Button
+                  onClick={confirmShowAdditionalHistory}
+                  disabled={additionalArchiving}
+                  variant="contained"
+                >
+                  {additionalArchiving ? "Exibindo..." : "Exibir histórico"}
+                </Button>
+              </DialogActions>
+            </Dialog>
+
             {isAdditionalMode && visibleAdditionalDraws.length > 0 && (
               <Stack spacing={1.5} sx={{ mb: 3 }}>
                 {visibleAdditionalDraws.map((item) => {
@@ -1116,6 +1163,17 @@ export default function AdminDashboard() {
                     sx={{ borderRadius: 999, px: 3 }}
                   >
                     OCULTAR HISTÓRICO
+                  </Button>
+                )}
+
+                {isAdditionalMode && hiddenAdditionalCount > 0 && (
+                  <Button
+                    onClick={() => setShowHistoryOpen(true)}
+                    disabled={additionalArchiving}
+                    variant="outlined"
+                    sx={{ borderRadius: 999, px: 3 }}
+                  >
+                    MOSTRAR HISTÓRICO ({hiddenAdditionalCount})
                   </Button>
                 )}
 
