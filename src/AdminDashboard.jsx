@@ -9,6 +9,11 @@ import {
   Checkbox,
   Container,
   CssBaseline,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogContentText,
+  DialogTitle,
   Divider,
   Alert,
   FormControlLabel,
@@ -27,6 +32,7 @@ import {
 } from "@mui/material";
 import ArrowBackIosNewRoundedIcon from "@mui/icons-material/ArrowBackIosNewRounded";
 import AccountCircleRoundedIcon from "@mui/icons-material/AccountCircleRounded";
+import DeleteOutlineRoundedIcon from "@mui/icons-material/DeleteOutlineRounded";
 import logoNewStore from "./Logo-branca-sem-fundo-768x132.png";
 import { useAuth } from "./authContext";
 
@@ -162,7 +168,16 @@ const isOpenAdditionalItem = (item) => {
   return status === "open" && (type === "adicional" || type === "secundario");
 };
 
-const isRealizedAdditionalItem = (item) => item?.draw?.realized_at != null;
+const isDrawnAdditionalItem = (item) => {
+  const type = String(item?.draw?.draw_type || "").toLowerCase();
+  const status = String(item?.draw?.status || "").toLowerCase();
+  return status === "sorteado" && (type === "adicional" || type === "secundario");
+};
+
+// Sorteios sorteados continuam visiveis (com a acao "Ocultar do historico");
+// os demais ja realizados seguem ocultos como antes.
+const isRealizedAdditionalItem = (item) =>
+  item?.draw?.realized_at != null && !isDrawnAdditionalItem(item);
 
 const newestAdditionalItem = (items, predicate = () => true) =>
   items.reduce((newest, item) => {
@@ -275,6 +290,8 @@ export default function AdminDashboard() {
   const [additionalSaving, setAdditionalSaving] = React.useState(false);
   const [additionalCreating, setAdditionalCreating] = React.useState(false);
   const [additionalClosing, setAdditionalClosing] = React.useState(false);
+  const [archiveTarget, setArchiveTarget] = React.useState(null);
+  const [additionalArchiving, setAdditionalArchiving] = React.useState(false);
   const [additionalError, setAdditionalError] = React.useState("");
   const [newAdditionalFormOpen, setNewAdditionalFormOpen] = React.useState(false);
   const [newAdditionalForm, setNewAdditionalForm] = React.useState(EMPTY_NEW_ADDITIONAL_FORM);
@@ -283,6 +300,7 @@ export default function AdminDashboard() {
   const additionalSavingRef = React.useRef(false);
   const additionalCreatingRef = React.useRef(false);
   const additionalClosingRef = React.useRef(false);
+  const additionalArchivingRef = React.useRef(false);
   const principalSavingRef = React.useRef(false);
   const principalCreatingRef = React.useRef(false);
   const visibleAdditionalDraws = React.useMemo(
@@ -804,6 +822,32 @@ export default function AdminDashboard() {
     }
   };
 
+  const confirmArchiveAdditionalDraw = async () => {
+    if (additionalArchivingRef.current) return;
+    const drawId = Number(archiveTarget?.draw?.id);
+    if (!Number.isInteger(drawId) || drawId <= 0 || !isDrawnAdditionalItem(archiveTarget)) {
+      setArchiveTarget(null);
+      return;
+    }
+
+    additionalArchivingRef.current = true;
+    setAdditionalArchiving(true);
+    try {
+      await postJSON(`/admin/additional-draws/${drawId}/archive`, {}, "PATCH");
+      setArchiveTarget(null);
+      setAdditionalDraws((items) => items.filter((item) => Number(item?.draw?.id) !== drawId));
+      await loadAdditionalDraws();
+      alert("Sorteio ocultado do histórico.");
+    } catch (e) {
+      console.error("[AdminDashboard] archive additional draw failed:", e);
+      setArchiveTarget(null);
+      alert("Não foi possível ocultar este sorteio do histórico.");
+    } finally {
+      additionalArchivingRef.current = false;
+      setAdditionalArchiving(false);
+    }
+  };
+
   // menu
   const [menuEl, setMenuEl] = React.useState(null);
   const open = Boolean(menuEl);
@@ -925,6 +969,35 @@ export default function AdminDashboard() {
               </Typography>
             )}
 
+            <Dialog
+              open={Boolean(archiveTarget)}
+              onClose={() => !additionalArchiving && setArchiveTarget(null)}
+            >
+              <DialogTitle>Ocultar do histórico</DialogTitle>
+              <DialogContent>
+                <DialogContentText>
+                  Tem certeza que deseja ocultar este sorteio do histórico?
+                  <br />
+                  <br />
+                  Essa ação apenas oculta o sorteio da listagem, mas não deve apagar pagamentos,
+                  compradores ou registros financeiros.
+                </DialogContentText>
+              </DialogContent>
+              <DialogActions>
+                <Button onClick={() => setArchiveTarget(null)} disabled={additionalArchiving}>
+                  Cancelar
+                </Button>
+                <Button
+                  onClick={confirmArchiveAdditionalDraw}
+                  disabled={additionalArchiving}
+                  color="error"
+                  variant="contained"
+                >
+                  {additionalArchiving ? "Ocultando..." : "Ocultar do histórico"}
+                </Button>
+              </DialogActions>
+            </Dialog>
+
             {isAdditionalMode && visibleAdditionalDraws.length > 0 && (
               <Stack spacing={1.5} sx={{ mb: 3 }}>
                 {visibleAdditionalDraws.map((item) => {
@@ -942,6 +1015,7 @@ export default function AdminDashboard() {
                   return (
                     <ButtonBase
                       key={draw.id}
+                      component="div"
                       onClick={() => selectAdditionalItem(item)}
                       sx={{ width: "100%", borderRadius: 2, textAlign: "left" }}
                     >
@@ -983,6 +1057,23 @@ export default function AdminDashboard() {
                             <Typography variant="body2">Abertura: {formatAdminDrawDate(draw.opened_at)}</Typography>
                             <Typography variant="body2">Fechamento: {formatAdminDrawDate(draw.closed_at)}</Typography>
                           </Box>
+                          {isDrawnAdditionalItem(item) && (
+                            <Box sx={{ display: "flex", justifyContent: "flex-end" }}>
+                              <Button
+                                size="small"
+                                color="error"
+                                variant="outlined"
+                                startIcon={<DeleteOutlineRoundedIcon />}
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  setArchiveTarget(item);
+                                }}
+                                sx={{ borderRadius: 999 }}
+                              >
+                                Ocultar do histórico
+                              </Button>
+                            </Box>
+                          )}
                         </Stack>
                       </Paper>
                     </ButtonBase>
