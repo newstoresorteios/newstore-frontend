@@ -22,6 +22,7 @@ import CheckCircleRoundedIcon from "@mui/icons-material/CheckCircleRounded";
 import StarRoundedIcon from "@mui/icons-material/StarRounded";
 import LockRoundedIcon from "@mui/icons-material/LockRounded";
 import ScheduleRoundedIcon from "@mui/icons-material/ScheduleRounded";
+import { apiJoin } from "./lib/api";
 
 const theme = createTheme({
   palette: {
@@ -49,9 +50,14 @@ const theme = createTheme({
   },
 });
 
-const API = (process.env.REACT_APP_API_BASE_URL ||
-  process.env.REACT_APP_API_BASE ||
-  "/api").replace(/\/+$/, "");
+// 0 e um vencedor valido: presenca e checada so contra null/undefined/"".
+const hasNumber = (value) => value !== null && value !== undefined && value !== "";
+
+// Largura do label vem da grade recebida (00..99 -> 2, 000..999 -> 3).
+const boardLabelWidth = (board) =>
+  Array.isArray(board)
+    ? board.reduce((max, cell) => Math.max(max, String(cell?.label ?? "").length), 2)
+    : 2;
 
 const authHeaders = () => {
   const tk =
@@ -75,7 +81,7 @@ export default function DrawBoardPage() {
     let alive = true;
     (async () => {
       try {
-        const r = await fetch(`${API}/api/me/draws/${id}/board`, {
+        const r = await fetch(apiJoin(`/api/me/draws/${id}/board`), {
           headers: { "Content-Type": "application/json", ...authHeaders() },
           credentials: "include",
         });
@@ -158,6 +164,8 @@ export default function DrawBoardPage() {
   };
 
   const winnerName = data?.draw?.winner_name || null;
+  const boardCells = Array.isArray(data?.board) ? data.board : [];
+  const labelWidth = boardLabelWidth(boardCells);
 
   return (
     <ThemeProvider theme={theme}>
@@ -221,12 +229,12 @@ export default function DrawBoardPage() {
                       "& .MuiChip-icon": { color: "success.main" },
                     }}
                   />
-                  {!!data.draw?.winner_number && (
+                  {hasNumber(data.draw?.winner_number) && (
                     <Chip
                       icon={<StarRoundedIcon />}
                       label={`Número vencedor: ${String(
                         data.draw.winner_number
-                      ).padStart(2, "0")}`}
+                      ).padStart(labelWidth, "0")}`}
                       sx={{
                         fontWeight: 900,
                         color: "#000",
@@ -283,7 +291,7 @@ export default function DrawBoardPage() {
                 }}
               />
 
-              {/* Grade 00..99 */}
+              {/* Grade recebida do backend (public.numbers) */}
               <Box
                 role="grid"
                 aria-label="Números do sorteio"
@@ -297,7 +305,7 @@ export default function DrawBoardPage() {
                   gap: { xs: 0.75, sm: 0.9, md: 1.1 },
                 }}
               >
-                {data.board.map((cell) => (
+                {boardCells.map((cell) => (
                   <Box key={cell.n} role="gridcell" sx={getCellSx(cell)}>
                     <Typography component="span" sx={{ lineHeight: 1 }}>
                       {cell.label}
@@ -399,7 +407,7 @@ export default function DrawBoardPage() {
                 <Typography sx={{ opacity: 0.9 }}>
                   {data.my_numbers?.length
                     ? data.my_numbers
-                        .map((n) => String(n).padStart(2, "0"))
+                        .map((n) => String(n).padStart(labelWidth, "0"))
                         .join(", ")
                     : "-"}
                 </Typography>

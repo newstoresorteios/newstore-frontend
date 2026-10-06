@@ -71,44 +71,14 @@ const fmtDate = (v) => {
   return Number.isNaN(d.getTime()) ? "-" : d.toLocaleDateString("pt-BR");
 };
 
-const normalizeAdditionalDrawItem = (item) => {
-  const draw = item?.draw && typeof item.draw === "object" ? item.draw : item || {};
-  const config = item?.config && typeof item.config === "object" ? item.config : {};
-  const stats = item?.stats && typeof item.stats === "object" ? item.stats : {};
-  const id = Number(draw.id ?? item?.id ?? config.id);
-
-  if (!Number.isInteger(id) || id <= 0) return null;
-
-  return {
-    id,
-    draw_id: id,
-    draw,
-    config,
-    stats,
-    draw_type: draw.draw_type || "adicional",
-    winner_user_id: draw.winner_user_id ?? null,
-    winner_name: draw.winner_name || "",
-    winner_number: draw.winner_number ?? null,
-    product_name:
-      draw.product_name || draw.banner_title || config.banner_title || "",
-    product_link: draw.product_link || "",
-    realized_at: draw.realized_at || null,
-    status: draw.status || "",
-    redeemed: draw.redeemed,
-    days_since: draw.days_since,
-  };
-};
-
-const normalizeAdditionalDrawsPayload = (payload) => {
-  const list = Array.isArray(payload)
-    ? payload
-    : payload?.draws ?? payload?.data?.draws ?? [];
-
-  if (!Array.isArray(list)) return [];
-  return list
-    .map(normalizeAdditionalDrawItem)
-    .filter((item) => item && String(item.draw_type).toLowerCase() !== "principal");
-};
+// Contrato de vencedores: principal usa o padrao; adicional usa ?draw_type=adicional.
+const WINNERS_PATH = "/api/admin/winners";
+const winnersListPath = (mode) =>
+  mode === "additional" ? `${WINNERS_PATH}?draw_type=adicional` : WINNERS_PATH;
+const winnerPatchPath = (mode, drawId) =>
+  mode === "additional"
+    ? `${WINNERS_PATH}/${drawId}?draw_type=adicional`
+    : `${WINNERS_PATH}/${drawId}`;
 
 export default function AdminVencedores() {
   const navigate = useNavigate();
@@ -116,6 +86,7 @@ export default function AdminVencedores() {
 
   const [rows, setRows] = React.useState([]);
   const [loading, setLoading] = React.useState(true);
+  const [loadError, setLoadError] = React.useState(false);
   const [savingId, setSavingId] = React.useState(null);
   const [winnerMode, setWinnerMode] = React.useState("principal");
 
@@ -123,17 +94,11 @@ export default function AdminVencedores() {
     let alive = true;
     (async () => {
       setLoading(true);
+      setLoadError(false);
       setRows([]);
       try {
-        let payload;
-        if (winnerMode === "additional") {
-          payload = await getJSON("/api/admin/additional-draws");
-        } else {
-          payload = await getJSON("/api/admin/winners");
-        }
-        const list = winnerMode === "additional"
-          ? normalizeAdditionalDrawsPayload(payload)
-          : Array.isArray(payload)
+        const payload = await getJSON(winnersListPath(winnerMode));
+        const list = Array.isArray(payload)
           ? payload
           : payload?.draws ||
             payload?.secondary_winners ||
@@ -145,6 +110,7 @@ export default function AdminVencedores() {
             payload?.data?.winners ||
             payload?.data?.items ||
             [];
+        if (!Array.isArray(list)) throw new Error("invalid_winners_payload");
 
         const lines = list.map((w) => ({
           key: `${winnerMode}-${w.id ?? w.draw_id ?? w.secondary_draw_id}-${w.realized_at ?? w.winner_number}`,
@@ -164,7 +130,10 @@ export default function AdminVencedores() {
         if (alive) setRows(lines);
       } catch (e) {
         console.error("[AdminVencedores] fetch error:", e);
-        if (alive) setRows([]);
+        if (alive) {
+          setRows([]);
+          setLoadError(true);
+        }
       } finally {
         if (alive) setLoading(false);
       }
@@ -181,24 +150,13 @@ export default function AdminVencedores() {
   const saveRow = async (row) => {
     try {
       setSavingId(row.drawId);
-      const body =
-        winnerMode === "additional"
-          ? {
-              winner_user_id: row.winnerUserId,
-              winner_number: row.numeroVencedor === "-" ? null : row.numeroVencedor,
-              product_name: row.productName,
-              product_link: row.productLink,
-            }
-          : {
-              product_name: row.productName,
-              product_link: row.productLink,
-            };
-      let resp;
-      if (winnerMode === "additional") {
-        resp = await patchJSON(`/api/admin/additional-draws/${row.drawId}`, body);
-      } else {
-        resp = await patchJSON(`/api/admin/winners/${row.drawId}`, body);
-      }
+      // Somente campos editaveis do premio: nunca reenviar o resultado carregado
+      // (winner_*, realized_at, status), que o engine pode ter definido depois.
+      const body = {
+        product_name: row.productName,
+        product_link: row.productLink,
+      };
+      const resp = await patchJSON(winnerPatchPath(winnerMode, row.drawId), body);
       // garante sincronização local
       const updatedDraw = resp?.draw ?? resp?.data?.draw ?? resp;
       setRows((prev) =>
@@ -314,7 +272,14 @@ export default function AdminVencedores() {
                 {loading && (
                   <TableRow><TableCell colSpan={9}>Carregando…</TableCell></TableRow>
                 )}
-                {!loading && rows.length === 0 && (
+                {!loading && loadError && (
+                  <TableRow>
+                    <TableCell colSpan={9} role="alert" sx={{ color: "error.main" }}>
+                      Não foi possível carregar os vencedores. Tente novamente.
+                    </TableCell>
+                  </TableRow>
+                )}
+                {!loading && !loadError && rows.length === 0 && (
                   <TableRow><TableCell colSpan={9} sx={{ color: "#bbb" }}>Nenhum vencedor encontrado.</TableCell></TableRow>
                 )}
                 {rows.map((w) => (
