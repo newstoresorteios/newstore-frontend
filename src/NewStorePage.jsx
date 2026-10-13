@@ -2197,6 +2197,8 @@ export default function NewStorePage({
             {isAuthenticated ? (
               <>
                 <MenuItem onClick={goConta}>Área do cliente</MenuItem>
+                <MenuItem onClick={() => { handleCloseMenu(); navigate("/loja"); }}>Loja NS</MenuItem>
+                <MenuItem onClick={() => { handleCloseMenu(); navigate("/loja/pedidos"); }}>Meus pedidos</MenuItem>
                 <Divider />
                 <MenuItem onClick={doLogout}>Sair</MenuItem>
               </>

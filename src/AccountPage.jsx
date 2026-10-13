@@ -1063,6 +1063,8 @@ export default function AccountPage() {
             {isAdminUser && <MenuItem onClick={() => { setMenuEl(null); navigate("/admin"); }}>Painel Admin</MenuItem>}
             {isAdminUser && <Divider />}
             <MenuItem onClick={() => { setMenuEl(null); navigate("/conta"); }}>Área do cliente</MenuItem>
+            <MenuItem onClick={() => { setMenuEl(null); navigate("/loja"); }}>Loja NS</MenuItem>
+            <MenuItem onClick={() => { setMenuEl(null); navigate("/loja/pedidos"); }}>Meus pedidos</MenuItem>
             <Divider />
             <MenuItem onClick={doLogout}>Sair</MenuItem>
           </Menu>
