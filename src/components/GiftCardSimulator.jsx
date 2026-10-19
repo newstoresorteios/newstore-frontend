@@ -93,7 +93,7 @@ const GIFT_RULES = [
   { min: 50, minPurchase: 1500, max: 250 },
   { min: 251, minPurchase: 3500, max: 600 },
   { min: 601, minPurchase: 5500, max: 800 },
-  { min: 801, minPurchase: 7500, max: 1000 },
+  { min: 801, minPurchase: 7500, max: 1100 },
   { min: 1101, minPurchase: 15000, max: 2100 },
   { min: 2101, minPurchase: 22500, max: 3100 },
   { min: 3101, minPurchase: 30000, max: 4200 },

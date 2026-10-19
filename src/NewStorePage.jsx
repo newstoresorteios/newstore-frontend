@@ -2481,17 +2481,10 @@ Baseado no resultado oficial da Lotomania (Caixa Econômica Federal).
 
             {/* >>>>> LINHA INFERIOR (apenas texto adicionado) */}
             <Box sx={{ mt: 2.5, textAlign: "center" }}>
-              {(() => {
-                const d = new Date();
-                d.setDate(d.getDate() + 7);
-                const dia = String(d.getDate()).padStart(2, "0");
-                return (
-                  <Typography variant="subtitle1" sx={{ opacity: 0.95, fontWeight: 800 }}>
-                    📅 Utilizaremos o sorteio do dia <strong>{dia}</strong> ou o
-                    primeiro sorteio da <strong>Lotomania</strong> após a tabela fechada. 🎯
-                  </Typography>
-                );
-              })()}
+              <Typography variant="subtitle1" sx={{ opacity: 0.95, fontWeight: 800 }}>
+                📅 Utilizaremos o sorteio do dia <strong>19</strong> ou o
+                primeiro sorteio da <strong>Lotomania</strong> após a tabela fechada. 🎯
+              </Typography>
             </Box>
           </Paper>
           {/* === FIM CARTELA === */}
