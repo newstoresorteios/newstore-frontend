@@ -26,6 +26,83 @@ const dateKey = (value, length = 10) => {
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? "—" : date.toISOString().slice(0, length);
 };
+const monthKeyFromValue = (value) => {
+  if (typeof value === "string" && /^\d{4}-\d{2}/.test(value)) return value.slice(0, 7);
+  const key = dateKey(value, 7);
+  return /^\d{4}-\d{2}$/.test(key) ? key : null;
+};
+const formatMonthLabel = (key, { short = false } = {}) => {
+  const [year, month] = String(key || "").split("-").map(Number);
+  if (!year || !month) return "—";
+  const date = new Date(Date.UTC(year, month - 1, 1));
+  if (short) {
+    const name = date.toLocaleDateString("pt-BR", { month: "short", timeZone: "UTC" }).replace(".", "");
+    return `${name}/${String(year).slice(2)}`;
+  }
+  const name = date.toLocaleDateString("pt-BR", { month: "long", year: "numeric", timeZone: "UTC" });
+  return name.charAt(0).toUpperCase() + name.slice(1);
+};
+const shiftMonthKey = (key, delta) => {
+  const [year, month] = key.split("-").map(Number);
+  const date = new Date(Date.UTC(year, month - 1 + delta, 1));
+  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`;
+};
+const signedPct = (ratio) => {
+  if (ratio == null || !Number.isFinite(ratio)) return "—";
+  const formatted = Math.abs(ratio * 100).toLocaleString("pt-BR", {
+    minimumFractionDigits: 1,
+    maximumFractionDigits: 1,
+  });
+  if (ratio > 0) return `+${formatted}%`;
+  if (ratio < 0) return `-${formatted}%`;
+  return "0,0%";
+};
+const currentMonthKey = () => new Intl.DateTimeFormat("en-CA", {
+  timeZone: "America/Sao_Paulo",
+  year: "numeric",
+  month: "2-digit",
+}).format(new Date()).slice(0, 7);
+const buildMonthlyBilling = (rows) => {
+  const parsed = (rows || [])
+    .map((row) => {
+      const key = monthKeyFromValue(row?.month);
+      if (!key) return null;
+      return {
+        key,
+        gmvCents: Number(row.gmv_cents || 0),
+        orders: Number(row.paid_orders || 0),
+        buyers: row?.unique_buyers == null ? null : Number(row.unique_buyers),
+      };
+    })
+    .filter(Boolean)
+    .sort((left, right) => left.key.localeCompare(right.key));
+  if (!parsed.length) return [];
+
+  const byKey = new Map(parsed.map((row) => [row.key, row]));
+  const filled = [];
+  let cursor = parsed[0].key;
+  const last = parsed[parsed.length - 1].key;
+  while (cursor <= last) {
+    filled.push(byKey.get(cursor) || { key: cursor, gmvCents: 0, orders: 0, buyers: 0 });
+    const next = shiftMonthKey(cursor, 1);
+    if (next <= cursor) break;
+    cursor = next;
+  }
+
+  const activeMonth = currentMonthKey();
+  return filled.map((row, index) => {
+    const previous = index > 0 ? filled[index - 1].gmvCents : null;
+    return {
+      ...row,
+      label: formatMonthLabel(row.key),
+      shortLabel: formatMonthLabel(row.key, { short: true }),
+      gmv: row.gmvCents / 100,
+      averageTicketCents: row.orders > 0 ? Math.round(row.gmvCents / row.orders) : null,
+      change: previous > 0 ? (row.gmvCents - previous) / previous : null,
+      current: row.key === activeMonth,
+    };
+  });
+};
 const BLOCK_ERROR = "Não foi possível carregar estes dados agora.";
 const CHART_COLORS = {
   primary: "#67C23A",
@@ -173,6 +250,7 @@ export default function AdminAnalytics() {
   // Estado (GERAL / OVERVIEW)
   const [overview, setOverview] = React.useState(null);
   const [kpiSummary, setKpiSummary] = React.useState(null);
+  const [monthlyGmv, setMonthlyGmv] = React.useState([]);
   const [topBuyers, setTopBuyers] = React.useState([]);
   const [hourly, setHourly] = React.useState([]);
 
@@ -214,6 +292,7 @@ export default function AdminAnalytics() {
   const [couponSort, setCouponSort] = React.useState({ key: null, direction: "asc" });
   const [favoritesSort, setFavoritesSort] = React.useState({ key: null, direction: "asc" });
   const [winningNumbersSort, setWinningNumbersSort] = React.useState({ key: null, direction: "asc" });
+  const [monthlySort, setMonthlySort] = React.useState({ key: "month", direction: "desc" });
 
   /* ---------------------------- LOADERS ---------------------------- */
 
@@ -238,9 +317,11 @@ export default function AdminAnalytics() {
     try {
       const response = await getJSON("/admin/analytics/kpi-dashboard");
       setKpiSummary(response?.summary && typeof response.summary === "object" ? response.summary : null);
+      setMonthlyGmv(Array.isArray(response?.monthly_gmv) ? response.monthly_gmv : []);
       setKpiDashboardState({ loading: false, error: "" });
     } catch {
       setKpiSummary(null);
+      setMonthlyGmv([]);
       setKpiDashboardState({
         loading: false,
         error: "Não foi possível carregar o resumo geral agora.",
@@ -445,6 +526,9 @@ export default function AdminAnalytics() {
     expired: Number(x.orders_expired || 0)
   }));
   const hourlyPaid = (hourly || []).map(h => ({ h: Number(h.hour_br), paid: Number(h.paid) }));
+  const monthlyBilling = React.useMemo(() => buildMonthlyBilling(monthlyGmv), [monthlyGmv]);
+  const monthlyBillingTotalCents = monthlyBilling.reduce((total, row) => total + row.gmvCents, 0);
+  const monthlyBillingOrders = monthlyBilling.reduce((total, row) => total + row.orders, 0);
 
   // Por sorteio
   const funnel = summary?.funnel || null;
@@ -569,6 +653,15 @@ export default function AdminAnalytics() {
     number: Number(row.n),
     purchases: Number(row.times_bought || 0),
   })[key]).slice(0, 300), [favorites, favoritesSort]);
+
+  const sortedMonthlyBilling = React.useMemo(() => sortRows(monthlyBilling, monthlySort, (row, key) => ({
+    month: row.key,
+    gmv: row.gmvCents,
+    change: row.change,
+    orders: row.orders,
+    averageTicket: row.averageTicketCents,
+    buyers: row.buyers,
+  })[key]), [monthlyBilling, monthlySort]);
 
   const sortedWinningNumbers = React.useMemo(() => sortRows(winningNumbers || [], winningNumbersSort, (row, key) => {
     const lastWinTime = row.lastWinAt ? new Date(row.lastWinAt).getTime() : null;
@@ -761,6 +854,86 @@ export default function AdminAnalytics() {
                   accent={CHART_COLORS.muted}
                 />
               </Box>
+            </Section>
+
+            <Section
+              title="Faturamento mensal"
+              subtitle="Mês a mês, pelos pagamentos aprovados. O mês atual ainda está em andamento."
+            >
+              <BlockNotice loading={kpiDashboardState.loading} error={kpiDashboardState.error} />
+              {!kpiDashboardState.loading && !kpiDashboardState.error && monthlyBilling.length === 0 && (
+                <Typography variant="body2" sx={{ opacity: .72, py: 1 }}>
+                  Ainda não há pagamentos aprovados para montar o faturamento mensal.
+                </Typography>
+              )}
+              {monthlyBilling.length > 0 && (
+                <Stack spacing={2} sx={{ mt: 1 }}>
+                  <Typography variant="body2" sx={{ opacity: .72 }}>
+                    {monthlyBilling.length.toLocaleString("pt-BR")} {monthlyBilling.length === 1 ? "mês" : "meses"} • {BRL(monthlyBillingTotalCents)} no total • {monthlyBillingOrders.toLocaleString("pt-BR")} pedidos
+                  </Typography>
+                  <Box height={{ xs: 280, md: 340 }} sx={{ minWidth: 0 }}>
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart data={monthlyBilling} margin={{ top: 12, right: 12, left: 0, bottom: 0 }}>
+                        <CartesianGrid vertical={false} />
+                        <XAxis
+                          dataKey="shortLabel"
+                          interval={monthlyBilling.length > 18 ? "preserveStartEnd" : 0}
+                          tick={{ fontSize: 12 }}
+                        />
+                        <YAxis
+                          tickFormatter={(value) => Number(value).toLocaleString("pt-BR", {
+                            notation: "compact",
+                            maximumFractionDigits: 1,
+                          })}
+                        />
+                        <RTooltip
+                          formatter={(value) => Number(value).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
+                        />
+                        <Bar dataKey="gmv" name="Faturamento (R$)" fill={CHART_COLORS.primary} radius={[4, 4, 0, 0]} />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </Box>
+                  <TableContainer>
+                    <Table size="small" sx={{ minWidth: 720 }}>
+                      <TableHead>
+                        <TableRow>
+                          <SortableHeader label="Mês" column="month" sortConfig={monthlySort} onSort={(column) => changeSort(setMonthlySort, column)} />
+                          <SortableHeader label="Faturamento" column="gmv" sortConfig={monthlySort} onSort={(column) => changeSort(setMonthlySort, column)} align="right" />
+                          <SortableHeader label="Variação" column="change" sortConfig={monthlySort} onSort={(column) => changeSort(setMonthlySort, column)} align="right" />
+                          <SortableHeader label="Pedidos" column="orders" sortConfig={monthlySort} onSort={(column) => changeSort(setMonthlySort, column)} align="right" />
+                          <SortableHeader label="Ticket médio" column="averageTicket" sortConfig={monthlySort} onSort={(column) => changeSort(setMonthlySort, column)} align="right" />
+                          <SortableHeader label="Clientes" column="buyers" sortConfig={monthlySort} onSort={(column) => changeSort(setMonthlySort, column)} align="right" />
+                        </TableRow>
+                      </TableHead>
+                      <TableBody>
+                        {sortedMonthlyBilling.map((row) => (
+                          <TableRow key={row.key} hover>
+                            <TableCell sx={{ fontWeight: 800 }}>
+                              {row.label}
+                              {row.current && (
+                                <Typography variant="caption" sx={{ display: "block", opacity: .62 }}>em andamento</Typography>
+                              )}
+                            </TableCell>
+                            <TableCell align="right">{BRL(row.gmvCents)}</TableCell>
+                            <TableCell
+                              align="right"
+                              sx={{
+                                fontWeight: 800,
+                                color: row.change > 0 ? CHART_COLORS.primary : row.change < 0 ? CHART_COLORS.error : "inherit",
+                              }}
+                            >
+                              {signedPct(row.change)}
+                            </TableCell>
+                            <TableCell align="right">{row.orders.toLocaleString("pt-BR")}</TableCell>
+                            <TableCell align="right">{row.averageTicketCents == null ? "—" : BRL(row.averageTicketCents)}</TableCell>
+                            <TableCell align="right">{row.buyers == null ? "—" : row.buyers.toLocaleString("pt-BR")}</TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </TableContainer>
+                </Stack>
+              )}
             </Section>
 
             <Box
